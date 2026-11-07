@@ -1,0 +1,51 @@
+{{define "content"}}
+<div class="card block">
+  <div class="head">
+    <div>
+      <h1 style="display:flex;align-items:center;gap:10px"><span class="sdot {{.View.Class}}"></span>{{.View.State.Target.Name}} <span class="badge {{.View.Class}}">{{.View.Label}}</span></h1>
+      <div class="url" style="margin-top:4px"><a href="{{.View.State.Target.URL}}" rel="noopener" target="_blank">{{.View.State.Target.URL}}</a></div>
+    </div>
+    <div class="btns">
+      {{if not .View.State.Target.Paused}}<form method="post" action="/targets/{{.View.State.Target.ID}}/check"><button type="submit">Check now</button></form>{{end}}
+      <form method="post" action="/targets/{{.View.State.Target.ID}}/pause"><button type="submit">{{if .View.State.Target.Paused}}Resume{{else}}Pause{{end}}</button></form>
+      <form method="post" action="/targets/{{.View.State.Target.ID}}/delete" onsubmit="return confirm('Delete this target and all its history?')"><button type="submit" class="danger">Delete</button></form>
+    </div>
+  </div>
+  <div class="tiles" style="margin-top:14px;margin-bottom:0">
+    <div class="tile"><div class="l">Uptime 24h</div><div class="v">{{pct .View.Up24}}</div></div>
+    <div class="tile"><div class="l">Uptime 7d</div><div class="v">{{pct .View.Up7}}</div></div>
+    <div class="tile"><div class="l">Uptime 30d</div><div class="v">{{pct .View.Up30}}</div></div>
+    <div class="tile"><div class="l">Avg latency 24h</div><div class="v">{{ms .View.Up24}}</div></div>
+    <div class="tile"><div class="l">{{if eq .View.Class "down"}}Down since{{else if eq .View.Class "paused"}}Paused since{{else}}Up since{{end}}</div><div class="v" style="font-size:15px">{{if .View.State.Since.IsZero}}—{{else}}{{ts .View.State.Since}}{{end}}</div></div>
+  </div>
+</div>
+
+<div class="card block">
+  <div class="head"><h2>Latency</h2>
+    <span class="seg">{{range .Ranges}}<a href="?range={{.}}" {{if eq . $.Range}}class="active"{{end}}>{{.}}</a>{{end}}</span>
+  </div>
+  <div class="chart" style="margin-top:10px">{{.Chart}}</div>
+</div>
+
+<div class="card block">
+  <h2>Incidents</h2>
+  {{if .Incidents}}
+  <table style="margin-top:8px"><tr><th>Started</th><th>Duration</th><th>Cause</th><th>Alerted</th></tr>
+  {{range .Incidents}}<tr><td>{{ts .StartedAt}}</td><td>{{if .Ongoing}}<span class="bad-text">ongoing, {{dur (.Duration $.Now)}}</span>{{else}}{{dur (.Duration $.Now)}}{{end}}</td><td>{{.Cause}}</td><td class="muted">{{if .Channels}}{{.Channels}}{{else}}—{{end}}</td></tr>{{end}}
+  </table>
+  {{else}}<p class="muted small">No incidents recorded.</p>{{end}}
+</div>
+
+<div class="card block">
+  <h2>Recent checks</h2>
+  <table style="margin-top:8px"><tr><th>Time</th><th>Result</th><th>Status</th><th>Latency</th><th>Detail</th></tr>
+  {{range .Checks}}<tr><td>{{ts .CheckedAt}}</td><td>{{if .OK}}<span class="ok-text">ok</span>{{else}}<span class="bad-text">fail</span>{{end}}</td><td>{{if .StatusCode}}{{.StatusCode}}{{else}}—{{end}}</td><td>{{.LatencyMS}} ms</td><td class="muted">{{.Error}}</td></tr>{{else}}<tr><td colspan="5" class="muted">No checks yet.</td></tr>{{end}}
+  </table>
+</div>
+
+<div class="card block">
+  <details {{if .Error}}open{{end}}><summary>Edit target</summary>
+  {{template "target-form" .Form}}
+  </details>
+</div>
+{{end}}

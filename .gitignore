@@ -1,0 +1,6 @@
+uptime.db*
+data/
+config.json
+/uptime-monitor
+dev.db*
+dev-config.json

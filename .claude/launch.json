@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "uptime-dev",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", ".", "-config", "dev-config.json"],
+      "port": 18080
+    }
+  ]
+}

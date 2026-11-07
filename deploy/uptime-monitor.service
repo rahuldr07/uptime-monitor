@@ -1,0 +1,21 @@
+[Unit]
+Description=Uptime monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=uptime
+Group=uptime
+WorkingDirectory=/var/lib/uptime-monitor
+EnvironmentFile=-/etc/uptime-monitor.env
+ExecStart=/usr/local/bin/uptime-monitor -config /etc/uptime-monitor.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/uptime-monitor
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+{{define "target-form"}}
+<form method="post" action="{{.Action}}">
+  <div class="row">
+    <div class="field"><label>Name</label><input name="name" value="{{.Name}}" required maxlength="64" placeholder="Marketing site"></div>
+    <div class="field wide"><label>URL</label><input name="url" value="{{.URL}}" required placeholder="https://example.com/health"></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div class="field"><label>Check every</label><input name="interval" value="{{.Interval}}" placeholder="30s"></div>
+    <div class="field"><label>Timeout</label><input name="timeout" value="{{.Timeout}}" placeholder="10s"></div>
+    <div class="field"><label>Expected status (blank = 2xx/3xx)</label><input name="expect_status" value="{{.ExpectStatus}}" placeholder="200" inputmode="numeric"></div>
+    <div class="field"><label>Body must contain (optional)</label><input name="keyword" value="{{.Keyword}}" placeholder="ok"></div>
+    <div class="field" style="flex:0 0 auto"><button type="submit" class="primary">{{.Submit}}</button></div>
+  </div>
+</form>
+{{end}}

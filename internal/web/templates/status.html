@@ -1,0 +1,19 @@
+{{define "content"}}
+{{if gt .DownCount 0}}
+<div class="banner bad"><span>Some systems are experiencing issues</span><span class="small">{{.DownCount}} of {{.Total}} down</span></div>
+{{else}}
+<div class="banner ok"><span>All systems operational</span><span class="small">{{.Total}} service(s)</span></div>
+{{end}}
+{{range .Targets}}
+<div class="card block">
+  <div class="head">
+    <span class="name"><span class="sdot {{.Class}}"></span>{{.State.Target.Name}}</span>
+    <span class="badge {{.Class}}">{{.Label}}</span>
+  </div>
+  <div class="days">{{range .Days}}<i class="{{.Class}}" title="{{.Title}}"></i>{{end}}</div>
+  <div class="meta"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today</span></div>
+</div>
+{{else}}
+<div class="empty">No services configured.</div>
+{{end}}
+{{end}}

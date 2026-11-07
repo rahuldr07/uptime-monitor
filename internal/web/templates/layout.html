@@ -1,0 +1,34 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Uptime</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231d9e75'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+    <a class="brand" href="/"><span class="dot"></span>Uptime</a>
+    {{if .Admin}}<div class="links">
+      <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a>
+      <a href="/incidents" {{if eq .Page "incidents"}}class="active"{{end}}>Incidents</a>
+      <a href="/targets" {{if eq .Page "targets"}}class="active"{{end}}>Targets</a>
+      <a href="/alerts" {{if eq .Page "alerts"}}class="active"{{end}}>Alerts</a>
+      <a href="/status" {{if eq .Page "status"}}class="active"{{end}}>Status page</a>
+    </div>{{end}}
+  </div>
+  <div class="right">
+    {{if .Admin}}<span id="refreshed">Updated {{ago .Now}}</span>{{if .AuthEnabled}}<form method="post" action="/logout"><button type="submit">Log out</button></form>{{end}}
+    {{else if .AuthEnabled}}<a class="btn" href="/login">Admin</a>{{end}}
+  </div>
+</nav>
+{{with .Flash}}<div class="flash">{{.}}</div>{{end}}
+{{with .Error}}<div class="flash error">{{.}}</div>{{end}}
+{{template "content" .}}
+<footer>uptime-monitor · {{ts .Now}}</footer>
+</div>
+</body>
+</html>{{end}}

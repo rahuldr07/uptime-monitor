@@ -1,0 +1,34 @@
+{{define "content"}}
+<h1>Alerts</h1>
+<p class="muted small">Alerts fire when a target changes state. A target is marked down after <strong>{{.Threshold}}</strong> consecutive failed checks and up on the first successful one. Each channel is retried three times. Leave a channel blank to disable it. "Send test" saves the form first, then sends.</p>
+<form method="post" action="/alerts">
+<button type="submit" style="display:none" aria-hidden="true" tabindex="-1">Save</button>
+<div class="card block">
+  <div class="head"><h2>Telegram</h2>{{if .Has.telegram}}<button type="submit" formaction="/alerts/test" name="channel" value="telegram">Send test</button>{{end}}</div>
+  <div class="row" style="margin-top:10px">
+    <div class="field wide"><label>Bot token</label><input name="tg_token" type="password" value="{{.N.Telegram.BotToken}}" autocomplete="off" placeholder="123456:ABC-DEF"></div>
+    <div class="field"><label>Chat ID</label><input name="tg_chat" value="{{.N.Telegram.ChatID}}" placeholder="-1001234567890"></div>
+  </div>
+</div>
+<div class="card block">
+  <div class="head"><h2>Slack</h2>{{if .Has.slack}}<button type="submit" formaction="/alerts/test" name="channel" value="slack">Send test</button>{{end}}</div>
+  <div class="row" style="margin-top:10px">
+    <div class="field wide"><label>Incoming webhook URL</label><input name="slack_url" type="password" value="{{.N.Slack.WebhookURL}}" autocomplete="off" placeholder="https://hooks.slack.com/services/…"></div>
+  </div>
+</div>
+<div class="card block">
+  <div class="head"><h2>Email</h2>{{if .Has.email}}<button type="submit" formaction="/alerts/test" name="channel" value="email">Send test</button>{{end}}</div>
+  <div class="row" style="margin-top:10px">
+    <div class="field"><label>SMTP host</label><input name="smtp_host" value="{{.N.Email.SMTPHost}}" placeholder="smtp.gmail.com"></div>
+    <div class="field" style="flex:0 1 100px"><label>Port</label><input name="smtp_port" value="{{if .N.Email.SMTPPort}}{{.N.Email.SMTPPort}}{{end}}" placeholder="587" inputmode="numeric"></div>
+    <div class="field"><label>Username</label><input name="smtp_user" value="{{.N.Email.Username}}" autocomplete="off"></div>
+    <div class="field"><label>Password</label><input name="smtp_pass" type="password" value="{{.N.Email.Password}}" autocomplete="off"></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div class="field"><label>From</label><input name="smtp_from" value="{{.N.Email.From}}" placeholder="uptime@example.com"></div>
+    <div class="field wide"><label>To (comma separated)</label><input name="smtp_to" value="{{.To}}" placeholder="you@example.com, ops@example.com"></div>
+  </div>
+</div>
+<button type="submit" class="primary">Save alert settings</button>
+</form>
+{{end}}

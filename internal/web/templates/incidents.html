@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="section"><h1>Incidents</h1>
+  <form method="get" class="row" style="align-items:center">
+    <select name="target" onchange="this.form.submit()"><option value="">All targets</option>{{range .Targets}}<option value="{{.ID}}" {{if eq .ID $.Filter.TargetID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px"><input type="checkbox" name="ongoing" value="1" {{if .Filter.OngoingOnly}}checked{{end}} onchange="this.form.submit()">Ongoing only</label>
+  </form>
+</div>
+{{if .Incidents}}
+<div class="card block">
+<table><tr><th>Target</th><th>Started</th><th>Ended</th><th>Duration</th><th>Cause</th><th>Alerted</th></tr>
+{{range .Incidents}}<tr>
+  <td><a href="/targets/{{.TargetID}}">{{.TargetName}}</a></td>
+  <td>{{ts .StartedAt}}</td>
+  <td>{{if .EndedAt}}{{ts .EndedAt}}{{else}}<span class="bad-text">ongoing</span>{{end}}</td>
+  <td>{{dur (.Duration $.Now)}}</td>
+  <td>{{.Cause}}</td>
+  <td class="muted">{{if .Channels}}{{.Channels}}{{else}}—{{end}}</td>
+</tr>{{end}}
+</table>
+</div>
+{{else}}<div class="empty">No incidents. That is good news.</div>{{end}}
+{{end}}
