@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · Uptime</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="{{asset "app.css"}}">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='{{if gt .DownCount 0}}%23e24b4a{{else}}%231d9e75{{end}}'/%3E%3C/svg%3E">
-<script defer src="/static/app.js"></script>
+<script defer src="{{asset "app.js"}}"></script>
 </head>
 <body data-live>
 <div class="shell">
@@ -19,7 +19,7 @@
   <a class="nav{{if eq .Page "maintenance"}} active{{end}}" href="/maintenance">{{template "i-wrench"}}<span class="t">Maintenance</span>{{if .Maint}}<span class="count maint">{{len .Maint}}</span>{{end}}</a>
   <a class="nav" href="/status" target="_blank" rel="noopener">{{template "i-ext"}}<span class="t">Status page</span></a>
   <div class="foot">
-    <button type="button" class="ghost sm" onclick="cycleTheme()" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
+    <button type="button" class="ghost sm" data-action="theme" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
     {{if .AuthEnabled}}<form method="post" action="/logout"><button type="submit" class="ghost sm">{{template "i-logout"}}<span class="t">Log out</span></button></form>{{end}}
   </div>
 </aside>
@@ -30,9 +30,9 @@
 <footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
 </main>
 </div>
-<div class="scrim" onclick="closePanel()"></div>
+<div class="scrim" data-action="close-panel"></div>
 <aside class="panel" id="panel" aria-label="New monitor">
-  <div class="head"><h2>New monitor</h2><button type="button" class="ghost sm" onclick="closePanel()" aria-label="Close">✕</button></div>
+  <div class="head"><h2>New monitor</h2><button type="button" class="ghost sm" data-action="close-panel" aria-label="Close">✕</button></div>
   {{template "monitor-form" .NewForm}}
 </aside>
 <dialog id="confirm"><form method="dialog"><p>Are you sure?</p><div class="btns"><button value="yes" class="danger">Yes, continue</button><button value="no">Cancel</button></div></form></dialog>

@@ -3,7 +3,7 @@
   <div><h1>Monitors</h1><div class="sub">{{len .Rows}} configured</div></div>
   <div class="btns">
     <div class="search">{{template "i-search"}}<input data-search placeholder="Search  /" aria-label="Search monitors"></div>
-    <button type="button" class="primary" onclick="openPanel()">{{template "i-plus"}}New monitor</button>
+    <button type="button" class="primary" data-action="open-panel">{{template "i-plus"}}New monitor</button>
   </div>
 </div>
 {{if .Rows}}

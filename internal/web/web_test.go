@@ -465,9 +465,53 @@ func TestLogoutRevokesSession(t *testing.T) {
 func TestClientKeyTrustProxy(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/login", nil)
 	r.RemoteAddr = "10.0.0.1:4444"
-	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
-	if clientKey(r, false) != "10.0.0.1" || clientKey(r, true) != "203.0.113.9" {
-		t.Errorf("clientKey: %s / %s", clientKey(r, false), clientKey(r, true))
+	// The client claimed 6.6.6.6; our proxy appended the real address.
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.9")
+	if got := clientKey(r, 0); got != "10.0.0.1" {
+		t.Errorf("without trust_proxy: %s", got)
+	}
+	if got := clientKey(r, 1); got != "203.0.113.9" {
+		t.Errorf("one trusted proxy should use the rightmost entry, got %s", got)
+	}
+	// CDN in front of nginx: nginx appends the CDN's address too.
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.9, 198.51.100.7")
+	if got := clientKey(r, 2); got != "203.0.113.9" {
+		t.Errorf("two trusted proxies: %s", got)
+	}
+	for xff, want := range map[string]string{
+		"6.6.6.6, 203.0.113.9:51234": "203.0.113.9",
+		"6.6.6.6, [2001:db8::7]:443": "2001:db8::7",
+		"6.6.6.6, 2001:db8::8":       "2001:db8::8",
+		"6.6.6.6,203.0.113.10":       "203.0.113.10",
+	} {
+		r.Header.Set("X-Forwarded-For", xff)
+		if got := clientKey(r, 1); got != want {
+			t.Errorf("X-Forwarded-For %q: got %s, want %s", xff, got, want)
+		}
+	}
+	r.Header.Del("X-Forwarded-For")
+	r.Header.Set("X-Real-IP", "203.0.113.5")
+	if got := clientKey(r, 1); got != "203.0.113.5" {
+		t.Errorf("X-Real-IP fallback: %s", got)
+	}
+}
+
+func TestLoginLimiterNotBypassedBySpoofedXFF(t *testing.T) {
+	e := newEnv(t, "pw")
+	e.cfg.TrustProxy = true
+	var last int
+	for i := 0; i < 8; i++ {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader("password=wrong"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i)+", 9.9.9.9")
+		resp, err := e.client(t).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = resp.StatusCode
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("rotating the spoofable X-Forwarded-For entry must not reset the limit, got %d", last)
 	}
 }
 
@@ -496,7 +540,7 @@ func TestReviewRegressions(t *testing.T) {
 	// backTo keeps the query and drops the old flash.
 	r := httptest.NewRequest(http.MethodPost, "/x", nil)
 	r.Host = "h"
-	r.Header.Set("Referer", "http://h/incidents?ongoing=1&msg=old")
+	r.Header.Set("Referer", "http://h/incidents?ongoing=1&msg=old&sig=x")
 	if got := backTo(r, "/"); got != "/incidents?ongoing=1" {
 		t.Fatalf("backTo = %q", got)
 	}

@@ -2,8 +2,8 @@
 <div class="topbar">
   <div><h1>Incidents</h1><div class="sub">{{if gt .Unacked 0}}{{.Unacked}} ongoing and unacknowledged{{else}}Nothing needs your attention{{end}}</div></div>
   <form method="get" class="btns">
-    <select name="target" onchange="this.form.submit()" style="width:auto"><option value="">All monitors</option>{{range .Targets}}<option value="{{.ID}}" {{if eq .ID $.Filter.TargetID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
-    <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--text)"><input type="checkbox" name="ongoing" value="1" {{if .Filter.OngoingOnly}}checked{{end}} onchange="this.form.submit()">Ongoing only</label>
+    <select name="target" data-autosubmit style="width:auto"><option value="">All monitors</option>{{range .Targets}}<option value="{{.ID}}" {{if eq .ID $.Filter.TargetID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:13px;color:var(--text)"><input type="checkbox" name="ongoing" value="1" {{if .Filter.OngoingOnly}}checked{{end}} data-autosubmit>Ongoing only</label>
   </form>
 </div>
 {{if .Incidents}}

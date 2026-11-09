@@ -7,14 +7,14 @@
 <div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
   <div class="card">
     <div class="head"><h2 style="display:flex;gap:10px;align-items:center"><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" name="tg_enabled" value="1" {{if not .N.Telegram.Disabled}}checked{{end}}>Telegram</label></h2>{{template "chan-status" (index .Last "telegram")}}</div>
-    <div class="field" style="margin-top:12px"><label>Bot token</label><input name="tg_token" type="password" value="{{.N.Telegram.BotToken}}" autocomplete="off" placeholder="123456:ABC-DEF"><div class="help">Create a bot with @BotFather, then message it once.</div></div>
+    <div class="field" style="margin-top:12px"><label>Bot token</label><input name="tg_token" type="password" value="" autocomplete="new-password" placeholder="{{if .Saved.tg_token}}Saved · leave blank to keep{{else}}123456:ABC-DEF{{end}}"><div class="help">Create a bot with @BotFather, then message it once.</div></div>
     <div class="field"><label>Chat ID</label><input name="tg_chat" value="{{.N.Telegram.ChatID}}" placeholder="-1001234567890"></div>
-    {{if .Has.telegram}}<div style="margin-top:12px"><button type="submit" formaction="/alerts/test" name="channel" value="telegram" class="sm">Save and send test</button></div>{{end}}
+    {{template "chan-actions" (dict "Has" .Has.telegram "Stored" .Stored.telegram "Channel" "telegram" "Clear" "tg_clear")}}
   </div>
   <div class="card">
     <div class="head"><h2 style="display:flex;gap:10px;align-items:center"><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" name="slack_enabled" value="1" {{if not .N.Slack.Disabled}}checked{{end}}>Slack</label></h2>{{template "chan-status" (index .Last "slack")}}</div>
-    <div class="field" style="margin-top:12px"><label>Incoming webhook URL</label><input name="slack_url" type="password" value="{{.N.Slack.WebhookURL}}" autocomplete="off" placeholder="https://hooks.slack.com/services/…"><div class="help">Slack → Apps → Incoming Webhooks. Works for Discord and Mattermost compatible hooks too.</div></div>
-    {{if .Has.slack}}<div style="margin-top:12px"><button type="submit" formaction="/alerts/test" name="channel" value="slack" class="sm">Save and send test</button></div>{{end}}
+    <div class="field" style="margin-top:12px"><label>Incoming webhook URL</label><input name="slack_url" type="password" value="" autocomplete="new-password" placeholder="{{if .Saved.slack_url}}Saved · leave blank to keep{{else}}https://hooks.slack.com/services/…{{end}}"><div class="help">Slack → Apps → Incoming Webhooks. Works for Discord and Mattermost compatible hooks too.</div></div>
+    {{template "chan-actions" (dict "Has" .Has.slack "Stored" .Stored.slack "Channel" "slack" "Clear" "slack_clear")}}
   </div>
   <div class="card">
     <div class="head"><h2 style="display:flex;gap:10px;align-items:center"><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" name="email_enabled" value="1" {{if not .N.Email.Disabled}}checked{{end}}>Email</label></h2>{{template "chan-status" (index .Last "email")}}</div>
@@ -24,15 +24,21 @@
     </div>
     <div class="frow" style="margin-top:10px">
       <div class="field"><label>Username</label><input name="smtp_user" value="{{.N.Email.Username}}" autocomplete="off"></div>
-      <div class="field"><label>Password</label><input name="smtp_pass" type="password" value="{{.N.Email.Password}}" autocomplete="off"></div>
+      <div class="field"><label>Password</label><input name="smtp_pass" type="password" value="" autocomplete="new-password"{{if .Saved.smtp_pass}} placeholder="Saved · leave blank to keep"{{end}}></div>
     </div>
+    <div class="help" style="margin-top:4px">Port 465 uses TLS directly; other ports upgrade with STARTTLS. Passwords are only sent over an encrypted connection.</div>
     <div class="field" style="margin-top:10px"><label>From</label><input name="smtp_from" value="{{.N.Email.From}}" placeholder="uptime@example.com"></div>
     <div class="field" style="margin-top:10px"><label>To (comma separated)</label><input name="smtp_to" value="{{.To}}" placeholder="you@example.com, ops@example.com"></div>
-    {{if .Has.email}}<div style="margin-top:12px"><button type="submit" formaction="/alerts/test" name="channel" value="email" class="sm">Save and send test</button></div>{{end}}
+    {{template "chan-actions" (dict "Has" .Has.email "Stored" .Stored.email "Channel" "email" "Clear" "email_clear")}}
   </div>
 </div>
 <div class="btns" style="margin-top:16px"><button type="submit" class="primary">Save channels</button><span class="small muted">Unticked channels keep their settings but send nothing. Mute a single monitor from its page.</span></div>
 </form>
 {{end}}
+
+{{define "chan-actions"}}{{if or .Has .Stored}}<div class="btns" style="margin-top:12px;justify-content:space-between">
+  {{if .Has}}<button type="submit" formaction="/alerts/test" name="channel" value="{{.Channel}}" class="sm">Save and send test</button>{{else}}<span></span>{{end}}
+  {{if .Stored}}<label style="display:flex;gap:6px;align-items:center;margin:0;font-size:12px"><input type="checkbox" name="{{.Clear}}" value="1">Remove these settings</label>{{end}}
+</div>{{end}}{{end}}
 
 {{define "chan-status"}}{{if .Channel}}<span class="badge {{if .OK}}up{{else}}down{{end}}" title="{{.Error}}">last {{.Event}} {{if .OK}}delivered{{else}}failed{{end}} {{ago .SentAt}}</span>{{else}}<span class="badge">no deliveries yet</span>{{end}}{{end}}

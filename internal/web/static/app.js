@@ -37,7 +37,7 @@
       el.remove();
     });
     if (location.search.indexOf('msg=') >= 0) {
-      var u = new URL(location.href); u.searchParams.delete('msg');
+      var u = new URL(location.href); u.searchParams.delete('msg'); u.searchParams.delete('sig');
       history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
     }
   }
@@ -156,7 +156,7 @@
         main.innerHTML = html;
         wire(main);
         if (qv) { var nq = $('[data-search]'); if (nq) { nq.value = qv; nq.dispatchEvent(new Event('input')); } }
-        var u = $('[data-updated]'); if (u) u.textContent = 'Updated just now';
+        markUpdated();
       })
       .catch(function () { })
       .then(function () { refreshing = false; if (pending) { pending = false; schedule(); } });
@@ -169,6 +169,26 @@
     es.onopen = function () { if (dot) dot.classList.remove('off'); schedule(); }; // catch up on anything missed while disconnected
     es.onmessage = function () { schedule(); };
     es.onerror = function () { if (dot) dot.classList.add('off'); };
+  }
+
+  // ---- declarative actions (no inline handlers, so the CSP can forbid inline script) ----
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-action]') : null; if (!el) return;
+    var a = el.getAttribute('data-action');
+    if (a === 'open-panel') openPanel();
+    else if (a === 'close-panel') closePanel();
+    else if (a === 'theme') cycleTheme();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.hasAttribute && e.target.hasAttribute('data-autosubmit') && e.target.form) e.target.form.submit();
+  });
+
+  // ---- "updated" footer ----
+  function markUpdated() { var u = $('[data-updated]'); if (u) { u._t = Date.now(); u.textContent = 'Updated just now'; } }
+  function tickUpdated() {
+    var u = $('[data-updated]'); if (!u || !u._t) return;
+    var s = Math.round((Date.now() - u._t) / 1000);
+    u.textContent = s < 5 ? 'Updated just now' : s < 60 ? 'Updated ' + s + 's ago' : 'Updated ' + Math.round(s / 60) + 'm ago';
   }
 
   // ---- shortcuts ----
@@ -193,6 +213,7 @@
   function wire(root) { wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
   document.addEventListener('DOMContentLoaded', function () {
     liftFlash(); wire(document); wirePanel(); connect();
-    setInterval(function () { var u = $('[data-updated]'); if (u && u._t) u.textContent = 'Updated ' + Math.round((Date.now() - u._t) / 1000) + 's ago'; }, 5000);
+    markUpdated();
+    setInterval(tickUpdated, 5000);
   });
 })();
