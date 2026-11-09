@@ -1,14 +1,18 @@
 package notify
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/smtp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,6 +84,145 @@ func TestEmailBuildsMessage(t *testing.T) {
 	}
 	if gotAddr != "smtp.test:2525" || len(gotTo) != 2 || !strings.Contains(gotMsg, "Subject: [uptime] api is DOWN") {
 		t.Errorf("addr=%s to=%v msg=%q", gotAddr, gotTo, gotMsg)
+	}
+}
+
+// fakeSMTP runs a minimal SMTP server that accepts one message and returns
+// what was received on the channel.
+func fakeSMTP(t *testing.T) (port int, got <-chan string) {
+	port, got, _ = fakeSMTPAt(t, "127.0.0.1", "250 8BITMIME")
+	return port, got
+}
+
+// fakeSMTPAt listens on host, answers EHLO with the given final extension
+// line, and records every command it receives.
+func fakeSMTPAt(t *testing.T, host, ext string) (port int, got <-chan string, cmds func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	cmds = func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), seen...) }
+	ln, err := net.Listen("tcp", host+":0")
+	if err != nil {
+		if host != "127.0.0.1" {
+			// e.g. macOS only configures 127.0.0.1 on the loopback interface.
+			t.Skipf("cannot listen on %s: %v", host, err)
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	ch := make(chan string, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		fmt.Fprint(conn, "220 fake ESMTP\r\n")
+		var data strings.Builder
+		inData := false
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if inData {
+				if line == ".\r\n" {
+					inData = false
+					fmt.Fprint(conn, "250 queued\r\n")
+					continue
+				}
+				data.WriteString(line)
+				continue
+			}
+			cmd := strings.ToUpper(strings.TrimSpace(line))
+			mu.Lock()
+			seen = append(seen, cmd)
+			mu.Unlock()
+			switch {
+			case strings.HasPrefix(cmd, "EHLO"):
+				fmt.Fprint(conn, "250-fake\r\n"+ext+"\r\n")
+			case cmd == "DATA":
+				inData = true
+				fmt.Fprint(conn, "354 go ahead\r\n")
+			case cmd == "QUIT":
+				fmt.Fprint(conn, "221 bye\r\n")
+				ch <- data.String()
+				return
+			default:
+				fmt.Fprint(conn, "250 ok\r\n")
+			}
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, ch, cmds
+}
+
+func TestEmailDeliversOverSMTP(t *testing.T) {
+	port, got := fakeSMTP(t)
+	e := Email{Host: "127.0.0.1", Port: port, From: "mon@example.com", To: []string{"ops@example.com"}}
+	if err := e.Notify(context.Background(), Event{Target: "api ✓", URL: "https://a", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	msg := <-got
+	for _, want := range []string{"Subject: =?utf-8?q?", "Date: ", "Message-ID: <", "@example.com>", "DOWN: api"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestEmailRefusesPlaintextAuth(t *testing.T) {
+	// The server offers AUTH but not STARTTLS. 127.0.0.2 is not one of the
+	// names net/smtp treats as localhost, so this is a "remote" server and
+	// credentials must not be sent over the unencrypted connection.
+	port, _, cmds := fakeSMTPAt(t, "127.0.0.2", "250 AUTH PLAIN LOGIN")
+	e := Email{Host: "127.0.0.2", Port: port, Username: "u", Password: "secret", From: "a@b", To: []string{"c@d"}}
+	if err := e.Notify(context.Background(), Event{Target: "x"}); err == nil {
+		t.Fatal("expected an error instead of sending credentials in plain text")
+	}
+	for _, c := range cmds() {
+		if strings.HasPrefix(c, "AUTH") {
+			t.Fatalf("credentials were sent without TLS: %q", c)
+		}
+	}
+	if len(cmds()) == 0 {
+		t.Fatal("the client never reached the server; the test proves nothing")
+	}
+}
+
+func TestEmailTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			defer c.Close()
+			time.Sleep(5 * time.Second) // never greets
+		}
+	}()
+	e := Email{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port, From: "a@b", To: []string{"c@d"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := e.Notify(ctx, Event{Target: "x"}); err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("stalled server should be abandoned at the deadline, took %s", d)
+	}
+}
+
+func TestEmailHeaderInjection(t *testing.T) {
+	var gotMsg string
+	e := Email{Host: "h", Port: 25, From: "a@b", To: []string{"c@d"},
+		SendMail: func(_ string, _ smtp.Auth, _ string, _ []string, msg []byte) error { gotMsg = string(msg); return nil }}
+	e.Notify(context.Background(), Event{Target: "x\r\nBcc: evil@example.com"})
+	headers, _, _ := strings.Cut(gotMsg, "\r\n\r\n")
+	if strings.Contains(headers, "\r\nBcc:") {
+		t.Fatalf("header injected:\n%s", gotMsg)
 	}
 }
 
