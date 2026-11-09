@@ -34,17 +34,66 @@ build step for the frontend.
 ```bash
 cp config.example.json config.json
 # edit targets; set UPTIME_ADMIN_PASSWORD or put a password in the file
-go run . -config config.json
+UPTIME_ADMIN_PASSWORD='a-long-random-password' go run . -config config.json
 ```
 
 Open http://localhost:8080. The public status page is at `/status`.
 
+The server refuses to start with an empty password unless it listens on a
+loopback address (`127.0.0.1:8080`), so an unset `UPTIME_ADMIN_PASSWORD`
+cannot silently expose the dashboard.
+
 With Docker:
 
 ```bash
-mkdir -p data && cp config.example.json data/config.json
-UPTIME_ADMIN_PASSWORD=choose-one docker compose up -d
+cp config.example.json config.json   # keep it readable (0644): the container reads it as a non-root user
+echo "UPTIME_ADMIN_PASSWORD=$(openssl rand -base64 24)" > .env
+docker compose up -d
 ```
+
+The config is mounted read-only at `/etc/uptime-monitor/config.json` and the
+database lives in the `uptime-monitor-data` volume at `/data`. The container
+runs as a non-root user with a read-only root filesystem and a health check
+on `/healthz` (which assumes the default `listen` of `:8080`). If a reverse
+proxy on the same host fronts it, publish the port as `127.0.0.1:8080:8080`
+(see the comment in `docker-compose.yml`).
+
+## Upgrading
+
+From a release before the production hardening:
+
+- **Empty password.** The server now refuses to start with an empty
+  `admin_password` on a non-loopback `listen`. Set a password, listen on
+  `127.0.0.1`, or, if something in front already authenticates users, set
+  `"insecure_no_auth": true`.
+- **`retention`** must be at least `24h`.
+- **Docker, original layout** (`./data:/data` with `data/config.json`): it keeps
+  working. Without `-config` the binary uses `/data/config.json` when it
+  exists. To keep that layout with the new `docker-compose.yml`, replace its
+  two volume lines with `- ./data:/data`.
+- **Docker: the password is now required.** The old `docker-compose.yml`
+  fell back to the password `change-me`; the new one refuses to run any
+  command, `docker compose down` included, until `UPTIME_ADMIN_PASSWORD` is
+  set. Do this first:
+
+  ```bash
+  echo "UPTIME_ADMIN_PASSWORD=$(openssl rand -base64 24)" > .env
+  ```
+
+- **Docker, moving to the new layout** (named volume `uptime-monitor-data`,
+  config outside it), after creating `.env`:
+
+  ```bash
+  docker compose down
+  cp data/config.json ./config.json && chmod 644 config.json
+  docker compose up --no-start   # creates the uptime-monitor-data volume
+  docker run --rm -v "$PWD/data:/old:ro" -v uptime-monitor-data:/data alpine \
+    sh -c 'cp -a /old/uptime.db* /data/ && chown -R 10001:10001 /data'
+  docker compose up -d
+  ```
+
+  The first start builds the daily uptime rollups from existing checks and
+  logs when it is done.
 
 ## Configuration
 
@@ -54,13 +103,30 @@ UPTIME_ADMIN_PASSWORD=choose-one docker compose up -d
 |---|---|---|
 | `listen` | `:8080` | address to serve on |
 | `db` | `uptime.db` | SQLite file |
-| `admin_password` | empty | protects everything except `/status` and `/healthz`; empty means no login |
-| `trust_proxy` | `false` | behind a reverse proxy, read the client IP from `X-Forwarded-For` for login rate limiting |
+| `admin_password` | empty | protects everything except `/status` and `/healthz`; empty means no login and is only allowed on a loopback `listen` |
+| `insecure_no_auth` | `false` | allow an empty password on a non-loopback address (not recommended) |
+| `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login rate limiting) and `X-Forwarded-Proto` (secure cookies) |
+| `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
-| `retention` | `168h` | checks older than this are pruned hourly |
+| `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
 | `targets[]` | | `name`, `url`, optional `interval`, `timeout`, `expect_status`, `keyword`, `group` |
 | `notify` | | `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
+
+Uptime is also rolled up per day and kept for 400 days, independent of
+`retention`, so the 30-day uptime figures and the 90-day status page history
+stay accurate with a short raw retention. A channel whose fields are all
+empty (for example `${TELEGRAM_BOT_TOKEN}` with the variable unset) is
+treated as not configured.
+
+Command-line flags:
+
+| Flag | Meaning |
+|---|---|
+| `-config path` | config file (default: the first that exists of `./config.json`, `/etc/uptime-monitor/config.json`, `/etc/uptime-monitor.json`) |
+| `-log-format text\|json` | log output format (default `text`; the Docker image uses `json`) |
+| `-backup path` | write a consistent copy of the database to `path` (which must not exist) and exit; safe while the monitor is running; fails if the configured database does not exist |
+| `-version` | print the version and exit |
 
 Targets in the config file are added to the database on first start. After
 that the browser is the source of truth: edits and additions made in the UI
@@ -76,7 +142,7 @@ All endpoints need the admin session cookie when a password is set.
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
 - `GET /api/maintenance` active and upcoming maintenance windows
 - `GET /events` Server-Sent Events stream of state changes (admin session required)
-- `GET /healthz` liveness
+- `GET /healthz` health check: `200 ok` when the database answers, `503` otherwise
 
 ## Layout
 
@@ -87,8 +153,43 @@ internal/store        SQLite schema and queries
 internal/monitor      scheduler, HTTP probe, state machine, alert dispatch
 internal/notify       Telegram, Slack, email, log channels
 internal/web          handlers, templates, auth, SVG charts
-deploy/               systemd unit
+deploy/               hardened systemd unit
 ```
+
+## Running in production
+
+1. Run behind a TLS-terminating reverse proxy (Caddy, nginx, Traefik) and set
+   `"trust_proxy": true` so secure cookies and per-client login rate limiting
+   work. The proxy must append the client address to `X-Forwarded-For` (Caddy
+   and Traefik do by default; in nginx use
+   `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A proxy
+   that only sets `X-Real-IP` and passes the client's own `X-Forwarded-For`
+   through is not safe with `trust_proxy`. Do not set it if clients can reach
+   the server directly. Configure HSTS at the proxy if
+   you want it.
+2. Use a long random admin password, passed through the environment
+   (`UPTIME_ADMIN_PASSWORD`), not written in the config file.
+3. Back up the database on a schedule, e.g. daily from cron:
+
+   ```bash
+   # bare metal / systemd: run from the state directory, because a relative
+   # "db" path in the config is resolved against the working directory
+   cd /var/lib/uptime-monitor && uptime-monitor -config /etc/uptime-monitor.json -backup /backups/uptime-$(date +%F).db
+   # docker compose
+   docker compose exec uptime uptime-monitor -backup /data/backup-$(date +%F).db
+   ```
+
+   The command prints the absolute path of the database it copied and fails
+   if that database does not exist, so a wrong path cannot produce an empty
+   backup. Backups are created with mode `0600`.
+
+4. Point your orchestrator or external monitor at `/healthz`.
+5. For systemd: create the user (`useradd --system uptime`), install the binary to
+   `/usr/local/bin`, the config to `/etc/uptime-monitor.json`, secrets to
+   `/etc/uptime-monitor.env` (mode 600), then `systemctl enable --now uptime-monitor`.
+
+Build with a version stamp: `go build -ldflags "-X main.version=1.2.3" .` or
+`docker compose build --build-arg VERSION=1.2.3`.
 
 ## Development
 
@@ -100,6 +201,12 @@ go vet ./...
 ## Notes
 
 - SQLite runs in WAL mode through a pure-Go driver, so the binary cross-compiles without cgo.
-- Secrets saved from the Alerts page are stored in the database in plain text. Keep the database file private.
+- Secrets saved from the Alerts page are stored in the database in plain text. The database (and backups) are created with mode `0600`; keep them private. Saved secrets are never sent back to the browser: the Alerts page shows them as "Saved", a blank field keeps the stored value, and "Remove these settings" deletes a channel.
 - Login sessions are random tokens kept in memory for 30 days; a restart logs everyone out and logout revokes the token immediately.
-- State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts even with no password set.
+- State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts even with no password set. Request bodies are capped at 1 MB.
+- Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public `/status` page may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
+- Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
+- Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
+- The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy, so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.
+- The admin password is compared in constant time, and failed logins are rate limited per client address.
+- Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.
