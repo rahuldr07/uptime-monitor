@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -181,8 +183,32 @@ CREATE TABLE IF NOT EXISTS maintenance (
 CREATE INDEX IF NOT EXISTS idx_maintenance_time ON maintenance(starts_at, ends_at);
 `
 
+// dailySchema holds per-day rollups of checks made outside maintenance. Raw
+// checks are pruned after the retention period; rollups are what keep the
+// 30-day uptime and the 90-day status history accurate.
+const dailySchema = `
+CREATE TABLE daily (
+	target_id INTEGER NOT NULL,
+	day       INTEGER NOT NULL, -- days since the Unix epoch, UTC
+	total     INTEGER NOT NULL,
+	ok        INTEGER NOT NULL,
+	lat_sum   INTEGER NOT NULL, -- sum of latency_ms over successful checks
+	PRIMARY KEY (target_id, day)
+) WITHOUT ROWID;
+INSERT INTO daily (target_id, day, total, ok, lat_sum)
+	SELECT target_id, checked_at / 86400000, COUNT(*), COALESCE(SUM(ok), 0),
+	       COALESCE(SUM(CASE WHEN ok = 1 THEN latency_ms END), 0)
+	FROM checks WHERE maint = 0 GROUP BY target_id, checked_at / 86400000;
+`
+
+const dayMS = 86400000
+
 // Open opens or creates the database at path and ensures the schema exists.
+// The file holds alert credentials, so it is created readable by the owner only.
 func Open(path string) (*Store, error) {
+	if err := restrictPerms(path); err != nil {
+		return nil, err
+	}
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -201,8 +227,28 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// migrate adds columns introduced after the first release. ALTER TABLE ADD
-// COLUMN is idempotent here because we check the column list first.
+// restrictPerms creates the database file with mode 0600, or tightens an
+// existing file and its WAL/SHM companions to that mode.
+func restrictPerms(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("open database file: %w", err)
+	}
+	f.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		fi, err := os.Stat(p)
+		if err != nil || fi.Mode().Perm()&0o077 == 0 {
+			continue
+		}
+		if err := os.Chmod(p, 0o600); err != nil {
+			return fmt.Errorf("restrict permissions on %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// migrate adds columns and tables introduced after the first release. Each
+// step checks the current schema first, so it is safe to run on every start.
 func migrate(db *sql.DB) error {
 	adds := []struct{ table, col, def string }{
 		{"targets", "grp", "TEXT NOT NULL DEFAULT ''"},
@@ -222,6 +268,29 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", a.table, a.col, a.def)); err != nil {
 			return err
 		}
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'daily'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		// Create and backfill in one transaction so a crash cannot leave an
+		// empty rollup table that would never be backfilled. On a large
+		// database this takes a while before the server starts listening.
+		slog.Info("building daily uptime rollups from existing checks (one-time upgrade)")
+		start := time.Now()
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(dailySchema); err != nil {
+			return fmt.Errorf("create daily rollups: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		slog.Info("daily uptime rollups built", "took", time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
@@ -249,6 +318,54 @@ func hasColumn(db *sql.DB, table, col string) (bool, error) {
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// Backup writes a consistent copy of the database at src to dest. It is safe
+// to run while the monitor is using the database. The source is opened
+// read-only and must already exist, so a wrong path fails loudly instead of
+// producing an empty "backup". dest must not exist; it is created with mode
+// 0600 before any data is written, since it contains alert credentials.
+func Backup(ctx context.Context, src, dest string) (err error) {
+	fi, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("backup: source database: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("backup: source %s is not a regular file", src)
+	}
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	f.Close()
+	defer func() {
+		if err != nil {
+			os.Remove(dest)
+		}
+	}()
+	db, err := sql.Open("sqlite", "file:"+src+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return fmt.Errorf("backup: open source: %w", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'targets'`).Scan(&n); err != nil {
+		return fmt.Errorf("backup: read source: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("backup: %s is not an uptime-monitor database", src)
+	}
+	// VACUUM INTO accepts an existing empty file and keeps its permissions.
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, dest); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	return nil
+}
+
+// Ping checks that the database answers a query.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one)
+}
 
 // ---- targets ----
 
@@ -366,6 +483,7 @@ func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
 		`DELETE FROM alerts WHERE target_id = ?`,
 		`DELETE FROM incidents WHERE target_id = ?`,
 		`DELETE FROM checks WHERE target_id = ?`,
+		`DELETE FROM daily WHERE target_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return err
@@ -398,12 +516,32 @@ func scanCheck(sc scanner) (Check, error) {
 	return c, nil
 }
 
-// InsertCheck records a check.
+// InsertCheck records a check and, unless it was made during maintenance,
+// adds it to that day's rollup.
 func (s *Store) InsertCheck(ctx context.Context, c Check) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO checks (target_id, checked_at, ok, status_code, latency_ms, error, maint) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.TargetID, c.CheckedAt.UnixMilli(), boolToInt(c.OK), c.StatusCode, c.LatencyMS, c.Error, boolToInt(c.Maintenance))
-	return err
+		c.TargetID, c.CheckedAt.UnixMilli(), boolToInt(c.OK), c.StatusCode, c.LatencyMS, c.Error, boolToInt(c.Maintenance)); err != nil {
+		return err
+	}
+	if !c.Maintenance {
+		var lat int64
+		if c.OK {
+			lat = c.LatencyMS
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO daily (target_id, day, total, ok, lat_sum) VALUES (?, ?, 1, ?, ?)
+			 ON CONFLICT(target_id, day) DO UPDATE SET total = total + 1, ok = ok + excluded.ok, lat_sum = lat_sum + excluded.lat_sum`,
+			c.TargetID, c.CheckedAt.UnixMilli()/dayMS, boolToInt(c.OK), lat); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // LatestCheck returns the most recent check for a target, or ErrNotFound.
@@ -468,23 +606,25 @@ func (s *Store) Stats(ctx context.Context, targetID int64, since time.Time) (Sta
 	return st, nil
 }
 
-// DailyUptime returns per-day uptime percentages for the last days days,
-// oldest first. Days with no checks have Total 0.
+// DailyUptime returns per-day (UTC) stats for the last days days, oldest
+// first, from the rollups. Days with no checks have Total 0.
 func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, days int) ([]Stats, error) {
 	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT (checked_at / 86400000) AS day, COUNT(*), COALESCE(SUM(ok), 0)
-		 FROM checks WHERE maint = 0 AND target_id = ? AND checked_at >= ? GROUP BY day`, targetID, start.UnixMilli())
+		`SELECT day, total, ok, lat_sum FROM daily WHERE target_id = ? AND day >= ?`, targetID, start.UnixMilli()/dayMS)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	byDay := map[int64]Stats{}
 	for rows.Next() {
-		var day int64
+		var day, latSum int64
 		var st Stats
-		if err := rows.Scan(&day, &st.Total, &st.OKCount); err != nil {
+		if err := rows.Scan(&day, &st.Total, &st.OKCount, &latSum); err != nil {
 			return nil, err
+		}
+		if st.OKCount > 0 {
+			st.AvgLatencyMS = float64(latSum) / float64(st.OKCount)
 		}
 		byDay[day] = st
 	}
@@ -493,10 +633,31 @@ func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, 
 	}
 	out := make([]Stats, days)
 	for i := 0; i < days; i++ {
-		day := start.AddDate(0, 0, i).UnixMilli() / 86400000
-		out[i] = byDay[day]
+		out[i] = byDay[start.AddDate(0, 0, i).UnixMilli()/dayMS]
 	}
 	return out, nil
+}
+
+// RollupStats aggregates the daily rollups of whole UTC days from the one
+// containing since up to now. It covers periods longer than the raw check
+// retention; the first day is counted in full, so the window can be up to a
+// day longer than asked. A targetID of 0 aggregates across all targets.
+func (s *Store) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
+	q := `SELECT COALESCE(SUM(total), 0), COALESCE(SUM(ok), 0), COALESCE(SUM(lat_sum), 0) FROM daily WHERE day >= ?`
+	args := []any{since.UnixMilli() / dayMS}
+	if targetID != 0 {
+		q += ` AND target_id = ?`
+		args = append(args, targetID)
+	}
+	var st Stats
+	var latSum int64
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&st.Total, &st.OKCount, &latSum); err != nil {
+		return Stats{}, err
+	}
+	if st.OKCount > 0 {
+		st.AvgLatencyMS = float64(latSum) / float64(st.OKCount)
+	}
+	return st, nil
 }
 
 // Latencies returns the latencies of successful checks since the given
@@ -574,6 +735,15 @@ func (s *Store) HourlyUptime(ctx context.Context, targetID int64, now time.Time,
 // Prune deletes checks older than before and returns how many were removed.
 func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM checks WHERE checked_at < ?`, before.UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneRollups deletes daily rollups for days that ended before before.
+func (s *Store) PruneRollups(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM daily WHERE day < ?`, before.UnixMilli()/dayMS)
 	if err != nil {
 		return 0, err
 	}

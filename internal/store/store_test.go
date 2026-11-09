@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -238,5 +239,120 @@ func TestMaintenanceChecksExcludedFromUptime(t *testing.T) {
 	recent, _ := s.RecentChecks(ctx, tg.ID, 10)
 	if len(recent) != 3 || !recent[0].Maintenance || recent[2].Maintenance {
 		t.Fatalf("recent: %+v", recent)
+	}
+}
+
+func TestRollupsOutliveRawChecks(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	// 20 days of history: one ok and one failed check per day, plus one
+	// maintenance failure that must not count.
+	for d := 0; d < 20; d++ {
+		at := now.AddDate(0, 0, -d)
+		s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: at, OK: true, LatencyMS: 100})
+		s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: at.Add(time.Minute), OK: false})
+		s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: at.Add(2 * time.Minute), OK: false, Maintenance: true})
+	}
+	// Raw checks are kept for 7 days only.
+	if _, err := s.Prune(ctx, now.AddDate(0, 0, -7)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.RollupStats(ctx, tg.ID, now.AddDate(0, 0, -29))
+	if err != nil || st.Total != 40 || st.OKCount != 20 || st.AvgLatencyMS != 100 {
+		t.Fatalf("30d rollup after prune: %v %+v", err, st)
+	}
+	days, _ := s.DailyUptime(ctx, tg.ID, now, 90)
+	filled := 0
+	for _, d := range days {
+		if d.Total > 0 {
+			filled++
+		}
+	}
+	if filled != 20 || days[89].Total != 2 {
+		t.Fatalf("90-day history should keep all 20 days after prune, got %d", filled)
+	}
+	if all, _ := s.RollupStats(ctx, 0, now.AddDate(0, 0, -29)); all.Total != 40 {
+		t.Fatalf("all-target rollup: %+v", all)
+	}
+	// Days 11..19 ago end before the cutoff day; day 10 ago is kept.
+	if n, err := s.PruneRollups(ctx, now.AddDate(0, 0, -10)); err != nil || n != 9 {
+		t.Fatalf("prune rollups: %v %d", err, n)
+	}
+	if err := s.DeleteTarget(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.RollupStats(ctx, 0, time.Time{}); st.Total != 0 {
+		t.Fatalf("rollups should be deleted with the target: %+v", st)
+	}
+}
+
+func TestRollupBackfillAndPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now, OK: true, LatencyMS: 50})
+	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(-24 * time.Hour), OK: false})
+	// Simulate a database from before rollups existed.
+	if _, err := s.db.Exec(`DROP TABLE daily`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if st, _ := s.RollupStats(ctx, tg.ID, now.AddDate(0, 0, -7)); st.Total != 2 || st.OKCount != 1 {
+		t.Fatalf("rollups should be backfilled from existing checks: %+v", st)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("database file should be 0600, got %o", fi.Mode().Perm())
+	}
+	if err := s.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "backup.db")
+	if err := Backup(ctx, path, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := Backup(ctx, path, dest); err == nil {
+		t.Fatal("backup must not overwrite an existing file")
+	}
+	// A wrong source path must fail and must not create anything.
+	missing := filepath.Join(dir, "nope.db")
+	if err := Backup(ctx, missing, filepath.Join(dir, "b2.db")); err == nil {
+		t.Fatal("backing up a missing database must fail")
+	}
+	for _, p := range []string{missing, filepath.Join(dir, "b2.db")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("%s should not have been created", p)
+		}
+	}
+	notDB := filepath.Join(dir, "empty.db")
+	os.WriteFile(notDB, nil, 0o600)
+	if err := Backup(ctx, notDB, filepath.Join(dir, "b3.db")); err == nil {
+		t.Fatal("an empty file is not a database worth backing up")
+	}
+	b, err := Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if got, _ := b.GetTarget(ctx, tg.ID); got.Name != "A" {
+		t.Fatalf("backup should contain the data: %+v", got)
+	}
+	if fi, _ := os.Stat(dest); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("backup should be 0600, got %o", fi.Mode().Perm())
 	}
 }
