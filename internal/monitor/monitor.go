@@ -68,8 +68,49 @@ type Options struct {
 	RetryBase        time.Duration // backoff base for alert retries
 }
 
+// Event is published whenever a target's state or latest check changes.
+type Event struct {
+	TargetID int64  `json:"target_id"`
+	Kind     string `json:"kind"` // "check", "down", "up", "reload", "removed"
+}
+
+// Bus fans Events out to subscribers without blocking the publisher.
+type Bus struct {
+	mu   sync.Mutex
+	subs map[chan Event]struct{}
+}
+
+// Subscribe returns a channel of events and a function to unsubscribe.
+func (b *Bus) Subscribe() (<-chan Event, func()) {
+	ch := make(chan Event, 16)
+	b.mu.Lock()
+	if b.subs == nil {
+		b.subs = map[chan Event]struct{}{}
+	}
+	b.subs[ch] = struct{}{}
+	b.mu.Unlock()
+	return ch, func() {
+		b.mu.Lock()
+		delete(b.subs, ch)
+		b.mu.Unlock()
+	}
+}
+
+func (b *Bus) publish(ev Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.subs {
+		select {
+		case ch <- ev:
+		default: // slow subscriber: drop, it will catch up on the next event
+		}
+	}
+}
+
 // Monitor runs one goroutine per target.
 type Monitor struct {
+	Events Bus
+
 	store     *store.Store
 	logger    *slog.Logger
 	client    *http.Client
@@ -177,8 +218,14 @@ func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
 		st = &state{}
 		m.states[t.ID] = st
 	}
-	st.Target = t
 	runCtx := m.ctx
+	m.mu.Unlock()
+	// Wait for any probe+apply in flight so a state transition cannot land
+	// in the middle of an incident being opened or closed.
+	st.checkMu.Lock()
+	defer st.checkMu.Unlock()
+	m.mu.Lock()
+	st.Target = t
 	m.mu.Unlock()
 
 	if !ok {
@@ -204,6 +251,7 @@ func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
 				return err
 			}
 		}
+		m.Events.publish(Event{TargetID: t.ID, Kind: "reload"})
 		return nil
 	}
 	m.mu.Lock()
@@ -224,18 +272,27 @@ func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
 	m.mu.Unlock()
 	m.wg.Add(1)
 	go m.run(rctx, t.ID)
+	m.Events.publish(Event{TargetID: t.ID, Kind: "reload"})
 	return nil
 }
 
 // Remove stops and forgets a target.
 func (m *Monitor) Remove(id int64) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if cancel, ok := m.cancels[id]; ok {
 		cancel()
 		delete(m.cancels, id)
 	}
+	st := m.states[id]
+	m.mu.Unlock()
+	if st != nil {
+		st.checkMu.Lock() // wait for an in-flight probe so it cannot write after the delete
+		defer st.checkMu.Unlock()
+	}
+	m.mu.Lock()
 	delete(m.states, id)
+	m.mu.Unlock()
+	m.Events.publish(Event{TargetID: id, Kind: "removed"})
 }
 
 // restore sets initial state from stored history so a restart does not
@@ -332,6 +389,15 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	// interleave with the runner between the state change and the store write.
 	st.checkMu.Lock()
 	defer st.checkMu.Unlock()
+	m.mu.Lock()
+	cur, still := m.states[id]
+	if still {
+		t = cur.Target
+	}
+	m.mu.Unlock()
+	if !still || cur != st || t.Paused {
+		return // removed, replaced or paused while we waited
+	}
 	c := Probe(ctx, m.client, t, m.now)
 	if ctx.Err() != nil {
 		return // shutting down; do not record a cancelled probe
@@ -460,6 +526,7 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 	m.mu.Unlock()
 
 	if ev == nil {
+		m.Events.publish(Event{TargetID: id, Kind: "check"})
 		return
 	}
 	if ev.Up {
@@ -478,6 +545,15 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 		st.IncidentID = incidentID
 		m.mu.Unlock()
 		m.logger.Warn("target down", "target", t.Name, "cause", cause)
+	}
+	kind := "down"
+	if ev.Up {
+		kind = "up"
+	}
+	m.Events.publish(Event{TargetID: id, Kind: kind})
+	if t.Muted {
+		m.logger.Info("alerts muted; not notifying", "target", t.Name)
+		return
 	}
 	m.alertWG.Add(1)
 	go m.alert(incidentID, t.ID, *ev)

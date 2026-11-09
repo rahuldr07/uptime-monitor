@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +91,7 @@ func TestAuthFlow(t *testing.T) {
 	if resp, _ := e.get(t, c, "/api/status"); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anon api should be 401, got %d", resp.StatusCode)
 	}
-	if resp, body := e.get(t, c, "/status"); resp.StatusCode != 200 || !strings.Contains(body, "All systems operational") {
+	if resp, body := e.get(t, c, "/status"); resp.StatusCode != 200 || !strings.Contains(body, "No services configured yet") {
 		t.Fatalf("public status page: %d", resp.StatusCode)
 	}
 	if resp, body := e.post(t, c, "/login", url.Values{"password": {"wrong"}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Wrong password") {
@@ -100,8 +101,8 @@ func TestAuthFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("login redirect should be sanitised: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if resp, body := e.get(t, c, "/"); resp.StatusCode != 200 || !strings.Contains(body, "No targets yet") {
-		t.Fatalf("dashboard after login: %d", resp.StatusCode)
+	if resp, body := e.get(t, c, "/"); resp.StatusCode != 200 || !strings.Contains(body, "Welcome") {
+		t.Fatalf("overview after login: %d", resp.StatusCode)
 	}
 	for i := 0; i < 6; i++ {
 		resp, _ = e.post(t, c, "/login", url.Values{"password": {"x"}})
@@ -148,8 +149,16 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 	if _, body := e.get(t, c, "/"); !strings.Contains(body, "All systems operational") || !strings.Contains(body, "Site") {
 		t.Fatal("dashboard should list target as up")
 	}
-	if resp, body := e.get(t, c, "/partials/dashboard"); resp.StatusCode != 200 || strings.Contains(body, "<html") {
-		t.Fatal("partial should not include layout")
+	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+	req.Header.Set("X-Partial", "1")
+	if resp, err := c.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatal("partial request failed")
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if strings.Contains(string(b), "<html") || !strings.Contains(string(b), "Site") {
+			t.Fatal("partial should render content only")
+		}
 	}
 	if _, body := e.get(t, c, loc+"?range=7d"); !strings.Contains(body, `class="active">7d`) {
 		t.Fatal("range switch")
@@ -157,8 +166,8 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 	if resp, _ := e.post(t, c, loc, url.Values{"name": {"Site2"}, "url": {up.URL}, "interval": {"2h"}, "timeout": {"5s"}}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("update: %d", resp.StatusCode)
 	}
-	if _, body := e.get(t, c, "/targets"); !strings.Contains(body, "Site2") || !strings.Contains(body, "2h0m0s") {
-		t.Fatal("targets page should show updated target")
+	if _, body := e.get(t, c, "/targets"); !strings.Contains(body, "Site2") || !strings.Contains(body, "<td>2h</td>") {
+		t.Fatal("monitors page should show updated target")
 	}
 	if resp, _ := e.post(t, c, loc+"/pause", nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatal("pause")
@@ -183,6 +192,126 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 	}
 }
 
+func TestNewEndpoints(t *testing.T) {
+	e := newEnv(t, "")
+	c := e.client(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("fine")) }))
+	defer up.Close()
+
+	// Test URL probe without saving.
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/targets/test", strings.NewReader(url.Values{"url": {up.URL}, "keyword": {"fine"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `"ok": true`) || !strings.Contains(string(b), `"status_code": 200`) {
+		t.Fatalf("test probe: %s", b)
+	}
+	if rows, _ := e.st.ListTargets(context.Background()); len(rows) != 0 {
+		t.Fatal("test must not save a target")
+	}
+
+	// JSON create via the slide-over.
+	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/targets", strings.NewReader(url.Values{"url": {"example.org/x"}, "name": {"Ex"}, "interval": {"1h"}, "timeout": {"5s"}, "group": {"Core"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, _ = c.Do(req)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"redirect": "/targets/`) {
+		t.Fatalf("json create: %d %s", resp.StatusCode, b)
+	}
+	tg, _ := e.st.GetTargetByName(context.Background(), "Ex")
+	if tg.URL != "https://example.org/x" || tg.Group != "Core" {
+		t.Fatalf("scheme should be defaulted and group saved: %+v", tg)
+	}
+	loc := "/targets/" + strconv.FormatInt(tg.ID, 10)
+
+	// Mute toggles and shows on the page.
+	if r, _ := e.post(t, c, loc+"/mute", nil); r.StatusCode != http.StatusSeeOther {
+		t.Fatal("mute")
+	}
+	if _, body := e.get(t, c, loc); !strings.Contains(body, "Unmute alerts") {
+		t.Fatal("page should show unmute after muting")
+	}
+	for _, tab := range []string{"checks", "incidents", "settings"} {
+		if r, body := e.get(t, c, loc+"?tab="+tab); r.StatusCode != 200 || !strings.Contains(body, `class="active"`) {
+			t.Fatalf("tab %s", tab)
+		}
+	}
+
+	// Incident ack + note.
+	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock.Add(-time.Hour), "HTTP 500")
+	if _, body := e.get(t, c, "/incidents"); !strings.Contains(body, "Acknowledge") || !strings.Contains(body, "1 ongoing and unacknowledged") {
+		t.Fatal("incidents page should offer acknowledge")
+	}
+	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/incidents/"+strconv.FormatInt(id, 10)+"/ack", nil)
+	req.Header.Set("Accept", "application/json")
+	resp, _ = c.Do(req)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `"ok": true`) {
+		t.Fatalf("ack: %s", b)
+	}
+	if r, _ := e.post(t, c, "/incidents/"+strconv.FormatInt(id, 10)+"/note", url.Values{"note": {"DB failover"}}); r.StatusCode != http.StatusSeeOther {
+		t.Fatal("note")
+	}
+	if _, body := e.get(t, c, "/incidents"); !strings.Contains(body, "acknowledged") || !strings.Contains(body, `value="DB failover"`) {
+		t.Fatal("incidents page should show ack and note")
+	}
+	if _, body := e.get(t, c, "/api/incidents"); !strings.Contains(body, `"note": "DB failover"`) {
+		t.Fatal("api should include note")
+	}
+
+	// Status page settings and grouping.
+	if r, _ := e.post(t, c, "/status/settings", url.Values{"title": {"Acme status"}, "description": {"All the things"}}); r.StatusCode != http.StatusSeeOther {
+		t.Fatal("status settings")
+	}
+	if _, body := e.get(t, c, "/status"); !strings.Contains(body, "Acme status") || !strings.Contains(body, "All the things") || !strings.Contains(body, `class="group-title">Core`) {
+		t.Fatal("status page should show title, description and group")
+	}
+
+	// Theme cookie is reflected on <html>.
+	req, _ = http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+	req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+	resp, _ = c.Do(req)
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `<html lang="en" data-theme="dark">`) {
+		t.Fatal("theme cookie should set data-theme")
+	}
+
+	// SSE stream delivers an event when a check runs.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/events", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("content type %s", resp.Header.Get("Content-Type"))
+	}
+	e.mon.CheckAsync(tg.ID)
+	buf := make([]byte, 4096)
+	var got string
+	for !strings.Contains(got, "data:") {
+		n, err := resp.Body.Read(buf)
+		got += string(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(got, `"target_id":`+strconv.FormatInt(tg.ID, 10)) {
+		t.Fatalf("expected event for target, got %q", got)
+	}
+}
+
 func TestAlertsSettings(t *testing.T) {
 	e := newEnv(t, "")
 	c := e.client(t)
@@ -193,7 +322,8 @@ func TestAlertsSettings(t *testing.T) {
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "https webhook") {
 		t.Fatalf("validation: %d", resp.StatusCode)
 	}
-	resp, _ = e.post(t, c, "/alerts", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "smtp_host": {"h"}, "smtp_from": {"a@b"}, "smtp_to": {"x@y, z@w"}})
+	resp, _ = e.post(t, c, "/alerts", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}, "slack_url": {"https://hooks.example/x"},
+		"smtp_host": {"h"}, "smtp_from": {"a@b"}, "smtp_to": {"x@y, z@w"}, "email_enabled": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("save: %d", resp.StatusCode)
 	}
@@ -202,7 +332,7 @@ func TestAlertsSettings(t *testing.T) {
 		names = append(names, n.Name)
 	}
 	if strings.Join(names, ",") != "telegram,email" {
-		t.Fatalf("notifiers after save: %v", names)
+		t.Fatalf("notifiers after save (slack unticked should be disabled): %v", names)
 	}
 	if _, body := e.get(t, c, "/alerts"); !strings.Contains(body, "x@y, z@w") || !strings.Contains(body, `value="email"`) {
 		t.Fatal("alerts page should show saved settings and test buttons")
@@ -215,6 +345,9 @@ func TestAlertsSettings(t *testing.T) {
 func TestHelpers(t *testing.T) {
 	if humanDur(90*time.Second) != "1m 30s" || humanDur(26*time.Hour) != "1d 2h" || humanDur(0) != "0s" {
 		t.Error("humanDur")
+	}
+	if shortDur(30*time.Second) != "30s" || shortDur(2*time.Hour) != "2h" || shortDur(90*time.Minute) != "1h30m" || shortDur(10*time.Second) != "10s" {
+		t.Errorf("shortDur: %s %s %s", shortDur(30*time.Second), shortDur(2*time.Hour), shortDur(90*time.Minute))
 	}
 	if humanAgo(time.Second) != "just now" || humanAgo(3*time.Hour) != "3h ago" {
 		t.Error("humanAgo")
@@ -335,5 +468,57 @@ func TestClientKeyTrustProxy(t *testing.T) {
 	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
 	if clientKey(r, false) != "10.0.0.1" || clientKey(r, true) != "203.0.113.9" {
 		t.Errorf("clientKey: %s / %s", clientKey(r, false), clientKey(r, true))
+	}
+}
+
+func TestReviewRegressions(t *testing.T) {
+	e := newEnv(t, "pw")
+	c := e.client(t)
+	// Programmatic requests get 401, not a redirect.
+	for _, h := range [][2]string{{"X-Partial", "1"}, {"Accept", "application/json"}, {"Accept", "text/event-stream"}} {
+		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+		req.Header.Set(h[0], h[1])
+		if r, _ := c.Do(req); r.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s=%s should give 401, got %d", h[0], h[1], r.StatusCode)
+		}
+	}
+	// Origin: null is cross-site.
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader("password=pw"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "null")
+	if r, _ := c.Do(req); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("Origin: null should be rejected, got %d", r.StatusCode)
+	}
+	// Public status page never echoes ?msg=.
+	if _, body := e.get(t, c, "/status?msg=All+systems+compromised"); strings.Contains(body, "compromised") {
+		t.Fatal("anonymous flash must not render")
+	}
+	// backTo keeps the query and drops the old flash.
+	r := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r.Host = "h"
+	r.Header.Set("Referer", "http://h/incidents?ongoing=1&msg=old")
+	if got := backTo(r, "/"); got != "/incidents?ongoing=1" {
+		t.Fatalf("backTo = %q", got)
+	}
+	r.Header.Set("Referer", "http://other/incidents")
+	if got := backTo(r, "/fb"); got != "/fb" {
+		t.Fatalf("foreign referer: %q", got)
+	}
+}
+
+func TestNoteLengthByRunes(t *testing.T) {
+	e := newEnv(t, "")
+	c := e.client(t)
+	tg, _ := e.st.CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock, "x")
+	ok := strings.Repeat("é", 500) // 1000 bytes, 500 chars: allowed
+	e.post(t, c, "/incidents/"+strconv.FormatInt(id, 10)+"/note", url.Values{"note": {ok}})
+	in, _ := e.st.GetIncident(context.Background(), id)
+	if in.Note != ok {
+		t.Fatalf("500-rune note should be stored intact (got %d bytes)", len(in.Note))
+	}
+	resp, _ := e.post(t, c, "/incidents/"+strconv.FormatInt(id, 10)+"/note", url.Values{"note": {ok + "x"}})
+	if !strings.Contains(resp.Header.Get("Location"), "500+characters") {
+		t.Fatalf("over-long note should be rejected: %s", resp.Header.Get("Location"))
 	}
 }

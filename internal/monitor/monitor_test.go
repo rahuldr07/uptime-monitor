@@ -308,3 +308,35 @@ func TestConcurrentCheckNowIsSerialised(t *testing.T) {
 		t.Fatalf("state %v but %d ongoing incidents", s.Status, len(list))
 	}
 }
+
+func TestPauseWaitsForInFlightCheck(t *testing.T) {
+	f := setup(t, 1)
+	ctx := context.Background()
+	// Slow server: the probe holds checkMu for a while.
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(500)
+	}))
+	defer slow.Close()
+	f.target.URL = slow.URL
+	f.target.Timeout = 2 * time.Second
+	f.mon.client = slow.Client()
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
+	done := make(chan struct{})
+	go func() { f.mon.CheckNow(ctx, f.target.ID); close(done) }()
+	time.Sleep(50 * time.Millisecond) // probe is in flight
+	f.target.Paused = true
+	if err := f.mon.Reload(ctx, f.target); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	f.mon.WaitAlerts()
+	// Either the check applied first and pause closed the incident, or pause
+	// won and the check was dropped: in both cases nothing stays open.
+	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
+		t.Fatalf("incident left open across pause: %+v", list)
+	}
+	if s, _ := f.mon.Get(f.target.ID); s.Status != Paused || s.IncidentID != 0 {
+		t.Fatalf("state after pause: %+v", s)
+	}
+}

@@ -155,13 +155,13 @@ func (e Email) Notify(_ context.Context, ev Event) error {
 func FromConfig(cfg config.Notify, logger *slog.Logger) Multi {
 	client := &http.Client{Timeout: 15 * time.Second}
 	var m Multi
-	if t := cfg.Telegram; t != nil && t.BotToken != "" {
+	if t := cfg.Telegram; t != nil && t.BotToken != "" && !t.Disabled {
 		m = append(m, Named{"telegram", Telegram{Token: t.BotToken, ChatID: t.ChatID, Client: client}})
 	}
-	if s := cfg.Slack; s != nil && s.WebhookURL != "" {
+	if s := cfg.Slack; s != nil && s.WebhookURL != "" && !s.Disabled {
 		m = append(m, Named{"slack", Slack{WebhookURL: s.WebhookURL, Client: client}})
 	}
-	if e := cfg.Email; e != nil && e.SMTPHost != "" {
+	if e := cfg.Email; e != nil && e.SMTPHost != "" && !e.Disabled {
 		m = append(m, Named{"email", Email{Host: e.SMTPHost, Port: e.SMTPPort, Username: e.Username,
 			Password: e.Password, From: e.From, To: e.To}})
 	}

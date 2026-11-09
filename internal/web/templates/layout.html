@@ -1,34 +1,40 @@
 {{define "layout"}}<!doctype html>
-<html lang="en">
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · Uptime</title>
 <link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231d9e75'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='{{if gt .DownCount 0}}%23e24b4a{{else}}%231d9e75{{end}}'/%3E%3C/svg%3E">
+<script defer src="/static/app.js"></script>
 </head>
-<body>
-<div class="wrap">
-<nav>
-  <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
-    <a class="brand" href="/"><span class="dot"></span>Uptime</a>
-    {{if .Admin}}<div class="links">
-      <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a>
-      <a href="/incidents" {{if eq .Page "incidents"}}class="active"{{end}}>Incidents</a>
-      <a href="/targets" {{if eq .Page "targets"}}class="active"{{end}}>Targets</a>
-      <a href="/alerts" {{if eq .Page "alerts"}}class="active"{{end}}>Alerts</a>
-      <a href="/status" {{if eq .Page "status"}}class="active"{{end}}>Status page</a>
-    </div>{{end}}
+<body data-live>
+<div class="shell">
+<aside class="side">
+  <a class="brand" href="/"><span class="dot{{if gt .DownCount 0}} bad{{end}}"></span><span class="t">Uptime</span></a>
+  <a class="nav{{if eq .Page "overview"}} active{{end}}" href="/">{{template "i-grid"}}<span class="t">Overview</span></a>
+  <a class="nav{{if eq .Page "monitors"}} active{{end}}" href="/targets">{{template "i-globe"}}<span class="t">Monitors</span></a>
+  <a class="nav{{if eq .Page "incidents"}} active{{end}}" href="/incidents">{{template "i-alert"}}<span class="t">Incidents</span>{{if gt .Unacked 0}}<span class="count">{{.Unacked}}</span>{{end}}</a>
+  <a class="nav{{if eq .Page "alerts"}} active{{end}}" href="/alerts">{{template "i-bell"}}<span class="t">Alert channels</span></a>
+  <a class="nav" href="/status" target="_blank" rel="noopener">{{template "i-ext"}}<span class="t">Status page</span></a>
+  <div class="foot">
+    <button type="button" class="ghost sm" onclick="cycleTheme()" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
+    {{if .AuthEnabled}}<form method="post" action="/logout"><button type="submit" class="ghost sm">{{template "i-logout"}}<span class="t">Log out</span></button></form>{{end}}
   </div>
-  <div class="right">
-    {{if .Admin}}<span id="refreshed">Updated {{ago .Now}}</span>{{if .AuthEnabled}}<form method="post" action="/logout"><button type="submit">Log out</button></form>{{end}}
-    {{else if .AuthEnabled}}<a class="btn" href="/login">Admin</a>{{end}}
-  </div>
-</nav>
-{{with .Flash}}<div class="flash">{{.}}</div>{{end}}
+</aside>
+<main class="main">
+{{with .Flash}}<div data-flash>{{.}}</div>{{end}}
 {{with .Error}}<div class="flash error">{{.}}</div>{{end}}
-{{template "content" .}}
-<footer>uptime-monitor · {{ts .Now}}</footer>
+<div id="content"{{if .Error}} data-no-refresh{{end}}>{{template "content" .}}</div>
+<footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
+</main>
 </div>
+<div class="scrim" onclick="closePanel()"></div>
+<aside class="panel" id="panel" aria-label="New monitor">
+  <div class="head"><h2>New monitor</h2><button type="button" class="ghost sm" onclick="closePanel()" aria-label="Close">✕</button></div>
+  {{template "monitor-form" .NewForm}}
+</aside>
+<dialog id="confirm"><form method="dialog"><p>Are you sure?</p><div class="btns"><button value="yes" class="danger">Yes, continue</button><button value="no">Cancel</button></div></form></dialog>
+<div class="toasts"></div>
 </body>
 </html>{{end}}

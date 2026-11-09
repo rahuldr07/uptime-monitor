@@ -110,7 +110,7 @@ func seedTargets(ctx context.Context, st *store.Store, cfg *config.Config, logge
 			return err
 		}
 		if _, err := st.CreateTarget(ctx, store.Target{Name: t.Name, URL: t.URL, Interval: t.Interval.Duration,
-			Timeout: t.Timeout.Duration, ExpectStatus: t.ExpectStatus, Keyword: t.Keyword}, time.Now()); err != nil {
+			Timeout: t.Timeout.Duration, ExpectStatus: t.ExpectStatus, Keyword: t.Keyword, Group: t.Group}, time.Now()); err != nil {
 			return fmt.Errorf("seed target %q: %w", t.Name, err)
 		}
 		logger.Info("added target from config", "name", t.Name)

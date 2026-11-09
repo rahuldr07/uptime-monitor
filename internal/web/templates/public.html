@@ -1,0 +1,19 @@
+{{define "layout"}}<!doctype html>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='{{if gt .DownCount 0}}%23e24b4a{{else}}%231d9e75{{end}}'/%3E%3C/svg%3E">
+<script defer src="/static/app.js"></script>
+</head>
+<body{{if .Admin}} data-live{{end}}>
+<div class="status-wrap">
+{{with .Flash}}<div data-flash>{{.}}</div>{{end}}
+{{with .Error}}<div class="flash error">{{.}}</div>{{end}}
+<div id="content"{{if .Error}} data-no-refresh{{end}}>{{template "content" .}}</div>
+</div>
+<div class="toasts"></div>
+</body>
+</html>{{end}}

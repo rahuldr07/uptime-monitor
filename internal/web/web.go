@@ -13,9 +13,11 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"uptimemon/internal/config"
 	"uptimemon/internal/monitor"
@@ -52,8 +54,8 @@ func New(cfg *config.Config, st *store.Store, mon *monitor.Monitor, logger *slog
 	funcs := template.FuncMap{
 		"ago":    func(t time.Time) string { return humanAgo(s.now().Sub(t)) },
 		"dur":    humanDur,
-		"durstr": func(d time.Duration) string { return d.String() },
-		"ts":     func(t any) string { return formatTS(t) },
+		"durstr": func(d time.Duration) string { return shortDur(d) },
+		"ts":     formatTS,
 		"pct": func(st store.Stats) string {
 			if st.Total == 0 {
 				return "—"
@@ -70,13 +72,40 @@ func New(cfg *config.Config, st *store.Store, mon *monitor.Monitor, logger *slog
 			}
 			return fmt.Sprintf("%d ms", int64(math.Round(st.AvgLatencyMS)))
 		},
+		"msn": func(v int64) string {
+			if v == 0 {
+				return "—"
+			}
+			return fmt.Sprintf("%d ms", v)
+		},
+		"min": func(a, b int) int {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		"dict": func(kv ...any) map[string]any {
+			m := map[string]any{}
+			for i := 0; i+1 < len(kv); i += 2 {
+				m[fmt.Sprint(kv[i])] = kv[i+1]
+			}
+			return m
+		},
 	}
-	for _, page := range []string{"dashboard", "status", "target", "targets", "incidents", "alerts", "login"} {
-		files := []string{"templates/layout.html", "templates/" + page + ".html"}
-		if page == "target" || page == "targets" {
-			files = append(files, "templates/form.html")
-		}
+	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
+	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts"} {
+		files := append([]string{"templates/layout.html"}, shared...)
+		files = append(files, "templates/"+page+".html")
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", page, err)
+		}
+		s.pages[page] = t
+	}
+	for _, page := range []string{"status", "login"} {
+		files := append([]string{"templates/public.html"}, shared...)
+		files = append(files, "templates/"+page+".html")
+		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", page, err)
 		}
@@ -99,28 +128,35 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /login", sameOrigin(s.loginPost))
 	m.HandleFunc("POST /logout", sameOrigin(s.logout))
 
-	m.HandleFunc("GET /{$}", s.requireAdmin(s.dashboard))
-	m.HandleFunc("GET /partials/dashboard", s.requireAdmin(s.dashboardPartial))
-	m.HandleFunc("GET /targets", s.requireAdmin(s.targetsPage))
-	m.HandleFunc("POST /targets", sameOrigin(s.requireAdmin(s.targetCreate)))
-	m.HandleFunc("GET /targets/{id}", s.requireAdmin(s.targetPage))
-	m.HandleFunc("POST /targets/{id}", sameOrigin(s.requireAdmin(s.targetUpdate)))
-	m.HandleFunc("POST /targets/{id}/delete", sameOrigin(s.requireAdmin(s.targetDelete)))
-	m.HandleFunc("POST /targets/{id}/pause", sameOrigin(s.requireAdmin(s.targetPause)))
-	m.HandleFunc("POST /targets/{id}/check", sameOrigin(s.requireAdmin(s.targetCheck)))
-	m.HandleFunc("GET /incidents", s.requireAdmin(s.incidentsPage))
-	m.HandleFunc("GET /alerts", s.requireAdmin(s.alertsPage))
-	m.HandleFunc("POST /alerts", sameOrigin(s.requireAdmin(s.alertsSave)))
-	m.HandleFunc("POST /alerts/test", sameOrigin(s.requireAdmin(s.alertsTest)))
-	m.HandleFunc("GET /api/status", s.requireAdmin(s.apiStatus))
-	m.HandleFunc("GET /api/targets/{id}/checks", s.requireAdmin(s.apiChecks))
-	m.HandleFunc("GET /api/incidents", s.requireAdmin(s.apiIncidents))
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireAdmin(h) }
+	post := func(h http.HandlerFunc) http.HandlerFunc { return sameOrigin(s.requireAdmin(h)) }
+	m.HandleFunc("GET /{$}", admin(s.overview))
+	m.HandleFunc("GET /events", admin(s.events))
+	m.HandleFunc("GET /targets", admin(s.monitorsPage))
+	m.HandleFunc("POST /targets", post(s.targetCreate))
+	m.HandleFunc("POST /targets/test", post(s.targetTest))
+	m.HandleFunc("GET /targets/{id}", admin(s.targetPage))
+	m.HandleFunc("POST /targets/{id}", post(s.targetUpdate))
+	m.HandleFunc("POST /targets/{id}/delete", post(s.targetDelete))
+	m.HandleFunc("POST /targets/{id}/pause", post(s.targetPause))
+	m.HandleFunc("POST /targets/{id}/mute", post(s.targetMute))
+	m.HandleFunc("POST /targets/{id}/check", post(s.targetCheck))
+	m.HandleFunc("GET /incidents", admin(s.incidentsPage))
+	m.HandleFunc("POST /incidents/{id}/ack", post(s.incidentAck))
+	m.HandleFunc("POST /incidents/{id}/note", post(s.incidentNote))
+	m.HandleFunc("GET /alerts", admin(s.alertsPage))
+	m.HandleFunc("POST /alerts", post(s.alertsSave))
+	m.HandleFunc("POST /alerts/test", post(s.alertsTest))
+	m.HandleFunc("POST /status/settings", post(s.statusSettings))
+	m.HandleFunc("GET /api/status", admin(s.apiStatus))
+	m.HandleFunc("GET /api/targets/{id}/checks", admin(s.apiChecks))
+	m.HandleFunc("GET /api/incidents", admin(s.apiIncidents))
 	s.mux = m
 }
 
 func cacheControl(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "public, max-age=300")
 		h.ServeHTTP(w, r)
 	})
 }
@@ -135,11 +171,41 @@ type base struct {
 	Flash       string
 	Error       string
 	Now         time.Time
+	Theme       string
+	Unacked     int
+	DownCount   int
+	NewForm     targetForm
+	Groups      []string
 }
 
 func (s *Server) base(r *http.Request, page, title string) base {
-	return base{Title: title, Page: page, Admin: s.isAdmin(r), AuthEnabled: s.authEnabled(),
-		Flash: r.URL.Query().Get("msg"), Now: s.now()}
+	b := base{Title: title, Page: page, Admin: s.isAdmin(r), AuthEnabled: s.authEnabled(), Now: s.now(), Theme: themeFrom(r)}
+	if b.Admin {
+		// Only admin flows redirect with a flash; never echo ?msg= to anonymous visitors.
+		b.Flash = r.URL.Query().Get("msg")
+	}
+	b.NewForm = targetForm{Action: "/targets", Submit: "Create monitor", ShowTest: true,
+		Interval: shortDur(s.cfg.Interval.Duration), Timeout: shortDur(s.cfg.Timeout.Duration)}
+	if b.Admin {
+		b.Unacked, _ = s.store.CountUnacknowledged(r.Context())
+	}
+	for _, st := range s.mon.Snapshot() {
+		if st.Status == monitor.Down {
+			b.DownCount++
+		}
+		if g := st.Target.Group; g != "" && !contains(b.Groups, g) {
+			b.Groups = append(b.Groups, g)
+		}
+	}
+	sort.Strings(b.Groups)
+	return b
+}
+
+func themeFrom(r *http.Request) string {
+	if c, err := r.Cookie("theme"); err == nil && (c.Value == "dark" || c.Value == "light") {
+		return c.Value
+	}
+	return ""
 }
 
 type beat struct {
@@ -148,7 +214,7 @@ type beat struct {
 	Title  string
 }
 
-type day struct {
+type cell struct {
 	Class string
 	Title string
 }
@@ -159,15 +225,22 @@ type targetView struct {
 	Label     string
 	DownFor   time.Duration
 	Heartbeat []beat
-	Days      []day
+	Spark     template.HTML
+	Days      []cell
 	Up24      store.Stats
 	Up7       store.Stats
 	Up30      store.Stats
 }
 
-func (s *Server) view(ctx context.Context, st monitor.State, withDays bool) (targetView, error) {
+type viewOpts struct {
+	days  bool
+	spark bool
+}
+
+func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (targetView, error) {
 	now := s.now()
-	v := targetView{State: st, Class: st.Status.String(), Label: strings.ToUpper(st.Status.String()[:1]) + st.Status.String()[1:]}
+	label := st.Status.String()
+	v := targetView{State: st, Class: label, Label: strings.ToUpper(label[:1]) + label[1:]}
 	switch st.Status {
 	case monitor.Down:
 		v.DownFor = now.Sub(st.Since)
@@ -185,57 +258,44 @@ func (s *Server) view(ctx context.Context, st monitor.State, withDays bool) (tar
 	if v.Up30, err = s.store.Stats(ctx, st.Target.ID, now.Add(-30*24*time.Hour)); err != nil {
 		return v, err
 	}
-	recent, err := s.store.RecentChecks(ctx, st.Target.ID, 48)
-	if err != nil {
-		return v, err
-	}
-	var maxMS int64 = 1
-	for _, c := range recent {
-		if c.OK && c.LatencyMS > maxMS {
-			maxMS = c.LatencyMS
+	if o.spark {
+		checks, err := s.store.ChecksSince(ctx, st.Target.ID, now.Add(-30*time.Minute))
+		if err != nil {
+			return v, err
 		}
+		v.Spark = sparkSVG(checks, now.Add(-30*time.Minute), now)
 	}
-	v.Heartbeat = make([]beat, 0, 48)
-	for i := 48 - len(recent); i > 0; i-- {
-		v.Heartbeat = append(v.Heartbeat, beat{Class: "none"})
-	}
-	for i := len(recent) - 1; i >= 0; i-- { // oldest first
-		c := recent[i]
-		if c.OK {
-			h := 30 + int(70*float64(c.LatencyMS)/float64(maxMS))
-			v.Heartbeat = append(v.Heartbeat, beat{Class: "ok", Height: h, Title: fmt.Sprintf("%s · %d ms", formatTS(c.CheckedAt), c.LatencyMS)})
-		} else {
-			v.Heartbeat = append(v.Heartbeat, beat{Class: "bad", Height: 100, Title: fmt.Sprintf("%s · %s", formatTS(c.CheckedAt), c.Error)})
-		}
-	}
-	if withDays {
+	if o.days {
 		days, err := s.store.DailyUptime(ctx, st.Target.ID, now, 90)
 		if err != nil {
 			return v, err
 		}
 		start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -89)
 		for i, d := range days {
-			date := start.AddDate(0, 0, i).Format("Jan 2")
-			switch {
-			case d.Total == 0:
-				v.Days = append(v.Days, day{"none", date + " · no data"})
-			case d.OKCount == d.Total:
-				v.Days = append(v.Days, day{"ok", date + " · 100%"})
-			case d.UptimePercent() < 90:
-				v.Days = append(v.Days, day{"bad", fmt.Sprintf("%s · %.1f%%", date, d.UptimePercent())})
-			default:
-				v.Days = append(v.Days, day{"part", fmt.Sprintf("%s · %.2f%%", date, d.UptimePercent())})
-			}
+			v.Days = append(v.Days, uptimeCell(d, start.AddDate(0, 0, i).Format("Jan 2")))
 		}
 	}
 	return v, nil
 }
 
-func (s *Server) views(ctx context.Context, withDays bool) ([]targetView, error) {
+func uptimeCell(d store.Stats, label string) cell {
+	switch {
+	case d.Total == 0:
+		return cell{"none", label + " · no data"}
+	case d.OKCount == d.Total:
+		return cell{"ok", label + " · 100%"}
+	case d.UptimePercent() < 90:
+		return cell{"bad", fmt.Sprintf("%s · %.1f%%", label, d.UptimePercent())}
+	default:
+		return cell{"part", fmt.Sprintf("%s · %.2f%%", label, d.UptimePercent())}
+	}
+}
+
+func (s *Server) views(ctx context.Context, o viewOpts) ([]targetView, error) {
 	states := s.mon.Snapshot()
 	out := make([]targetView, 0, len(states))
 	for _, st := range states {
-		v, err := s.view(ctx, st, withDays)
+		v, err := s.view(ctx, st, o)
 		if err != nil {
 			return nil, err
 		}
@@ -244,109 +304,110 @@ func (s *Server) views(ctx context.Context, withDays bool) ([]targetView, error)
 	return out, nil
 }
 
-// ---- pages ----
+// ---- overview & monitors ----
 
-type dashboardData struct {
+type overviewData struct {
 	base
-	Targets     []targetView
+	Rows        []targetView
 	Total       int
-	DownCount   int
-	Unknown     int
+	Up, Down    int
+	PausedN     int
+	Pending     int
 	LongestDown *targetView
 	Overall24   store.Stats
+	P95         int64
 	Incidents7  int
 	Alerts7     int
+	HasChannel  bool
 }
 
-func (s *Server) dashboardData(r *http.Request) (dashboardData, error) {
+func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	d := dashboardData{base: s.base(r, "dashboard", "Dashboard")}
-	views, err := s.views(ctx, false)
+	d := overviewData{base: s.base(r, "overview", "Overview")}
+	views, err := s.views(ctx, viewOpts{spark: true})
 	if err != nil {
-		return d, err
+		s.fail(w, err)
+		return
 	}
-	d.Targets = views
+	d.Rows = views
 	d.Total = len(views)
 	for i := range views {
 		switch views[i].State.Status {
 		case monitor.Down:
-			d.DownCount++
+			d.Down++
 			if d.LongestDown == nil || views[i].DownFor > d.LongestDown.DownFor {
 				d.LongestDown = &views[i]
 			}
-		case monitor.Unknown:
-			d.Unknown++
+		case monitor.Up:
+			d.Up++
+		case monitor.Paused:
+			d.PausedN++
+		default:
+			d.Pending++
 		}
 	}
 	now := s.now()
 	if d.Overall24, err = s.store.Stats(ctx, 0, now.Add(-24*time.Hour)); err != nil {
-		return d, err
+		s.fail(w, err)
+		return
 	}
+	lat, err := s.store.Latencies(ctx, 0, now.Add(-24*time.Hour))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	d.P95 = store.Percentile(lat, 95)
 	if d.Incidents7, err = s.store.CountIncidents(ctx, now.Add(-7*24*time.Hour)); err != nil {
-		return d, err
+		s.fail(w, err)
+		return
 	}
 	if d.Alerts7, err = s.store.CountAlerts(ctx, now.Add(-7*24*time.Hour)); err != nil {
-		return d, err
-	}
-	return d, nil
-}
-
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboardData(r)
-	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.render(w, "dashboard", "layout", d)
-}
-
-func (s *Server) dashboardPartial(w http.ResponseWriter, r *http.Request) {
-	d, err := s.dashboardData(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.render(w, "dashboard", "dashboard-body", d)
-}
-
-type statusData struct {
-	base
-	Targets   []targetView
-	Total     int
-	DownCount int
-}
-
-func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
-	d := statusData{base: s.base(r, "status", "Status")}
-	views, err := s.views(r.Context(), true)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	d.Targets = views
-	d.Total = len(views)
-	for _, v := range views {
-		if v.State.Status == monitor.Down {
-			d.DownCount++
+	for _, n := range s.mon.Notifiers() {
+		if n.Name != "log" {
+			d.HasChannel = true
 		}
 	}
-	s.render(w, "status", "layout", d)
+	s.render(w, r, "overview", d)
 }
+
+type monitorsData struct {
+	base
+	Rows []targetView
+}
+
+func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request) {
+	d := monitorsData{base: s.base(r, "monitors", "Monitors")}
+	var err error
+	if d.Rows, err = s.views(r.Context(), viewOpts{}); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, "monitors", d)
+}
+
+// ---- target form ----
 
 type targetForm struct {
 	Action       string
 	Submit       string
+	ShowTest     bool
+	ShowFlags    bool
 	Name         string
 	URL          string
 	Interval     string
 	Timeout      string
 	ExpectStatus string
 	Keyword      string
+	Group        string
+	Muted        bool
 }
 
 func formFromTarget(t store.Target) targetForm {
-	f := targetForm{Action: fmt.Sprintf("/targets/%d", t.ID), Submit: "Save changes", Name: t.Name, URL: t.URL,
-		Interval: t.Interval.String(), Timeout: t.Timeout.String(), Keyword: t.Keyword}
+	f := targetForm{Action: fmt.Sprintf("/targets/%d", t.ID), Submit: "Save changes", ShowFlags: true, Name: t.Name, URL: t.URL,
+		Interval: shortDur(t.Interval), Timeout: shortDur(t.Timeout), Keyword: t.Keyword, Group: t.Group, Muted: t.Muted}
 	if t.ExpectStatus != 0 {
 		f.ExpectStatus = strconv.Itoa(t.ExpectStatus)
 	}
@@ -357,13 +418,17 @@ func formFromRequest(r *http.Request, action, submit string) targetForm {
 	return targetForm{Action: action, Submit: submit,
 		Name: strings.TrimSpace(r.FormValue("name")), URL: strings.TrimSpace(r.FormValue("url")),
 		Interval: strings.TrimSpace(r.FormValue("interval")), Timeout: strings.TrimSpace(r.FormValue("timeout")),
-		ExpectStatus: strings.TrimSpace(r.FormValue("expect_status")), Keyword: r.FormValue("keyword")}
+		ExpectStatus: strings.TrimSpace(r.FormValue("expect_status")), Keyword: r.FormValue("keyword"),
+		Group: strings.TrimSpace(r.FormValue("group")), Muted: r.FormValue("muted") == "1"}
 }
 
 // toTarget validates the form and returns a Target (without ID).
 func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
-	t := store.Target{Name: f.Name, URL: f.URL, Keyword: f.Keyword,
+	t := store.Target{Name: f.Name, URL: f.URL, Keyword: f.Keyword, Group: f.Group, Muted: f.Muted,
 		Interval: defaults.Interval.Duration, Timeout: defaults.Timeout.Duration}
+	if t.URL != "" && !strings.Contains(t.URL, "://") {
+		t.URL = "https://" + t.URL
+	}
 	var err error
 	if f.Interval != "" {
 		if t.Interval, err = time.ParseDuration(f.Interval); err != nil {
@@ -380,86 +445,130 @@ func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
 			return t, fmt.Errorf("expected status must be a number")
 		}
 	}
+	if len(t.Group) > 40 {
+		return t, fmt.Errorf("group name must be 40 characters or fewer")
+	}
 	if err := config.ValidateTarget(t.Name, t.URL, t.Interval, t.Timeout, t.ExpectStatus); err != nil {
 		return t, err
 	}
 	return t, nil
 }
 
-type targetsData struct {
-	base
-	Targets []targetView
-	Form    targetForm
-}
-
-func (s *Server) targetsPage(w http.ResponseWriter, r *http.Request) {
-	d := targetsData{base: s.base(r, "targets", "Targets"),
-		Form: targetForm{Action: "/targets", Submit: "Add target", Interval: s.cfg.Interval.String(), Timeout: s.cfg.Timeout.String()}}
-	var err error
-	if d.Targets, err = s.views(r.Context(), false); err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.render(w, "targets", "layout", d)
-}
-
 func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
-	f := formFromRequest(r, "/targets", "Add target")
+	f := formFromRequest(r, "/targets", "Create monitor")
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
 		t, err = s.store.CreateTarget(r.Context(), t, s.now())
 	}
 	if err != nil {
-		d := targetsData{base: s.base(r, "targets", "Targets"), Form: f}
+		if wantsJSON(r) {
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+			return
+		}
+		d := monitorsData{base: s.base(r, "monitors", "Monitors")}
 		d.Error = err.Error()
-		d.Targets, _ = s.views(r.Context(), false)
+		d.Rows, _ = s.views(r.Context(), viewOpts{})
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, "targets", "layout", d)
+		s.render(w, r, "monitors", d)
 		return
 	}
 	if err := s.mon.Reload(r.Context(), t); err != nil {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), "Target added.")
+	to := fmt.Sprintf("/targets/%d", t.ID)
+	if wantsJSON(r) {
+		writeJSON(w, map[string]any{"ok": true, "redirect": to + "?msg=" + url.QueryEscape("Monitor created. First check is running.")})
+		return
+	}
+	redirect(w, r, to, "Monitor created. First check is running.")
 }
+
+// targetTest probes the URL in the form without saving anything.
+func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
+	f := formFromRequest(r, "", "")
+	if f.Name == "" {
+		f.Name = "test"
+	}
+	t, err := f.toTarget(s.cfg)
+	if err != nil {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	if t.Timeout > 25*time.Second {
+		t.Timeout = 25 * time.Second
+	}
+	c := monitor.Probe(r.Context(), &http.Client{}, t, s.now)
+	writeJSON(w, map[string]any{"ok": c.OK, "status_code": c.StatusCode, "latency_ms": c.LatencyMS, "error": c.Error})
+}
+
+// ---- target detail ----
 
 type targetData struct {
 	base
 	View      targetView
+	Tab       string
 	Form      targetForm
 	Range     string
 	Ranges    []string
 	Chart     template.HTML
+	Hours     []cell
+	P50, P95  int64
 	Incidents []store.Incident
 	Checks    []store.Check
 }
 
 var ranges = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
+var tabs = map[string]bool{"overview": true, "checks": true, "incidents": true, "settings": true}
 
 func (s *Server) targetData(r *http.Request, t store.Target, st monitor.State) (targetData, error) {
 	ctx := r.Context()
-	d := targetData{base: s.base(r, "targets", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
+	d := targetData{base: s.base(r, "monitors", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
+	d.Tab = r.URL.Query().Get("tab")
+	if !tabs[d.Tab] {
+		d.Tab = "overview"
+	}
 	d.Range = r.URL.Query().Get("range")
 	span, ok := ranges[d.Range]
 	if !ok {
 		d.Range, span = "24h", 24*time.Hour
 	}
 	var err error
-	if d.View, err = s.view(ctx, st, false); err != nil {
+	if d.View, err = s.view(ctx, st, viewOpts{}); err != nil {
 		return d, err
 	}
 	now := s.now()
-	checks, err := s.store.ChecksSince(ctx, t.ID, now.Add(-span))
-	if err != nil {
+	if d.Incidents, err = s.store.ListIncidents(ctx, store.IncidentFilter{TargetID: t.ID, Limit: 100}); err != nil {
 		return d, err
 	}
-	if d.Incidents, err = s.store.ListIncidents(ctx, store.IncidentFilter{TargetID: t.ID, Limit: 50}); err != nil {
-		return d, err
-	}
-	d.Chart = latencySVG(checks, d.Incidents, now.Add(-span), now)
-	if d.Checks, err = s.store.RecentChecks(ctx, t.ID, 30); err != nil {
-		return d, err
+	switch d.Tab {
+	case "overview":
+		checks, err := s.store.ChecksSince(ctx, t.ID, now.Add(-span))
+		if err != nil {
+			return d, err
+		}
+		d.Chart = latencySVG(checks, d.Incidents, now.Add(-span), now)
+		hours, err := s.store.HourlyUptime(ctx, t.ID, now, 24)
+		if err != nil {
+			return d, err
+		}
+		start := now.UTC().Truncate(time.Hour).Add(-23 * time.Hour)
+		for i, h := range hours {
+			d.Hours = append(d.Hours, uptimeCell(h, start.Add(time.Duration(i)*time.Hour).Local().Format("Jan 2 15:00")))
+		}
+		lat, err := s.store.Latencies(ctx, t.ID, now.Add(-24*time.Hour))
+		if err != nil {
+			return d, err
+		}
+		d.P50, d.P95 = store.Percentile(lat, 50), store.Percentile(lat, 95)
+		// 11 rows so the template can tell whether an "All checks" link is needed.
+		if d.Checks, err = s.store.RecentChecks(ctx, t.ID, 11); err != nil {
+			return d, err
+		}
+	case "checks":
+		if d.Checks, err = s.store.RecentChecks(ctx, t.ID, 200); err != nil {
+			return d, err
+		}
 	}
 	return d, nil
 }
@@ -496,7 +605,7 @@ func (s *Server) targetPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.render(w, "target", "layout", d)
+	s.render(w, r, "target", d)
 }
 
 func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
@@ -505,12 +614,16 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := formFromRequest(r, fmt.Sprintf("/targets/%d", t.ID), "Save changes")
+	f.ShowFlags = true
 	nt, err := f.toTarget(s.cfg)
 	if err == nil {
 		nt.ID, nt.Paused, nt.CreatedAt = t.ID, t.Paused, t.CreatedAt
 		err = s.store.UpdateTarget(r.Context(), nt)
 	}
 	if err != nil {
+		q := r.URL.Query()
+		q.Set("tab", "settings")
+		r.URL.RawQuery = q.Encode()
 		d, derr := s.targetData(r, t, st)
 		if derr != nil {
 			s.fail(w, derr)
@@ -518,14 +631,14 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Form, d.Error = f, err.Error()
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, "target", "layout", d)
+		s.render(w, r, "target", d)
 		return
 	}
 	if err := s.mon.Reload(r.Context(), nt); err != nil {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), "Target saved.")
+	redirect(w, r, fmt.Sprintf("/targets/%d?tab=settings", t.ID), "Monitor saved.")
 }
 
 func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
@@ -533,7 +646,7 @@ func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.mon.Remove(t.ID)
+	s.mon.Remove(t.ID) // stops the runner and waits for any in-flight probe
 	if err := s.store.DeleteTarget(r.Context(), t.ID); err != nil {
 		s.fail(w, err)
 		return
@@ -562,18 +675,49 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
 }
 
+func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
+	t, _, ok := s.loadTarget(w, r)
+	if !ok {
+		return
+	}
+	t.Muted = !t.Muted
+	if err := s.store.SetMuted(r.Context(), t.ID, t.Muted); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.mon.Reload(r.Context(), t); err != nil {
+		s.fail(w, err)
+		return
+	}
+	msg := "Alerts unmuted for " + t.Name + "."
+	if t.Muted {
+		msg = "Alerts muted for " + t.Name + ". Incidents are still recorded."
+	}
+	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
+}
+
 func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request) {
 	t, _, ok := s.loadTarget(w, r)
 	if !ok {
 		return
 	}
 	if t.Paused {
-		redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), "Target is paused.")
+		if wantsJSON(r) {
+			writeJSON(w, map[string]any{"ok": false, "message": t.Name + " is paused."})
+			return
+		}
+		redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), t.Name+" is paused.")
 		return
 	}
 	s.mon.CheckAsync(t.ID)
-	redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), "Check started for "+t.Name+". Refresh in a moment.")
+	if wantsJSON(r) {
+		writeJSON(w, map[string]any{"ok": true, "message": "Checking " + t.Name + "…"})
+		return
+	}
+	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), "Checking "+t.Name+"…")
 }
+
+// ---- incidents ----
 
 type incidentsData struct {
 	base
@@ -595,14 +739,68 @@ func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.render(w, "incidents", "layout", d)
+	s.render(w, r, "incidents", d)
 }
+
+func (s *Server) loadIncident(w http.ResponseWriter, r *http.Request) (store.Incident, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return store.Incident{}, false
+	}
+	in, err := s.store.GetIncident(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return store.Incident{}, false
+	}
+	if err != nil {
+		s.fail(w, err)
+		return store.Incident{}, false
+	}
+	return in, true
+}
+
+func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
+	in, ok := s.loadIncident(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.AcknowledgeIncident(r.Context(), in.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, err)
+		return
+	}
+	if wantsJSON(r) {
+		writeJSON(w, map[string]any{"ok": true, "message": "Acknowledged " + in.TargetName + " incident."})
+		return
+	}
+	redirect(w, r, backTo(r, "/incidents"), "Acknowledged.")
+}
+
+func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request) {
+	in, ok := s.loadIncident(w, r)
+	if !ok {
+		return
+	}
+	note := strings.TrimSpace(r.FormValue("note"))
+	if utf8.RuneCountInString(note) > 500 {
+		redirect(w, r, backTo(r, "/incidents"), "Note must be 500 characters or fewer.")
+		return
+	}
+	if err := s.store.SetIncidentNote(r.Context(), in.ID, note); err != nil {
+		s.fail(w, err)
+		return
+	}
+	redirect(w, r, backTo(r, "/incidents"), "Note saved.")
+}
+
+// ---- alerts ----
 
 type alertsData struct {
 	base
 	N         config.Notify
 	To        string
 	Has       map[string]bool
+	Last      map[string]store.Alert
 	Threshold int
 }
 
@@ -619,12 +817,11 @@ func (s *Server) notifyConfig(ctx context.Context) config.Notify {
 }
 
 func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request) {
-	n := s.notifyConfig(r.Context())
-	s.renderAlerts(w, r, n, "")
+	s.renderAlerts(w, r, s.notifyConfig(r.Context()), "")
 }
 
 func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, n config.Notify, errMsg string) {
-	d := alertsData{base: s.base(r, "alerts", "Alerts"), N: n, Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold}
+	d := alertsData{base: s.base(r, "alerts", "Alert channels"), N: n, Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold}
 	d.Error = errMsg
 	if d.N.Telegram == nil {
 		d.N.Telegram = &config.Telegram{}
@@ -639,7 +836,8 @@ func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, n config.N
 	for _, nn := range s.mon.Notifiers() {
 		d.Has[nn.Name] = true
 	}
-	s.render(w, "alerts", "layout", d)
+	d.Last, _ = s.store.LastAlerts(r.Context())
+	s.render(w, r, "alerts", d)
 }
 
 // parseNotifyForm builds notify settings from the alerts form.
@@ -647,10 +845,10 @@ func parseNotifyForm(r *http.Request) config.Notify {
 	v := func(k string) string { return strings.TrimSpace(r.FormValue(k)) }
 	var n config.Notify
 	if v("tg_token") != "" || v("tg_chat") != "" {
-		n.Telegram = &config.Telegram{BotToken: v("tg_token"), ChatID: v("tg_chat")}
+		n.Telegram = &config.Telegram{BotToken: v("tg_token"), ChatID: v("tg_chat"), Disabled: v("tg_enabled") != "1"}
 	}
 	if v("slack_url") != "" {
-		n.Slack = &config.Slack{WebhookURL: v("slack_url")}
+		n.Slack = &config.Slack{WebhookURL: v("slack_url"), Disabled: v("slack_enabled") != "1"}
 	}
 	if v("smtp_host") != "" || v("smtp_from") != "" || v("smtp_to") != "" {
 		port, _ := strconv.Atoi(v("smtp_port"))
@@ -661,13 +859,12 @@ func parseNotifyForm(r *http.Request) config.Notify {
 			}
 		}
 		n.Email = &config.Email{SMTPHost: v("smtp_host"), SMTPPort: port, Username: v("smtp_user"),
-			Password: v("smtp_pass"), From: v("smtp_from"), To: to}
+			Password: v("smtp_pass"), From: v("smtp_from"), To: to, Disabled: v("email_enabled") != "1"}
 	}
 	return n
 }
 
 // saveNotify validates and persists settings, swapping the live notifiers.
-// It renders the form with an error and returns false on invalid input.
 func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request) (config.Notify, bool) {
 	n := parseNotifyForm(r)
 	if err := config.ValidateNotify(&n); err != nil {
@@ -688,11 +885,10 @@ func (s *Server) alertsSave(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.saveNotify(w, r); !ok {
 		return
 	}
-	redirect(w, r, "/alerts", "Alert settings saved.")
+	redirect(w, r, "/alerts", "Alert channels saved.")
 }
 
-// alertsTest saves the form first, then sends a test through one channel,
-// so what you see in the form is what gets tested.
+// alertsTest saves the form first, then sends a test through one channel.
 func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	n, ok := s.saveNotify(w, r)
 	if !ok {
@@ -710,6 +906,126 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")
 }
 
+// ---- status page ----
+
+type statusGroup struct {
+	Name    string
+	Targets []targetView
+}
+
+type statusData struct {
+	base
+	StatusTitle string
+	StatusDesc  string
+	ShareURL    string
+	Groups      []statusGroup
+	Total       int
+}
+
+func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
+	d := statusData{base: s.base(r, "status", "Status")}
+	d.StatusTitle, d.StatusDesc = s.statusMeta(r.Context())
+	d.Title = d.StatusTitle
+	scheme := "http"
+	if isHTTPS(r) {
+		scheme = "https"
+	}
+	d.ShareURL = scheme + "://" + r.Host + "/status"
+	views, err := s.views(r.Context(), viewOpts{days: true})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	d.Total = len(views)
+	byGroup := map[string]*statusGroup{}
+	for _, v := range views {
+		g := v.State.Target.Group
+		if byGroup[g] == nil {
+			byGroup[g] = &statusGroup{Name: g}
+		}
+		byGroup[g].Targets = append(byGroup[g].Targets, v)
+	}
+	for _, g := range byGroup {
+		d.Groups = append(d.Groups, *g)
+	}
+	sort.Slice(d.Groups, func(i, j int) bool {
+		if (d.Groups[i].Name == "") != (d.Groups[j].Name == "") {
+			return d.Groups[i].Name == "" // ungrouped first
+		}
+		return d.Groups[i].Name < d.Groups[j].Name
+	})
+	s.render(w, r, "status", d)
+}
+
+func (s *Server) statusMeta(ctx context.Context) (title, desc string) {
+	title, _ = s.store.GetSetting(ctx, "status_title")
+	desc, _ = s.store.GetSetting(ctx, "status_desc")
+	if title == "" {
+		title = "Service status"
+	}
+	return title, desc
+}
+
+func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
+	title := strings.TrimSpace(r.FormValue("title"))
+	desc := strings.TrimSpace(r.FormValue("description"))
+	if len(title) > 80 || len(desc) > 200 {
+		redirect(w, r, "/status", "Title or description too long.")
+		return
+	}
+	if err := s.store.SetSetting(r.Context(), "status_title", title); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.store.SetSetting(r.Context(), "status_desc", desc); err != nil {
+		s.fail(w, err)
+		return
+	}
+	redirect(w, r, "/status", "Status page saved.")
+}
+
+// ---- live events ----
+
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	// The server's WriteTimeout would otherwise cut this long-lived stream.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		s.logger.Warn("sse: cannot clear write deadline", "err", err)
+	}
+	ch, unsub := s.mon.Events.Subscribe()
+	defer unsub()
+	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
+		return
+	}
+	fl.Flush()
+	ping := time.NewTicker(25 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev := <-ch:
+			b, _ := json.Marshal(ev)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				return
+			}
+			fl.Flush()
+		case <-ping.C:
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
+			fl.Flush()
+		}
+	}
+}
+
 // ---- auth pages ----
 
 type loginData struct {
@@ -722,7 +1038,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, "login", "layout", loginData{base: s.base(r, "login", "Log in"), Next: safeNext(r.URL.Query().Get("next"))})
+	s.render(w, r, "login", loginData{base: s.base(r, "login", "Log in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
@@ -730,12 +1046,12 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	d := loginData{base: s.base(r, "login", "Log in"), Next: safeNext(r.FormValue("next"))}
+	d := loginData{base: s.base(r, "login", "Log in · Uptime"), Next: safeNext(r.FormValue("next"))}
 	key := clientKey(r, s.cfg.TrustProxy)
 	if s.limiter.blocked(key) {
 		d.Error = "Too many failed attempts. Wait a minute and try again."
 		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, "login", "layout", d)
+		s.render(w, r, "login", d)
 		return
 	}
 	if passwordEqual(r.FormValue("password"), s.cfg.AdminPassword) {
@@ -746,7 +1062,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	s.limiter.fail(key)
 	d.Error = "Wrong password."
 	w.WriteHeader(http.StatusUnauthorized)
-	s.render(w, "login", "layout", d)
+	s.render(w, r, "login", d)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -760,6 +1076,7 @@ type apiTarget struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
 	URL         string     `json:"url"`
+	Group       string     `json:"group,omitempty"`
 	Status      string     `json:"status"`
 	Since       *time.Time `json:"since,omitempty"`
 	LastChecked *time.Time `json:"last_checked,omitempty"`
@@ -769,10 +1086,11 @@ type apiTarget struct {
 	Uptime24h   float64    `json:"uptime_24h"`
 	Uptime7d    float64    `json:"uptime_7d"`
 	Paused      bool       `json:"paused"`
+	Muted       bool       `json:"muted"`
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	views, err := s.views(r.Context(), false)
+	views, err := s.views(r.Context(), viewOpts{})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -780,8 +1098,8 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	out := make([]apiTarget, 0, len(views))
 	for _, v := range views {
 		st := v.State
-		a := apiTarget{ID: st.Target.ID, Name: st.Target.Name, URL: st.Target.URL, Status: st.Status.String(),
-			Uptime24h: round2(v.Up24.UptimePercent()), Uptime7d: round2(v.Up7.UptimePercent()), Paused: st.Target.Paused}
+		a := apiTarget{ID: st.Target.ID, Name: st.Target.Name, URL: st.Target.URL, Group: st.Target.Group, Status: st.Status.String(),
+			Uptime24h: round2(v.Up24.UptimePercent()), Uptime7d: round2(v.Up7.UptimePercent()), Paused: st.Target.Paused, Muted: st.Target.Muted}
 		if !st.Since.IsZero() {
 			t := st.Since
 			a.Since = &t
@@ -837,27 +1155,34 @@ func (s *Server) apiIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type in struct {
-		ID         int64      `json:"id"`
-		Target     string     `json:"target"`
-		TargetID   int64      `json:"target_id"`
-		StartedAt  time.Time  `json:"started_at"`
-		EndedAt    *time.Time `json:"ended_at,omitempty"`
-		DurationS  int64      `json:"duration_s"`
-		Cause      string     `json:"cause"`
-		AlertedVia string     `json:"alerted_via"`
+		ID           int64      `json:"id"`
+		Target       string     `json:"target"`
+		TargetID     int64      `json:"target_id"`
+		StartedAt    time.Time  `json:"started_at"`
+		EndedAt      *time.Time `json:"ended_at,omitempty"`
+		DurationS    int64      `json:"duration_s"`
+		Cause        string     `json:"cause"`
+		AlertedVia   string     `json:"alerted_via"`
+		Acknowledged *time.Time `json:"acknowledged_at,omitempty"`
+		Note         string     `json:"note,omitempty"`
 	}
 	now := s.now()
 	out := make([]in, 0, len(list))
 	for _, i := range list {
-		out = append(out, in{i.ID, i.TargetName, i.TargetID, i.StartedAt, i.EndedAt, int64(i.Duration(now).Seconds()), i.Cause, i.Channels})
+		out = append(out, in{i.ID, i.TargetName, i.TargetID, i.StartedAt, i.EndedAt, int64(i.Duration(now).Seconds()), i.Cause, i.Channels, i.AckedAt, i.Note})
 	}
 	writeJSON(w, map[string]any{"incidents": out})
 }
 
 // ---- helpers ----
 
-func (s *Server) render(w http.ResponseWriter, page, name string, data any) {
+// render writes a full page, or only the content block for live refreshes.
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	name := "layout"
+	if r.Header.Get("X-Partial") == "1" {
+		name = "content"
+	}
 	if err := s.pages[page].ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Error("render", "page", page, "err", err)
 	}
@@ -866,6 +1191,10 @@ func (s *Server) render(w http.ResponseWriter, page, name string, data any) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	s.logger.Error("request failed", "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+func wantsJSON(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
 func redirect(w http.ResponseWriter, r *http.Request, to, msg string) {
@@ -879,22 +1208,60 @@ func redirect(w http.ResponseWriter, r *http.Request, to, msg string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// backTo returns the Referer path when it is a local page, else fallback.
+// backTo returns the Referer path and query (minus any old flash) when it
+// is a local page, so filters and tabs survive a round trip; else fallback.
 func backTo(r *http.Request, fallback string) string {
-	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && strings.HasPrefix(ref.Path, "/") {
-		return ref.Path
+	ref, err := url.Parse(r.Referer())
+	if err != nil || ref.Host != r.Host || !strings.HasPrefix(ref.Path, "/") {
+		return fallback
 	}
-	return fallback
+	q := ref.Query()
+	q.Del("msg")
+	if len(q) > 0 {
+		return ref.Path + "?" + q.Encode()
+	}
+	return ref.Path
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func writeJSON(w http.ResponseWriter, v any) { writeJSONStatus(w, http.StatusOK, v) }
+
+func writeJSONStatus(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
 }
 
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// shortDur renders durations the way people type them: 30s, 2m, 1h30m.
+func shortDur(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	sec := int(d.Seconds()) % 60
+	var b strings.Builder
+	if h > 0 {
+		fmt.Fprintf(&b, "%dh", h)
+	}
+	if m > 0 {
+		fmt.Fprintf(&b, "%dm", m)
+	}
+	if sec > 0 || b.Len() == 0 {
+		fmt.Fprintf(&b, "%ds", sec)
+	}
+	return b.String()
+}
 
 func humanAgo(d time.Duration) string {
 	switch {

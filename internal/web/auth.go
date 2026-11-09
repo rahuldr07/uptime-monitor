@@ -84,7 +84,10 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/partials/") {
+		// Programmatic callers get a 401 they can act on instead of a redirect
+		// that fetch() would follow into the login page.
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.Header.Get("X-Partial") == "1" || wantsJSON(r) ||
+			strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -107,9 +110,11 @@ func sameOrigin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		for _, h := range []string{"Origin", "Referer"} {
 			v := r.Header.Get(h)
-			if v == "" || v == "null" {
+			if v == "" {
 				continue
 			}
+			// "Origin: null" (sandboxed iframes, data: pages) is cross-site, so
+			// let it fall through to the host comparison, which fails.
 			u, err := url.Parse(v)
 			if err != nil || !strings.EqualFold(u.Host, r.Host) {
 				http.Error(w, "cross-site request rejected", http.StatusForbidden)

@@ -24,7 +24,9 @@ type Target struct {
 	Timeout      time.Duration
 	ExpectStatus int
 	Keyword      string
+	Group        string
 	Paused       bool
+	Muted        bool // record incidents but send no alerts
 	CreatedAt    time.Time
 }
 
@@ -48,7 +50,12 @@ type Incident struct {
 	EndedAt    *time.Time
 	Cause      string
 	Channels   string // comma-separated channels that were alerted successfully
+	AckedAt    *time.Time
+	Note       string
 }
+
+// Acknowledged reports whether someone has acknowledged the incident.
+func (i Incident) Acknowledged() bool { return i.AckedAt != nil }
 
 // Duration returns how long the incident lasted, or has lasted so far.
 func (i Incident) Duration(now time.Time) time.Duration {
@@ -153,7 +160,56 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate adds columns introduced after the first release. ALTER TABLE ADD
+// COLUMN is idempotent here because we check the column list first.
+func migrate(db *sql.DB) error {
+	adds := []struct{ table, col, def string }{
+		{"targets", "grp", "TEXT NOT NULL DEFAULT ''"},
+		{"targets", "muted", "INTEGER NOT NULL DEFAULT 0"},
+		{"incidents", "acked_at", "INTEGER"},
+		{"incidents", "note", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, a := range adds {
+		has, err := hasColumn(db, a.table, a.col)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", a.table, a.col, a.def)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, col string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Close closes the database.
@@ -161,18 +217,19 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // ---- targets ----
 
-const targetCols = `id, name, url, interval_ms, timeout_ms, expect_status, keyword, paused, created_at`
+const targetCols = `id, name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at`
 
 func scanTarget(sc scanner) (Target, error) {
 	var t Target
 	var interval, timeout, created int64
-	var paused int
-	if err := sc.Scan(&t.ID, &t.Name, &t.URL, &interval, &timeout, &t.ExpectStatus, &t.Keyword, &paused, &created); err != nil {
+	var paused, muted int
+	if err := sc.Scan(&t.ID, &t.Name, &t.URL, &interval, &timeout, &t.ExpectStatus, &t.Keyword, &t.Group, &paused, &muted, &created); err != nil {
 		return Target{}, err
 	}
 	t.Interval = time.Duration(interval) * time.Millisecond
 	t.Timeout = time.Duration(timeout) * time.Millisecond
 	t.Paused = paused == 1
+	t.Muted = muted == 1
 	t.CreatedAt = time.UnixMilli(created).UTC()
 	return t, nil
 }
@@ -216,9 +273,9 @@ func (s *Store) GetTargetByName(ctx context.Context, name string) (Target, error
 // CreateTarget inserts a target and returns it with its id.
 func (s *Store) CreateTarget(ctx context.Context, t Target, now time.Time) (Target, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO targets (name, url, interval_ms, timeout_ms, expect_status, keyword, paused, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, boolToInt(t.Paused), now.UnixMilli())
+		`INSERT INTO targets (name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, t.Group, boolToInt(t.Paused), boolToInt(t.Muted), now.UnixMilli())
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Target{}, fmt.Errorf("a target named %q already exists", t.Name)
@@ -233,9 +290,9 @@ func (s *Store) CreateTarget(ctx context.Context, t Target, now time.Time) (Targ
 // UpdateTarget rewrites the editable fields of a target.
 func (s *Store) UpdateTarget(ctx context.Context, t Target) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE targets SET name = ?, url = ?, interval_ms = ?, timeout_ms = ?, expect_status = ?, keyword = ?, paused = ?
+		`UPDATE targets SET name = ?, url = ?, interval_ms = ?, timeout_ms = ?, expect_status = ?, keyword = ?, grp = ?, paused = ?, muted = ?
 		 WHERE id = ?`,
-		t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, boolToInt(t.Paused), t.ID)
+		t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, t.Group, boolToInt(t.Paused), boolToInt(t.Muted), t.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return fmt.Errorf("a target named %q already exists", t.Name)
@@ -248,6 +305,15 @@ func (s *Store) UpdateTarget(ctx context.Context, t Target) error {
 // SetPaused pauses or resumes a target.
 func (s *Store) SetPaused(ctx context.Context, id int64, paused bool) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE targets SET paused = ? WHERE id = ?`, boolToInt(paused), id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// SetMuted mutes or unmutes alerts for a target.
+func (s *Store) SetMuted(ctx context.Context, id int64, muted bool) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE targets SET muted = ? WHERE id = ?`, boolToInt(muted), id)
 	if err != nil {
 		return err
 	}
@@ -396,6 +462,78 @@ func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, 
 	return out, nil
 }
 
+// Latencies returns the latencies of successful checks since the given
+// time, sorted ascending. A targetID of 0 covers all targets.
+func (s *Store) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
+	q := `SELECT latency_ms FROM checks WHERE ok = 1 AND checked_at >= ?`
+	args := []any{since.UnixMilli()}
+	if targetID != 0 {
+		q += ` AND target_id = ?`
+		args = append(args, targetID)
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY latency_ms ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// Percentile returns the p-th percentile (0-100) of sorted values, or 0.
+func Percentile(sorted []int64, p float64) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(float64(len(sorted)-1) * p / 100)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
+
+// HourlyUptime returns per-hour stats for the last hours hours ending at
+// now, oldest first.
+func (s *Store) HourlyUptime(ctx context.Context, targetID int64, now time.Time, hours int) ([]Stats, error) {
+	start := now.UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT (checked_at / 3600000) AS hr, COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+		 FROM checks WHERE target_id = ? AND checked_at >= ? GROUP BY hr`, targetID, start.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byHour := map[int64]Stats{}
+	for rows.Next() {
+		var hr int64
+		var st Stats
+		var avg sql.NullFloat64
+		if err := rows.Scan(&hr, &st.Total, &st.OKCount, &avg); err != nil {
+			return nil, err
+		}
+		st.AvgLatencyMS = avg.Float64
+		byHour[hr] = st
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Stats, hours)
+	for i := 0; i < hours; i++ {
+		out[i] = byHour[start.Add(time.Duration(i)*time.Hour).UnixMilli()/3600000]
+	}
+	return out, nil
+}
+
 // Prune deletes checks older than before and returns how many were removed.
 func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM checks WHERE checked_at < ?`, before.UnixMilli())
@@ -409,14 +547,15 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
 
 const incidentQuery = `
 SELECT i.id, i.target_id, t.name, i.started_at, i.ended_at, i.cause,
-       COALESCE((SELECT GROUP_CONCAT(DISTINCT a.channel) FROM alerts a WHERE a.incident_id = i.id AND a.ok = 1), '')
+       COALESCE((SELECT GROUP_CONCAT(DISTINCT a.channel) FROM alerts a WHERE a.incident_id = i.id AND a.ok = 1), ''),
+       i.acked_at, i.note
 FROM incidents i JOIN targets t ON t.id = i.target_id`
 
 func scanIncident(sc scanner) (Incident, error) {
 	var in Incident
 	var started int64
-	var ended sql.NullInt64
-	if err := sc.Scan(&in.ID, &in.TargetID, &in.TargetName, &started, &ended, &in.Cause, &in.Channels); err != nil {
+	var ended, acked sql.NullInt64
+	if err := sc.Scan(&in.ID, &in.TargetID, &in.TargetName, &started, &ended, &in.Cause, &in.Channels, &acked, &in.Note); err != nil {
 		return Incident{}, err
 	}
 	in.StartedAt = time.UnixMilli(started).UTC()
@@ -424,7 +563,45 @@ func scanIncident(sc scanner) (Incident, error) {
 		e := time.UnixMilli(ended.Int64).UTC()
 		in.EndedAt = &e
 	}
+	if acked.Valid {
+		a := time.UnixMilli(acked.Int64).UTC()
+		in.AckedAt = &a
+	}
 	return in, nil
+}
+
+// GetIncident returns one incident by id.
+func (s *Store) GetIncident(ctx context.Context, id int64) (Incident, error) {
+	in, err := scanIncident(s.db.QueryRowContext(ctx, incidentQuery+` WHERE i.id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Incident{}, ErrNotFound
+	}
+	return in, err
+}
+
+// AcknowledgeIncident marks an incident as seen by a human.
+func (s *Store) AcknowledgeIncident(ctx context.Context, id int64, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE incidents SET acked_at = ? WHERE id = ? AND acked_at IS NULL`, at.UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// SetIncidentNote stores a free-text note on an incident.
+func (s *Store) SetIncidentNote(ctx context.Context, id int64, note string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE incidents SET note = ? WHERE id = ?`, note, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// CountUnacknowledged counts ongoing incidents nobody has acknowledged.
+func (s *Store) CountUnacknowledged(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM incidents WHERE ended_at IS NULL AND acked_at IS NULL`).Scan(&n)
+	return n, err
 }
 
 // OpenIncident starts a new incident and returns its id.
@@ -516,6 +693,30 @@ func (s *Store) InsertAlert(ctx context.Context, a Alert) error {
 		`INSERT INTO alerts (incident_id, target_id, sent_at, channel, event, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		a.IncidentID, a.TargetID, a.SentAt.UnixMilli(), a.Channel, a.Event, boolToInt(a.OK), a.Error)
 	return err
+}
+
+// LastAlerts returns the most recent delivery attempt per channel.
+func (s *Store) LastAlerts(ctx context.Context) (map[string]Alert, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, a.incident_id, a.target_id, a.sent_at, a.channel, a.event, a.ok, a.error
+		 FROM alerts a JOIN (SELECT channel, MAX(id) AS id FROM alerts GROUP BY channel) m ON m.id = a.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Alert{}
+	for rows.Next() {
+		var a Alert
+		var sent int64
+		var ok int
+		if err := rows.Scan(&a.ID, &a.IncidentID, &a.TargetID, &sent, &a.Channel, &a.Event, &ok, &a.Error); err != nil {
+			return nil, err
+		}
+		a.SentAt = time.UnixMilli(sent).UTC()
+		a.OK = ok == 1
+		out[a.Channel] = a
+	}
+	return out, rows.Err()
 }
 
 // CountAlerts counts successful deliveries since the given time.

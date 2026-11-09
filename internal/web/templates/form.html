@@ -1,15 +1,25 @@
-{{define "target-form"}}
+{{define "monitor-form"}}
 <form method="post" action="{{.Action}}">
-  <div class="row">
-    <div class="field"><label>Name</label><input name="name" value="{{.Name}}" required maxlength="64" placeholder="Marketing site"></div>
-    <div class="field wide"><label>URL</label><input name="url" value="{{.URL}}" required placeholder="https://example.com/health"></div>
-  </div>
-  <div class="row" style="margin-top:10px">
-    <div class="field"><label>Check every</label><input name="interval" value="{{.Interval}}" placeholder="30s"></div>
+  <div class="field"><label>URL</label><input name="url" value="{{.URL}}" required placeholder="https://api.example.com/health" inputmode="url" autocomplete="off"></div>
+  <div class="field"><label>Name</label><input name="name" value="{{.Name}}" required maxlength="64" placeholder="Payments API"></div>
+  <div class="frow" style="margin-bottom:12px">
+    <div class="field"><label>Check every</label><input name="interval" value="{{.Interval}}" placeholder="30s"><div class="help">e.g. 30s, 2m, 1h</div></div>
     <div class="field"><label>Timeout</label><input name="timeout" value="{{.Timeout}}" placeholder="10s"></div>
-    <div class="field"><label>Expected status (blank = 2xx/3xx)</label><input name="expect_status" value="{{.ExpectStatus}}" placeholder="200" inputmode="numeric"></div>
-    <div class="field"><label>Body must contain (optional)</label><input name="keyword" value="{{.Keyword}}" placeholder="ok"></div>
-    <div class="field" style="flex:0 0 auto"><button type="submit" class="primary">{{.Submit}}</button></div>
+  </div>
+  <details class="adv"{{if or .ExpectStatus .Keyword .Group}} open{{end}}><summary>Advanced</summary>
+    <div class="frow" style="margin-bottom:12px">
+      <div class="field"><label>Expected status</label><input name="expect_status" value="{{.ExpectStatus}}" placeholder="any 2xx/3xx" inputmode="numeric"></div>
+      <div class="field"><label>Body must contain</label><input name="keyword" value="{{.Keyword}}" placeholder="ok"></div>
+    </div>
+    <div class="field"><label>Group on status page</label><input name="group" value="{{.Group}}" placeholder="Core services" list="groups"></div>
+    {{if .ShowFlags}}<div class="frow" style="margin-bottom:12px">
+      <label style="display:flex;gap:8px;align-items:center;margin:0;font-size:13px;color:var(--text)"><input type="checkbox" name="muted" value="1" {{if .Muted}}checked{{end}}>Mute alerts (still record incidents)</label>
+    </div>{{end}}
+  </details>
+  {{if .ShowTest}}<div data-test-result class="result" aria-live="polite"></div>{{end}}
+  <div class="btns">
+    <button type="submit" class="primary">{{.Submit}}</button>
+    {{if .ShowTest}}<button type="button" id="test-btn">Test URL</button>{{end}}
   </div>
 </form>
 {{end}}

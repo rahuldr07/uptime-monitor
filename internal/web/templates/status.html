@@ -1,19 +1,38 @@
 {{define "content"}}
+<div class="status-head">
+  <h1>{{.StatusTitle}}</h1>
+  {{if .StatusDesc}}<p>{{.StatusDesc}}</p>{{end}}
+</div>
 {{if gt .DownCount 0}}
-<div class="banner bad"><span>Some systems are experiencing issues</span><span class="small">{{.DownCount}} of {{.Total}} down</span></div>
+<div class="banner bad"><span><strong>Some systems are experiencing issues</strong></span><span class="small">{{.DownCount}} of {{.Total}} affected</span></div>
+{{else if eq .Total 0}}
+<div class="banner warn"><span>No services configured yet</span></div>
 {{else}}
-<div class="banner ok"><span>All systems operational</span><span class="small">{{.Total}} service(s)</span></div>
+<div class="banner ok"><span><strong>All systems operational</strong></span><span class="small">{{.Total}} service{{if ne .Total 1}}s{{end}} · updated {{ago .Now}}</span></div>
 {{end}}
+{{range .Groups}}
+{{if .Name}}<div class="group-title">{{.Name}}</div>{{end}}
 {{range .Targets}}
 <div class="card block">
   <div class="head">
-    <span class="name"><span class="sdot {{.Class}}"></span>{{.State.Target.Name}}</span>
+    <span style="font-weight:500;display:flex;align-items:center;gap:8px"><span class="sdot {{.Class}}"></span>{{.State.Target.Name}}</span>
     <span class="badge {{.Class}}">{{.Label}}</span>
   </div>
-  <div class="days">{{range .Days}}<i class="{{.Class}}" title="{{.Title}}"></i>{{end}}</div>
-  <div class="meta"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today</span></div>
+  <div class="days" style="margin-top:10px">{{range .Days}}<i class="{{.Class}}" title="{{.Title}}"></i>{{end}}</div>
+  <div class="small faint" style="display:flex;justify-content:space-between;margin-top:6px"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today</span></div>
 </div>
-{{else}}
-<div class="empty">No services configured.</div>
 {{end}}
+{{end}}
+{{if .Admin}}
+<div class="card block" style="margin-top:28px;border-style:dashed">
+  <div class="head"><h2>Status page settings</h2><span class="small muted">visible to admins only</span></div>
+  <form method="post" action="/status/settings" class="frow" style="margin-top:10px">
+    <div class="field"><label>Title</label><input name="title" value="{{.StatusTitle}}" maxlength="80"></div>
+    <div class="field wide"><label>Description</label><input name="description" value="{{.StatusDesc}}" maxlength="200" placeholder="Current status of our services"></div>
+    <div class="field auto"><button type="submit" class="primary">Save</button></div>
+  </form>
+  <div class="small muted" style="margin-top:10px">Share this page: <span class="mono">{{.ShareURL}}</span> · <a href="/">Back to overview</a></div>
+</div>
+{{end}}
+<footer style="text-align:center">Powered by uptime-monitor</footer>
 {{end}}

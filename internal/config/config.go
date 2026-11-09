@@ -38,17 +38,20 @@ type Target struct {
 	Timeout      Duration `json:"timeout"`
 	ExpectStatus int      `json:"expect_status"` // 0 means any 2xx or 3xx
 	Keyword      string   `json:"keyword"`       // optional text that must appear in the body
+	Group        string   `json:"group"`         // optional grouping on the status page
 }
 
 // Telegram bot settings.
 type Telegram struct {
 	BotToken string `json:"bot_token"`
 	ChatID   string `json:"chat_id"`
+	Disabled bool   `json:"disabled,omitempty"`
 }
 
 // Slack incoming-webhook settings.
 type Slack struct {
 	WebhookURL string `json:"webhook_url"`
+	Disabled   bool   `json:"disabled,omitempty"`
 }
 
 // Email SMTP settings.
@@ -59,6 +62,7 @@ type Email struct {
 	Password string   `json:"password"`
 	From     string   `json:"from"`
 	To       []string `json:"to"`
+	Disabled bool     `json:"disabled,omitempty"`
 }
 
 // Notify groups the optional alert channels.

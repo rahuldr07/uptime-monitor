@@ -1,0 +1,29 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Monitors</h1><div class="sub">{{len .Rows}} configured</div></div>
+  <div class="btns">
+    <div class="search">{{template "i-search"}}<input data-search placeholder="Search  /" aria-label="Search monitors"></div>
+    <button type="button" class="primary" onclick="openPanel()">{{template "i-plus"}}New monitor</button>
+  </div>
+</div>
+{{if .Rows}}
+<div class="card block" style="padding:0 18px">
+<table><tr><th>Name</th><th>URL</th><th>Group</th><th>Every</th><th>Timeout</th><th>Expect</th><th>Status</th><th></th></tr>
+{{range .Rows}}<tr data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
+  <td><a href="/targets/{{.State.Target.ID}}" style="font-weight:500">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge">muted</span>{{end}}</td>
+  <td class="muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{.State.Target.URL}}</td>
+  <td class="muted">{{or .State.Target.Group "—"}}</td>
+  <td>{{durstr .State.Target.Interval}}</td><td>{{durstr .State.Target.Timeout}}</td>
+  <td>{{if .State.Target.ExpectStatus}}{{.State.Target.ExpectStatus}}{{else}}2xx/3xx{{end}}{{if .State.Target.Keyword}} + "{{.State.Target.Keyword}}"{{end}}</td>
+  <td><span class="badge {{.Class}}">{{.Label}}</span></td>
+  <td class="btns">
+    <a class="btn sm" href="/targets/{{.State.Target.ID}}?tab=settings">Edit</a>
+    <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="sm">{{if .State.Target.Paused}}Resume{{else}}Pause{{end}}</button></form>
+    <form method="post" action="/targets/{{.State.Target.ID}}/delete" data-confirm="Delete {{.State.Target.Name}} and all of its history? This cannot be undone."><button type="submit" class="sm danger">Delete</button></form>
+  </td>
+</tr>{{end}}
+</table>
+</div>
+{{else}}<div class="empty">No monitors yet. Press <kbd>n</kbd> or click New monitor.</div>{{end}}
+<datalist id="groups">{{range .Groups}}<option value="{{.}}">{{end}}</datalist>
+{{end}}

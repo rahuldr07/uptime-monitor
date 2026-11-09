@@ -2,7 +2,8 @@
 <div class="login">
   <div class="card">
     <h1>Admin login</h1>
-    <form method="post" action="/login" style="margin-top:16px">
+    <p class="muted small" style="margin:4px 0 16px">Sign in to manage monitors and alerts. The <a href="/status">status page</a> is public.</p>
+    <form method="post" action="/login">
       <input type="hidden" name="next" value="{{.Next}}">
       <div class="field"><label>Password</label><input name="password" type="password" autofocus required autocomplete="current-password"></div>
       <div style="margin-top:14px"><button type="submit" class="primary">Log in</button></div>

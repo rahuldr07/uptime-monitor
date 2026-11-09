@@ -8,6 +8,12 @@ build step for the frontend.
 
 ## Features
 
+- Sidebar app shell with light, dark and auto themes, toasts, and keyboard shortcuts (`n` new monitor, `/` search, `t` theme)
+- First-run guide, and a slide-over to add a monitor with a "Test URL" probe before saving
+- Live updates on every page over Server-Sent Events, no reloads
+- Incident acknowledgement and notes; per-monitor alert muting; per-channel enable toggle with last-delivery status
+- Public status page with a configurable title and description, and monitors grouped by name
+
 - One goroutine per target, each with its own interval and timeout
 - Status code and optional body keyword checks
 - A target is marked down after N consecutive failures (default 2) and up on
@@ -52,7 +58,7 @@ UPTIME_ADMIN_PASSWORD=choose-one docker compose up -d
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | checks older than this are pruned hourly |
-| `targets[]` | | `name`, `url`, optional `interval`, `timeout`, `expect_status`, `keyword` |
+| `targets[]` | | `name`, `url`, optional `interval`, `timeout`, `expect_status`, `keyword`, `group` |
 | `notify` | | `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
 
 Targets in the config file are added to the database on first start. After
@@ -66,7 +72,8 @@ All endpoints need the admin session cookie when a password is set.
 
 - `GET /api/status` current state and uptime for every target
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
-- `GET /api/incidents?target={id}&ongoing=1` incidents
+- `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
+- `GET /events` Server-Sent Events stream of state changes (admin session required)
 - `GET /healthz` liveness
 
 ## Layout

@@ -131,3 +131,47 @@ func downsample(checks []store.Check, n int) []store.Check {
 	}
 	return out
 }
+
+// sparkSVG draws a tiny latency sparkline for the overview rows. Failed
+// checks are drawn as red ticks so outages stay visible at this size.
+func sparkSVG(checks []store.Check, from, to time.Time) template.HTML {
+	const w, h = 100.0, 24.0
+	if len(checks) == 0 {
+		return template.HTML(`<svg viewBox="0 0 100 24" width="100" height="24" aria-hidden="true"><line x1="0" y1="12" x2="100" y2="12" stroke="#9a9a94" stroke-opacity=".3" stroke-dasharray="2 3"/></svg>`)
+	}
+	span := to.Sub(from).Seconds()
+	if span <= 0 {
+		span = 1
+	}
+	var maxMS int64 = 1
+	for _, c := range checks {
+		if c.OK && c.LatencyMS > maxMS {
+			maxMS = c.LatencyMS
+		}
+	}
+	x := func(t time.Time) float64 { return w * (t.Sub(from).Seconds() / span) }
+	y := func(ms int64) float64 { return 2 + (h-4)*(1-float64(ms)/float64(maxMS)) }
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg viewBox="0 0 %.0f %.0f" width="%.0f" height="%.0f" aria-hidden="true">`, w, h, w, h)
+	var pts []string
+	flush := func() {
+		if len(pts) == 1 {
+			xy := strings.Split(pts[0], ",")
+			fmt.Fprintf(&b, `<circle r="1.5" fill="#378add" cx="%s" cy="%s"/>`, xy[0], xy[1])
+		} else if len(pts) > 1 {
+			fmt.Fprintf(&b, `<polyline fill="none" stroke="#378add" stroke-width="1.3" points="%s"/>`, strings.Join(pts, " "))
+		}
+		pts = pts[:0]
+	}
+	for _, c := range downsample(checks, 60) {
+		if !c.OK {
+			flush()
+			fmt.Fprintf(&b, `<line x1="%.1f" y1="2" x2="%.1f" y2="%.0f" stroke="#e24b4a" stroke-width="1.5"/>`, x(c.CheckedAt), x(c.CheckedAt), h-2)
+			continue
+		}
+		pts = append(pts, fmt.Sprintf("%.1f,%.1f", x(c.CheckedAt), y(c.LatencyMS)))
+	}
+	flush()
+	b.WriteString(`</svg>`)
+	return template.HTML(b.String())
+}
