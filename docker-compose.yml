@@ -1,12 +1,36 @@
 services:
   uptime:
-    build: .
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: uptime-monitor:latest
     ports:
+      # Behind a reverse proxy on this host, publish on loopback only so
+      # clients cannot bypass the proxy (required when trust_proxy is set):
+      #   - "127.0.0.1:8080:8080"
       - "8080:8080"
     volumes:
-      - ./data:/data
+      # The config is read-only; the database lives in a named volume that the
+      # container's non-root user owns. Upgrading from the old ./data layout:
+      # see "Upgrading" in the README.
+      - ./config.json:/etc/uptime-monitor/config.json:ro
+      - uptime-data:/data
     environment:
-      UPTIME_ADMIN_PASSWORD: ${UPTIME_ADMIN_PASSWORD:-change-me}
+      UPTIME_ADMIN_PASSWORD: ${UPTIME_ADMIN_PASSWORD:?set UPTIME_ADMIN_PASSWORD in .env or the environment}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
+
+volumes:
+  uptime-data:
+    # A fixed name, independent of the compose project name, so backups and
+    # the upgrade steps in the README can refer to it.
+    name: uptime-monitor-data

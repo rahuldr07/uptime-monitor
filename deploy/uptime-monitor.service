@@ -6,16 +6,38 @@ Wants=network-online.target
 [Service]
 User=uptime
 Group=uptime
+# Creates /var/lib/uptime-monitor owned by the service user.
+StateDirectory=uptime-monitor
+StateDirectoryMode=0700
 WorkingDirectory=/var/lib/uptime-monitor
+# Put UPTIME_ADMIN_PASSWORD and other secrets here; chmod 600, owned by root.
 EnvironmentFile=-/etc/uptime-monitor.env
 ExecStart=/usr/local/bin/uptime-monitor -config /etc/uptime-monitor.json
 Restart=on-failure
 RestartSec=5
+UMask=0077
+
+# Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/uptime-monitor
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
