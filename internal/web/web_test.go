@@ -522,3 +522,88 @@ func TestNoteLengthByRunes(t *testing.T) {
 		t.Fatalf("over-long note should be rejected: %s", resp.Header.Get("Location"))
 	}
 }
+
+func TestMaintenanceWindows(t *testing.T) {
+	e := newEnv(t, "")
+	c := e.client(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
+	defer up.Close()
+	resp, _ := e.post(t, c, "/targets", url.Values{"name": {"API"}, "url": {up.URL}, "interval": {"1h"}, "timeout": {"5s"}, "group": {"api"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create target: %d", resp.StatusCode)
+	}
+	e.post(t, c, "/targets", url.Values{"name": {"Web"}, "url": {up.URL}, "interval": {"1h"}, "timeout": {"5s"}})
+
+	// Empty page and validation.
+	if resp, body := e.get(t, c, "/maintenance"); resp.StatusCode != 200 || !strings.Contains(body, "Nothing scheduled") || !strings.Contains(body, `option value="api"`) {
+		t.Fatalf("empty maintenance page: %d", resp.StatusCode)
+	}
+	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {""}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "give the window a title") {
+		t.Fatalf("missing title: %d", resp.StatusCode)
+	}
+	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {"x"}, "duration": {"10s"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "duration") {
+		t.Fatalf("short duration: %d", resp.StatusCode)
+	}
+	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {"x"}, "starts": {"2026-11-07T09:00"}, "duration": {"1h"}, "tz_offset": {"0"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "already over") {
+		t.Fatalf("past window: %d", resp.StatusCode)
+	}
+
+	// Start one now for the api group only.
+	resp, _ = e.post(t, c, "/maintenance", url.Values{"title": {"API deploy"}, "duration": {"2h"}, "group": {"api"}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "Maintenance+started") {
+		t.Fatalf("start now: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	_, body := e.get(t, c, "/maintenance")
+	if !strings.Contains(body, "Active now") || !strings.Contains(body, "API deploy") || !strings.Contains(body, "End now") {
+		t.Fatal("active window not shown")
+	}
+	for _, path := range []string{"/", "/status"} {
+		if _, body := e.get(t, c, path); !strings.Contains(body, "aintenance in progress") || !strings.Contains(body, "API deploy") {
+			t.Fatalf("%s should show the maintenance banner", path)
+		}
+	}
+	_, body = e.get(t, c, "/api/status")
+	if !strings.Contains(body, `"maintenance": "API deploy"`) || strings.Count(body, `"maintenance"`) != 1 {
+		t.Fatalf("only the api target should be in maintenance:\n%s", body)
+	}
+	if _, body := e.get(t, c, "/api/maintenance"); !strings.Contains(body, `"active": true`) || !strings.Contains(body, `"group": "api"`) {
+		t.Fatalf("api/maintenance: %s", body)
+	}
+
+	// Schedule one for tomorrow 09:00 in a UTC+5:30 browser (offset -330).
+	resp, _ = e.post(t, c, "/maintenance", url.Values{"title": {"Disk swap"}, "starts": {"2026-11-08T09:00"}, "duration": {"30m"}, "tz_offset": {"-330"}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "scheduled") {
+		t.Fatalf("schedule: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	list, _ := e.st.ListMaintenance(context.Background(), e.clock, 0)
+	if len(list) != 2 || !list[1].StartsAt.Equal(time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)) {
+		t.Fatalf("scheduled start should be 03:30 UTC: %+v", list)
+	}
+	if _, body := e.get(t, c, "/status"); !strings.Contains(body, "Upcoming maintenance") || !strings.Contains(body, "Disk swap") {
+		t.Fatal("status page should list the upcoming window")
+	}
+	if _, body := e.get(t, c, "/maintenance"); !strings.Contains(body, "Upcoming") || !strings.Contains(body, "Disk swap") {
+		t.Fatal("maintenance page should list the upcoming window")
+	}
+
+	// End the active one, delete the upcoming one.
+	active := list[0].ID
+	if resp, _ := e.post(t, c, "/maintenance/"+strconv.FormatInt(active, 10)+"/end", nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("end: %d", resp.StatusCode)
+	}
+	if _, body := e.get(t, c, "/api/status"); strings.Contains(body, `"maintenance"`) {
+		t.Fatal("nothing should be in maintenance after ending the window")
+	}
+	if _, body := e.get(t, c, "/"); strings.Contains(body, "Maintenance in progress") {
+		t.Fatal("banner should be gone")
+	}
+	if resp, _ := e.post(t, c, "/maintenance/"+strconv.FormatInt(list[1].ID, 10)+"/delete", nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	if resp, _ := e.post(t, c, "/maintenance/999/delete", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete missing: %d", resp.StatusCode)
+	}
+	if _, body := e.get(t, c, "/maintenance"); !strings.Contains(body, "Past") || !strings.Contains(body, "API deploy") || strings.Contains(body, "Disk swap") {
+		t.Fatal("ended window should be in Past and deleted one gone")
+	}
+}

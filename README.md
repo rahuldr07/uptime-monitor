@@ -13,6 +13,7 @@ build step for the frontend.
 - Live updates on every page over Server-Sent Events, no reloads
 - Incident acknowledgement and notes; per-monitor alert muting; per-channel enable toggle with last-delivery status
 - Public status page with a configurable title and description, and monitors grouped by name
+- Maintenance windows for the whole organisation or one group: planned downtime opens no incident, sends no alert, is left out of uptime, and is announced on the status page
 
 - One goroutine per target, each with its own interval and timeout
 - Status code and optional body keyword checks
@@ -73,6 +74,7 @@ All endpoints need the admin session cookie when a password is set.
 - `GET /api/status` current state and uptime for every target
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
+- `GET /api/maintenance` active and upcoming maintenance windows
 - `GET /events` Server-Sent Events stream of state changes (admin session required)
 - `GET /healthz` liveness
 

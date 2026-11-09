@@ -3,6 +3,7 @@
 <div class="topbar">
   <div>
     <h1 style="display:flex;align-items:center;gap:10px"><span class="sdot {{.View.Class}}"></span>{{$t.Name}} <span class="badge {{.View.Class}}">{{.View.Label}}</span>{{if $t.Muted}}<span class="badge">muted</span>{{end}}</h1>
+    {{with .View.Maint}}<div class="small" style="color:var(--accent-text);margin-top:2px">{{.Title}} · maintenance until {{ts .EndsAt}} · <a href="/maintenance">manage</a></div>{{end}}
     <div class="sub"><a href="{{$t.URL}}" rel="noopener" target="_blank" class="mono">{{$t.URL}}</a>{{if $t.Group}} · {{$t.Group}}{{end}}</div>
   </div>
   <div class="btns">

@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Maintenance</h1><div class="sub">{{if .Active}}{{len .Active}} window{{if ne (len .Active) 1}}s{{end}} active · alerts paused for covered monitors{{else}}Planned downtime: no alerts, no incidents, excluded from uptime{{end}}</div></div>
+</div>
+<div class="maint-grid">
+<div>
+{{if .Active}}
+<div class="section" style="margin-top:0"><h2>Active now</h2></div>
+{{range .Active}}
+<div class="card block maint-card active">
+  <div class="head">
+    <span style="display:flex;align-items:center;gap:8px;font-weight:500"><span class="sdot maint"></span>{{.Title}}<span class="badge maint">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</span></span>
+    <form method="post" action="/maintenance/{{.ID}}/end" data-confirm="End {{.Title}} now? Alerts resume immediately."><button type="submit" class="sm">End now</button></form>
+  </div>
+  <div class="small muted" style="margin-top:6px">Started {{ts .StartsAt}} · ends {{ts .EndsAt}} ({{dur (.EndsAt.Sub $.Now)}} left)</div>
+</div>
+{{end}}
+{{end}}
+<div class="section"{{if not .Active}} style="margin-top:0"{{end}}><h2>Upcoming</h2>{{if .Upcoming}}<span class="small muted">{{len .Upcoming}} scheduled</span>{{end}}</div>
+{{if .Upcoming}}
+<div class="card block" style="padding:0 18px;overflow-x:auto">
+<table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Starts</th><th>Duration</th><th></th></tr>
+{{range .Upcoming}}<tr>
+  <td style="font-weight:500">{{.Title}}</td>
+  <td class="muted">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
+  <td style="white-space:nowrap">{{ts .StartsAt}}<div class="small faint">in {{dur (.StartsAt.Sub $.Now)}}</div></td>
+  <td style="white-space:nowrap">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
+  <td class="btns" style="text-align:right"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
+</tr>{{end}}
+</table>
+</div>
+{{else}}<div class="empty" style="padding:22px">Nothing scheduled. Plan a deploy or an upgrade on the right and nobody gets paged for it.</div>{{end}}
+{{if .Past}}
+<div class="section"><h2>Past</h2><span class="small muted">most recent {{len .Past}}</span></div>
+<div class="card block" style="padding:0 18px;overflow-x:auto">
+<table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Started</th><th>Duration</th><th></th></tr>
+{{range .Past}}<tr>
+  <td>{{.Title}}</td>
+  <td class="muted">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
+  <td class="muted" style="white-space:nowrap">{{ts .StartsAt}}</td>
+  <td class="muted" style="white-space:nowrap">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
+  <td class="btns" style="text-align:right"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
+</tr>{{end}}
+</table>
+</div>
+{{end}}
+</div>
+<div>
+<div class="card block">
+  <h2>Schedule a window</h2>
+  <p class="small muted" style="margin:6px 0 14px">While a window is open, failed checks on covered monitors are expected: no incident opens, no alert is sent, and those checks are left out of uptime. Checks keep running so the history and latency chart stay complete.</p>
+  <form method="post" action="/maintenance">
+    <input type="hidden" name="tz_offset" value="">
+    <div class="field" style="margin-bottom:12px"><label>Title</label><input name="title" value="{{.Form.Title}}" maxlength="80" placeholder="Database upgrade" required autocomplete="off"></div>
+    <div class="frow" style="margin-bottom:12px">
+      <div class="field wide"><label>Starts</label><input type="datetime-local" name="starts" value="{{.Form.Starts}}"><div class="help">Leave empty to start right now.</div></div>
+      <div class="field" style="flex:0 1 110px"><label>Duration</label><input name="duration" value="{{.Form.Duration}}" placeholder="1h"><div class="help">30m, 2h, 1h30m</div></div>
+    </div>
+    <div class="field" style="margin-bottom:14px"><label>Applies to</label>
+      <select name="group"><option value="">All monitors</option>{{range .Groups}}<option value="{{.}}" {{if eq . $.Form.Group}}selected{{end}}>Group: {{.}}</option>{{end}}</select>
+      <div class="help">Give monitors a group in their settings to scope a window to one service.</div>
+    </div>
+    <div class="btns"><button type="submit" class="primary">{{if .Form.Starts}}Schedule{{else}}Start maintenance{{end}}</button></div>
+  </form>
+</div>
+<div class="card block" style="border-style:dashed">
+  <h3>What visitors see</h3>
+  <p class="small muted" style="margin:6px 0 0">The public status page shows an active window as planned maintenance and lists anything scheduled in the next 7 days, so your users hear about downtime from you first.</p>
+</div>
+</div>
+</div>
+{{end}}

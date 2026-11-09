@@ -93,7 +93,7 @@ func New(cfg *config.Config, st *store.Store, mon *monitor.Monitor, logger *slog
 		},
 	}
 	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
-	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts"} {
+	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance"} {
 		files := append([]string{"templates/layout.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)
@@ -148,6 +148,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /alerts", post(s.alertsSave))
 	m.HandleFunc("POST /alerts/test", post(s.alertsTest))
 	m.HandleFunc("POST /status/settings", post(s.statusSettings))
+	m.HandleFunc("GET /maintenance", admin(s.maintenancePage))
+	m.HandleFunc("POST /maintenance", post(s.maintenanceCreate))
+	m.HandleFunc("POST /maintenance/{id}/end", post(s.maintenanceEnd))
+	m.HandleFunc("POST /maintenance/{id}/delete", post(s.maintenanceDelete))
+	m.HandleFunc("GET /api/maintenance", admin(s.apiMaintenance))
 	m.HandleFunc("GET /api/status", admin(s.apiStatus))
 	m.HandleFunc("GET /api/targets/{id}/checks", admin(s.apiChecks))
 	m.HandleFunc("GET /api/incidents", admin(s.apiIncidents))
@@ -176,6 +181,7 @@ type base struct {
 	DownCount   int
 	NewForm     targetForm
 	Groups      []string
+	Maint       []store.Maintenance // windows active right now
 }
 
 func (s *Server) base(r *http.Request, page, title string) base {
@@ -189,6 +195,7 @@ func (s *Server) base(r *http.Request, page, title string) base {
 	if b.Admin {
 		b.Unacked, _ = s.store.CountUnacknowledged(r.Context())
 	}
+	b.Maint, _ = s.store.ActiveMaintenance(r.Context(), b.Now)
 	for _, st := range s.mon.Snapshot() {
 		if st.Status == monitor.Down {
 			b.DownCount++
@@ -230,6 +237,7 @@ type targetView struct {
 	Up24      store.Stats
 	Up7       store.Stats
 	Up30      store.Stats
+	Maint     *store.Maintenance // the window covering this target now, if any
 }
 
 type viewOpts struct {
@@ -247,6 +255,16 @@ func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (target
 		v.Label = "Down " + humanDur(v.DownFor)
 	case monitor.Unknown:
 		v.Label = "Pending"
+	}
+	if m, in, err := s.store.InMaintenance(ctx, st.Target.Group, now); err != nil {
+		return v, err
+	} else if in {
+		v.Maint = &m
+		// An incident that began before the window stays visible as down and
+		// a paused monitor stays paused; anything else reads as planned maintenance.
+		if st.Status != monitor.Down && st.Status != monitor.Paused {
+			v.Class, v.Label = "maint", "Maintenance"
+		}
 	}
 	var err error
 	if v.Up24, err = s.store.Stats(ctx, st.Target.ID, now.Add(-24*time.Hour)); err != nil {
@@ -920,6 +938,7 @@ type statusData struct {
 	ShareURL    string
 	Groups      []statusGroup
 	Total       int
+	Upcoming    []store.Maintenance // scheduled within the next 7 days
 }
 
 func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
@@ -937,6 +956,16 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Total = len(views)
+	sched, err := s.store.ListMaintenance(r.Context(), d.Now, 20)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	for _, m := range sched {
+		if m.Upcoming(d.Now) && m.StartsAt.Before(d.Now.Add(7*24*time.Hour)) {
+			d.Upcoming = append(d.Upcoming, m)
+		}
+	}
 	byGroup := map[string]*statusGroup{}
 	for _, v := range views {
 		g := v.State.Target.Group
@@ -982,6 +1011,196 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect(w, r, "/status", "Status page saved.")
+}
+
+// ---- maintenance windows ----
+
+type maintForm struct {
+	Title    string
+	Starts   string // datetime-local value, empty for "now"
+	Duration string
+	Group    string
+}
+
+type maintenanceData struct {
+	base
+	Form     maintForm
+	Active   []store.Maintenance
+	Upcoming []store.Maintenance
+	Past     []store.Maintenance
+}
+
+func (s *Server) maintenanceData(r *http.Request, f maintForm) (maintenanceData, error) {
+	d := maintenanceData{base: s.base(r, "maintenance", "Maintenance"), Form: f}
+	if d.Form.Duration == "" {
+		d.Form.Duration = "1h"
+	}
+	all, err := s.store.ListMaintenance(r.Context(), time.Time{}, 0)
+	if err != nil {
+		return d, err
+	}
+	for _, m := range all {
+		switch {
+		case m.Active(d.Now):
+			d.Active = append(d.Active, m)
+		case m.Upcoming(d.Now):
+			d.Upcoming = append(d.Upcoming, m)
+		default:
+			d.Past = append(d.Past, m)
+		}
+	}
+	// Past windows newest first; keep the list short.
+	for i, j := 0, len(d.Past)-1; i < j; i, j = i+1, j-1 {
+		d.Past[i], d.Past[j] = d.Past[j], d.Past[i]
+	}
+	if len(d.Past) > 30 {
+		d.Past = d.Past[:30]
+	}
+	return d, nil
+}
+
+func (s *Server) maintenancePage(w http.ResponseWriter, r *http.Request) {
+	d, err := s.maintenanceData(r, maintForm{})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, "maintenance", d)
+}
+
+// parseMaintForm validates the schedule form. The browser sends its UTC
+// offset in minutes so a local wall-clock time can be pinned to an instant;
+// without it the server's zone is used.
+func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenance, error) {
+	f := maintForm{Title: strings.TrimSpace(r.FormValue("title")), Starts: strings.TrimSpace(r.FormValue("starts")),
+		Duration: strings.TrimSpace(r.FormValue("duration")), Group: strings.TrimSpace(r.FormValue("group"))}
+	m := store.Maintenance{Title: f.Title, Group: f.Group}
+	if f.Title == "" {
+		return f, m, fmt.Errorf("give the window a title, like \"Database upgrade\"")
+	}
+	if utf8.RuneCountInString(f.Title) > 80 {
+		return f, m, fmt.Errorf("title must be 80 characters or fewer")
+	}
+	if len(f.Group) > 40 {
+		return f, m, fmt.Errorf("group name must be 40 characters or fewer")
+	}
+	m.StartsAt = now
+	if f.Starts != "" {
+		var err error
+		if off, perr := strconv.Atoi(r.FormValue("tz_offset")); perr == nil && off > -14*60 && off < 14*60 {
+			m.StartsAt, err = time.Parse("2006-01-02T15:04", f.Starts)
+			m.StartsAt = m.StartsAt.Add(time.Duration(off) * time.Minute)
+		} else {
+			m.StartsAt, err = time.ParseInLocation("2006-01-02T15:04", f.Starts, time.Local)
+		}
+		if err != nil {
+			return f, m, fmt.Errorf("start time: pick a date and time")
+		}
+	}
+	if f.Duration == "" {
+		f.Duration = "1h"
+	}
+	d, err := time.ParseDuration(f.Duration)
+	if err != nil || d < time.Minute || d > 30*24*time.Hour {
+		return f, m, fmt.Errorf("duration: use a value between 1m and 720h, like 30m or 2h")
+	}
+	m.EndsAt = m.StartsAt.Add(d)
+	if m.EndsAt.Before(now) {
+		return f, m, fmt.Errorf("that window is already over")
+	}
+	return f, m, nil
+}
+
+func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
+	f, m, err := parseMaintForm(r, s.now())
+	if err == nil {
+		m, err = s.store.CreateMaintenance(r.Context(), m, s.now())
+	}
+	if err != nil {
+		d, derr := s.maintenanceData(r, f)
+		if derr != nil {
+			s.fail(w, derr)
+			return
+		}
+		d.Error = err.Error()
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		s.render(w, r, "maintenance", d)
+		return
+	}
+	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	msg := "Maintenance started: alerts are paused until " + formatTS(m.EndsAt) + "."
+	if m.Upcoming(s.now()) {
+		msg = "Maintenance scheduled for " + formatTS(m.StartsAt) + "."
+	}
+	redirect(w, r, "/maintenance", msg)
+}
+
+func (s *Server) loadMaintenance(w http.ResponseWriter, r *http.Request) (store.Maintenance, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return store.Maintenance{}, false
+	}
+	m, err := s.store.GetMaintenance(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return store.Maintenance{}, false
+	}
+	if err != nil {
+		s.fail(w, err)
+		return store.Maintenance{}, false
+	}
+	return m, true
+}
+
+// maintenanceEnd closes an active window now so alerting resumes at once.
+func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.loadMaintenance(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.EndMaintenance(r.Context(), m.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, err)
+		return
+	}
+	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	redirect(w, r, backTo(r, "/maintenance"), "Ended "+m.Title+". Alerts are live again.")
+}
+
+func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.loadMaintenance(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteMaintenance(r.Context(), m.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, err)
+		return
+	}
+	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	redirect(w, r, "/maintenance", "Removed "+m.Title+".")
+}
+
+type apiMaint struct {
+	ID       int64     `json:"id"`
+	Title    string    `json:"title"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Group    string    `json:"group,omitempty"`
+	Active   bool      `json:"active"`
+}
+
+func (s *Server) apiMaintenance(w http.ResponseWriter, r *http.Request) {
+	now := s.now()
+	list, err := s.store.ListMaintenance(r.Context(), now, 0)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	out := make([]apiMaint, 0, len(list))
+	for _, m := range list {
+		out = append(out, apiMaint{m.ID, m.Title, m.StartsAt, m.EndsAt, m.Group, m.Active(now)})
+	}
+	writeJSON(w, map[string]any{"generated_at": now.UTC(), "maintenance": out})
 }
 
 // ---- live events ----
@@ -1087,6 +1306,7 @@ type apiTarget struct {
 	Uptime7d    float64    `json:"uptime_7d"`
 	Paused      bool       `json:"paused"`
 	Muted       bool       `json:"muted"`
+	Maintenance string     `json:"maintenance,omitempty"` // title of the window covering the target now
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
@@ -1100,6 +1320,9 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		st := v.State
 		a := apiTarget{ID: st.Target.ID, Name: st.Target.Name, URL: st.Target.URL, Group: st.Target.Group, Status: st.Status.String(),
 			Uptime24h: round2(v.Up24.UptimePercent()), Uptime7d: round2(v.Up7.UptimePercent()), Paused: st.Target.Paused, Muted: st.Target.Muted}
+		if v.Maint != nil {
+			a.Maintenance = v.Maint.Title
+		}
 		if !st.Since.IsZero() {
 			t := st.Since
 			a.Since = &t
@@ -1137,10 +1360,11 @@ func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
 		StatusCode int       `json:"status_code"`
 		LatencyMS  int64     `json:"latency_ms"`
 		Error      string    `json:"error,omitempty"`
+		Maint      bool      `json:"maintenance,omitempty"`
 	}
 	out := make([]c, 0, len(checks))
 	for _, ch := range checks {
-		out = append(out, c{ch.CheckedAt, ch.OK, ch.StatusCode, ch.LatencyMS, ch.Error})
+		out = append(out, c{ch.CheckedAt, ch.OK, ch.StatusCode, ch.LatencyMS, ch.Error, ch.Maintenance})
 	}
 	writeJSON(w, map[string]any{"target": t.Name, "checks": out})
 }

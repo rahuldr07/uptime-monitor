@@ -136,6 +136,7 @@
     var a = document.activeElement;
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
     if ($('#content[data-no-refresh]')) return true;              // a form re-rendered with a validation error
+    var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
     return $$('#content form').some(function (f) { return f._dirty; }); // unsaved edits
   }
   window.refresh = function () {
@@ -149,6 +150,7 @@
       })
       .then(function (html) {
         if (html === null) return;
+        if (editing()) { pending = true; return; } // a dialog or edit began while this was in flight
         var main = $('#content'); if (!main) return;
         var q = $('[data-search]'); var qv = q ? q.value : '';
         main.innerHTML = html;
@@ -185,7 +187,10 @@
       f.addEventListener('input', function (e) { if (!e.target.hasAttribute('data-search')) f._dirty = true; });
     });
   }
-  function wire(root) { wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); }
+  function wireTZ(root) {
+    $$('input[name=tz_offset]', root).forEach(function (i) { i.value = String(new Date().getTimezoneOffset()); });
+  }
+  function wire(root) { wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
   document.addEventListener('DOMContentLoaded', function () {
     liftFlash(); wire(document); wirePanel(); connect();
     setInterval(function () { var u = $('[data-updated]'); if (u && u._t) u.textContent = 'Updated ' + Math.round((Date.now() - u._t) / 1000) + 's ago'; }, 5000);

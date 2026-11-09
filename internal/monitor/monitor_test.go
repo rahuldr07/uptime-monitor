@@ -340,3 +340,53 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 		t.Fatalf("state after pause: %+v", s)
 	}
 }
+
+func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
+	f := setup(t, 2)
+	ctx := context.Background()
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}} // manual ticks, no runner
+	if s := f.tick(t); s.Status != Up {
+		t.Fatalf("want up, got %v", s.Status)
+	}
+	// A window covering the next hour, for every target.
+	if _, err := f.st.CreateMaintenance(ctx, store.Maintenance{Title: "deploy", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour)}, f.clock); err != nil {
+		t.Fatal(err)
+	}
+	atomic.StoreInt32(&f.status, 500)
+	for i := 0; i < 3; i++ {
+		s := f.tick(t)
+		if s.Status != Up || s.Failures != 0 || s.IncidentID != 0 {
+			t.Fatalf("tick %d during maintenance: status %v failures %d incident %d", i, s.Status, s.Failures, s.IncidentID)
+		}
+		if s.Last == nil || s.Last.OK || !s.Last.Maintenance {
+			t.Fatalf("last check should be a flagged failure: %+v", s.Last)
+		}
+	}
+	if got := f.rec.list(); len(got) != 0 {
+		t.Fatalf("no alerts expected during maintenance, got %+v", got)
+	}
+	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{}); len(list) != 0 {
+		t.Fatalf("no incidents expected during maintenance, got %+v", list)
+	}
+	// Window over: failures count again from zero, so threshold 2 needs two ticks.
+	f.clock = f.clock.Add(time.Hour)
+	if s := f.tick(t); s.Status != Up || s.Failures != 1 {
+		t.Fatalf("first failure after window: %v %d", s.Status, s.Failures)
+	}
+	s := f.tick(t)
+	if s.Status != Down || s.IncidentID == 0 || s.Last.Maintenance {
+		t.Fatalf("second failure after window should open an incident: %+v", s)
+	}
+	if got := f.rec.list(); len(got) != 1 || got[0].Up {
+		t.Fatalf("want one down alert, got %+v", got)
+	}
+	// A recovery seen inside a later window still closes the incident.
+	f.st.CreateMaintenance(ctx, store.Maintenance{Title: "fix", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour), Group: ""}, f.clock)
+	atomic.StoreInt32(&f.status, 200)
+	if s := f.tick(t); s.Status != Up || s.IncidentID != 0 {
+		t.Fatalf("recovery during maintenance: %+v", s)
+	}
+	if got := f.rec.list(); len(got) != 2 || !got[1].Up {
+		t.Fatalf("want an up alert, got %+v", got)
+	}
+}

@@ -71,7 +71,7 @@ type Options struct {
 // Event is published whenever a target's state or latest check changes.
 type Event struct {
 	TargetID int64  `json:"target_id"`
-	Kind     string `json:"kind"` // "check", "down", "up", "reload", "removed"
+	Kind     string `json:"kind"` // "check", "down", "up", "reload", "removed", "maintenance"
 }
 
 // Bus fans Events out to subscribers without blocking the publisher.
@@ -95,6 +95,10 @@ func (b *Bus) Subscribe() (<-chan Event, func()) {
 		b.mu.Unlock()
 	}
 }
+
+// Publish broadcasts an event. Other packages use it for changes the
+// monitor does not see itself, such as a maintenance window being scheduled.
+func (b *Bus) Publish(ev Event) { b.publish(ev) }
 
 func (b *Bus) publish(ev Event) {
 	b.mu.Lock()
@@ -406,6 +410,11 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	// cancelled from here on, so state and store never disagree.
 	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if _, in, err := m.store.InMaintenance(sctx, t.Group, c.CheckedAt); err != nil {
+		m.logger.Error("maintenance lookup", "target", t.Name, "err", err)
+	} else {
+		c.Maintenance = in
+	}
 	if err := m.store.InsertCheck(sctx, c); err != nil {
 		m.logger.Error("store check", "target", t.Name, "err", err)
 	}
@@ -510,6 +519,11 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 					StatusCode: c.StatusCode, DownFor: c.CheckedAt.Sub(since)}
 			}
 		}
+	} else if c.Maintenance {
+		// Expected downtime: show the failure but do not count it toward an
+		// incident. Failures only start counting once the window is over.
+		st.Failures = 0
+		st.firstFailAt = time.Time{}
 	} else {
 		st.Failures++
 		if st.firstFailAt.IsZero() {

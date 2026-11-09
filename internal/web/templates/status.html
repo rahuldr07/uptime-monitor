@@ -3,12 +3,21 @@
   <h1>{{.StatusTitle}}</h1>
   {{if .StatusDesc}}<p>{{.StatusDesc}}</p>{{end}}
 </div>
+{{if .Maint}}
+<div class="banner maint"><span>{{template "i-wrench"}}<strong>Scheduled maintenance in progress</strong> · {{range $i, $m := .Maint}}{{if $i}}, {{end}}{{$m.Title}}{{if $m.Group}} ({{$m.Group}}){{end}}{{end}}</span><span class="small">expected to end {{with index .Maint 0}}{{ts .EndsAt}}{{end}}</span></div>
+{{end}}
 {{if gt .DownCount 0}}
 <div class="banner bad"><span><strong>Some systems are experiencing issues</strong></span><span class="small">{{.DownCount}} of {{.Total}} affected</span></div>
 {{else if eq .Total 0}}
 <div class="banner warn"><span>No services configured yet</span></div>
 {{else}}
 <div class="banner ok"><span><strong>All systems operational</strong></span><span class="small">{{.Total}} service{{if ne .Total 1}}s{{end}} · updated {{ago .Now}}</span></div>
+{{end}}
+{{if .Upcoming}}
+<div class="card block" style="padding:12px 18px">
+  <div class="small" style="font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Upcoming maintenance</div>
+  {{range .Upcoming}}<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:14px"><span>{{.Title}}{{if .Group}} <span class="badge">{{.Group}}</span>{{end}}</span><span class="muted small">{{ts .StartsAt}} · {{dur (.EndsAt.Sub .StartsAt)}}</span></div>{{end}}
+</div>
 {{end}}
 {{range .Groups}}
 {{if .Name}}<div class="group-title">{{.Name}}</div>{{end}}

@@ -16,6 +16,7 @@
   <a class="nav{{if eq .Page "monitors"}} active{{end}}" href="/targets">{{template "i-globe"}}<span class="t">Monitors</span></a>
   <a class="nav{{if eq .Page "incidents"}} active{{end}}" href="/incidents">{{template "i-alert"}}<span class="t">Incidents</span>{{if gt .Unacked 0}}<span class="count">{{.Unacked}}</span>{{end}}</a>
   <a class="nav{{if eq .Page "alerts"}} active{{end}}" href="/alerts">{{template "i-bell"}}<span class="t">Alert channels</span></a>
+  <a class="nav{{if eq .Page "maintenance"}} active{{end}}" href="/maintenance">{{template "i-wrench"}}<span class="t">Maintenance</span>{{if .Maint}}<span class="count maint">{{len .Maint}}</span>{{end}}</a>
   <a class="nav" href="/status" target="_blank" rel="noopener">{{template "i-ext"}}<span class="t">Status page</span></a>
   <div class="foot">
     <button type="button" class="ghost sm" onclick="cycleTheme()" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>

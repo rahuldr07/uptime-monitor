@@ -39,7 +39,32 @@ type Check struct {
 	StatusCode int
 	LatencyMS  int64
 	Error      string
+	// Maintenance marks a check made inside a maintenance window. Such
+	// checks are kept for the latency history but excluded from uptime.
+	Maintenance bool
 }
+
+// Maintenance is a planned window during which downtime is expected. It
+// applies to every target, or only to those in Group when it is set.
+type Maintenance struct {
+	ID        int64
+	Title     string
+	StartsAt  time.Time
+	EndsAt    time.Time
+	Group     string // "" means all targets
+	CreatedAt time.Time
+}
+
+// Active reports whether the window covers the instant at.
+func (m Maintenance) Active(at time.Time) bool {
+	return !at.Before(m.StartsAt) && at.Before(m.EndsAt)
+}
+
+// Upcoming reports whether the window has not started yet.
+func (m Maintenance) Upcoming(at time.Time) bool { return at.Before(m.StartsAt) }
+
+// Covers reports whether the window applies to a target in the given group.
+func (m Maintenance) Covers(group string) bool { return m.Group == "" || m.Group == group }
 
 // Incident is a contiguous period of downtime.
 type Incident struct {
@@ -145,6 +170,15 @@ CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS maintenance (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	title      TEXT    NOT NULL,
+	starts_at  INTEGER NOT NULL,
+	ends_at    INTEGER NOT NULL,
+	grp        TEXT    NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_time ON maintenance(starts_at, ends_at);
 `
 
 // Open opens or creates the database at path and ensures the schema exists.
@@ -175,6 +209,7 @@ func migrate(db *sql.DB) error {
 		{"targets", "muted", "INTEGER NOT NULL DEFAULT 0"},
 		{"incidents", "acked_at", "INTEGER"},
 		{"incidents", "note", "TEXT NOT NULL DEFAULT ''"},
+		{"checks", "maint", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
 		has, err := hasColumn(db, a.table, a.col)
@@ -348,25 +383,26 @@ func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
 
 // ---- checks ----
 
-const checkCols = `id, target_id, checked_at, ok, status_code, latency_ms, error`
+const checkCols = `id, target_id, checked_at, ok, status_code, latency_ms, error, maint`
 
 func scanCheck(sc scanner) (Check, error) {
 	var c Check
 	var checkedAt int64
-	var ok int
-	if err := sc.Scan(&c.ID, &c.TargetID, &checkedAt, &ok, &c.StatusCode, &c.LatencyMS, &c.Error); err != nil {
+	var ok, maint int
+	if err := sc.Scan(&c.ID, &c.TargetID, &checkedAt, &ok, &c.StatusCode, &c.LatencyMS, &c.Error, &maint); err != nil {
 		return Check{}, err
 	}
 	c.CheckedAt = time.UnixMilli(checkedAt).UTC()
 	c.OK = ok == 1
+	c.Maintenance = maint == 1
 	return c, nil
 }
 
 // InsertCheck records a check.
 func (s *Store) InsertCheck(ctx context.Context, c Check) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO checks (target_id, checked_at, ok, status_code, latency_ms, error) VALUES (?, ?, ?, ?, ?, ?)`,
-		c.TargetID, c.CheckedAt.UnixMilli(), boolToInt(c.OK), c.StatusCode, c.LatencyMS, c.Error)
+		`INSERT INTO checks (target_id, checked_at, ok, status_code, latency_ms, error, maint) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.TargetID, c.CheckedAt.UnixMilli(), boolToInt(c.OK), c.StatusCode, c.LatencyMS, c.Error, boolToInt(c.Maintenance))
 	return err
 }
 
@@ -411,12 +447,13 @@ func (s *Store) queryChecks(ctx context.Context, q string, args ...any) ([]Check
 }
 
 // Stats aggregates checks for a target since the given time. A targetID of
-// 0 aggregates across all targets.
+// 0 aggregates across all targets. Checks made during maintenance windows
+// are left out, as are they from every other uptime aggregate below.
 func (s *Store) Stats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
 	var st Stats
 	var avg sql.NullFloat64
 	q := `SELECT COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
-	      FROM checks WHERE checked_at >= ?`
+	      FROM checks WHERE maint = 0 AND checked_at >= ?`
 	args := []any{since.UnixMilli()}
 	if targetID != 0 {
 		q += ` AND target_id = ?`
@@ -437,7 +474,7 @@ func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, 
 	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT (checked_at / 86400000) AS day, COUNT(*), COALESCE(SUM(ok), 0)
-		 FROM checks WHERE target_id = ? AND checked_at >= ? GROUP BY day`, targetID, start.UnixMilli())
+		 FROM checks WHERE maint = 0 AND target_id = ? AND checked_at >= ? GROUP BY day`, targetID, start.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +502,7 @@ func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, 
 // Latencies returns the latencies of successful checks since the given
 // time, sorted ascending. A targetID of 0 covers all targets.
 func (s *Store) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
-	q := `SELECT latency_ms FROM checks WHERE ok = 1 AND checked_at >= ?`
+	q := `SELECT latency_ms FROM checks WHERE maint = 0 AND ok = 1 AND checked_at >= ?`
 	args := []any{since.UnixMilli()}
 	if targetID != 0 {
 		q += ` AND target_id = ?`
@@ -508,7 +545,7 @@ func (s *Store) HourlyUptime(ctx context.Context, targetID int64, now time.Time,
 	start := now.UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT (checked_at / 3600000) AS hr, COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
-		 FROM checks WHERE target_id = ? AND checked_at >= ? GROUP BY hr`, targetID, start.UnixMilli())
+		 FROM checks WHERE maint = 0 AND target_id = ? AND checked_at >= ? GROUP BY hr`, targetID, start.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -724,6 +761,125 @@ func (s *Store) CountAlerts(ctx context.Context, since time.Time) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alerts WHERE ok = 1 AND sent_at >= ?`, since.UnixMilli()).Scan(&n)
 	return n, err
+}
+
+// ---- maintenance ----
+
+const maintCols = `id, title, starts_at, ends_at, grp, created_at`
+
+func scanMaintenance(sc scanner) (Maintenance, error) {
+	var m Maintenance
+	var starts, ends, created int64
+	if err := sc.Scan(&m.ID, &m.Title, &starts, &ends, &m.Group, &created); err != nil {
+		return Maintenance{}, err
+	}
+	m.StartsAt = time.UnixMilli(starts).UTC()
+	m.EndsAt = time.UnixMilli(ends).UTC()
+	m.CreatedAt = time.UnixMilli(created).UTC()
+	return m, nil
+}
+
+// CreateMaintenance schedules a window and returns it with its id.
+func (s *Store) CreateMaintenance(ctx context.Context, m Maintenance, now time.Time) (Maintenance, error) {
+	if !m.EndsAt.After(m.StartsAt) {
+		return Maintenance{}, errors.New("maintenance must end after it starts")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO maintenance (title, starts_at, ends_at, grp, created_at) VALUES (?, ?, ?, ?, ?)`,
+		m.Title, m.StartsAt.UnixMilli(), m.EndsAt.UnixMilli(), m.Group, now.UnixMilli())
+	if err != nil {
+		return Maintenance{}, err
+	}
+	m.ID, _ = res.LastInsertId()
+	m.StartsAt, m.EndsAt, m.CreatedAt = m.StartsAt.UTC(), m.EndsAt.UTC(), now.UTC()
+	return m, nil
+}
+
+// GetMaintenance returns one window by id.
+func (s *Store) GetMaintenance(ctx context.Context, id int64) (Maintenance, error) {
+	m, err := scanMaintenance(s.db.QueryRowContext(ctx, `SELECT `+maintCols+` FROM maintenance WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Maintenance{}, ErrNotFound
+	}
+	return m, err
+}
+
+// EndMaintenance cuts an active window short at the given time. Windows
+// that have not started are deleted instead; ended ones are left alone.
+func (s *Store) EndMaintenance(ctx context.Context, id int64, at time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE maintenance SET ends_at = ? WHERE id = ? AND starts_at <= ? AND ends_at > ?`,
+		at.UnixMilli(), id, at.UnixMilli(), at.UnixMilli())
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// DeleteMaintenance removes a window.
+func (s *Store) DeleteMaintenance(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM maintenance WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// ListMaintenance returns windows that end after since, soonest first.
+// Pass the zero time for the full history.
+func (s *Store) ListMaintenance(ctx context.Context, since time.Time, limit int) ([]Maintenance, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+maintCols+` FROM maintenance WHERE ends_at > ? ORDER BY starts_at ASC, id ASC LIMIT ?`, since.UnixMilli(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Maintenance
+	for rows.Next() {
+		m, err := scanMaintenance(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ActiveMaintenance returns the windows covering the instant at.
+func (s *Store) ActiveMaintenance(ctx context.Context, at time.Time) ([]Maintenance, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+maintCols+` FROM maintenance WHERE starts_at <= ? AND ends_at > ? ORDER BY starts_at ASC`, at.UnixMilli(), at.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Maintenance
+	for rows.Next() {
+		m, err := scanMaintenance(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// InMaintenance reports whether a target in group is covered by an active
+// window at the given time, returning that window.
+func (s *Store) InMaintenance(ctx context.Context, group string, at time.Time) (Maintenance, bool, error) {
+	m, err := scanMaintenance(s.db.QueryRowContext(ctx,
+		`SELECT `+maintCols+` FROM maintenance WHERE starts_at <= ? AND ends_at > ? AND (grp = '' OR grp = ?)
+		 ORDER BY starts_at ASC LIMIT 1`, at.UnixMilli(), at.UnixMilli(), group))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Maintenance{}, false, nil
+	}
+	if err != nil {
+		return Maintenance{}, false, err
+	}
+	return m, true, nil
 }
 
 // ---- settings ----

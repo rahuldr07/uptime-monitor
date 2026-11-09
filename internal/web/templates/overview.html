@@ -16,6 +16,7 @@
   </div>
 </div>
 {{else}}
+{{template "maint-banner" .}}
 {{if gt .Down 0}}
 <div class="banner bad"><span><strong>{{.Down}} of {{.Total}}</strong> monitors down</span>{{with .LongestDown}}<span class="small"><a href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a> down for {{dur .DownFor}}</span>{{end}}</div>
 {{else if gt .Pending 0}}
@@ -36,9 +37,10 @@
   {{range .Rows}}
   <div class="row" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
     <span class="sdot {{.Class}}"></span>
-    <span style="min-width:0"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}<br>
+    <span style="min-width:0"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts .EndsAt}}">maintenance</span>{{end}}<br>
       {{if eq .Class "down"}}<span class="sub err">{{with .State.Last}}{{.Error}}{{end}} · down {{dur .DownFor}}</span>
       {{else if eq .Class "paused"}}<span class="sub">paused</span>
+      {{else if eq .Class "maint"}}<span class="sub">{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts .Maint.EndsAt}}</span>
       {{else if .State.Last}}<span class="sub">{{if .State.Last.StatusCode}}HTTP {{.State.Last.StatusCode}}{{else}}ok{{end}} · checked {{ago .State.Last.CheckedAt}}</span>
       {{else}}<span class="sub">waiting for first check</span>{{end}}</span>
     <span class="c3 spark">{{.Spark}}</span>
