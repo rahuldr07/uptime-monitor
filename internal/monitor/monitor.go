@@ -574,8 +574,9 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 }
 
 // alert delivers an event to every channel with retries and records each
-// outcome. It runs detached from the request context so a shutdown does not
-// drop an alert that is already in flight.
+// outcome. Channels are delivered concurrently so one slow or failing
+// channel does not delay the others. It runs detached from the request
+// context so a shutdown does not drop an alert that is already in flight.
 func (m *Monitor) alert(incidentID, targetID int64, ev notify.Event) {
 	defer m.alertWG.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -584,30 +585,50 @@ func (m *Monitor) alert(incidentID, targetID int64, ev notify.Event) {
 	if ev.Up {
 		event = "up"
 	}
+	var wg sync.WaitGroup
 	for _, n := range m.Notifiers() {
-		var err error
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-time.After(m.retryBase << (attempt - 1)):
-				case <-ctx.Done():
-				}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := m.deliver(ctx, n, ev)
+			a := store.Alert{IncidentID: incidentID, TargetID: targetID, SentAt: m.now().UTC(),
+				Channel: n.Name, Event: event, OK: err == nil}
+			if err != nil {
+				a.Error = err.Error()
+				m.logger.Error("alert not delivered", "channel", n.Name, "target", ev.Target, "err", err)
 			}
-			err = n.Notify(ctx, ev)
-			if err == nil || ctx.Err() != nil {
-				break
+			// Record the outcome even if the delivery used up the whole budget.
+			sctx, scancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer scancel()
+			if serr := m.store.InsertAlert(sctx, a); serr != nil {
+				m.logger.Error("store alert", "err", serr)
 			}
-			m.logger.Warn("alert failed", "channel", n.Name, "attempt", attempt+1, "err", err)
-		}
-		a := store.Alert{IncidentID: incidentID, TargetID: targetID, SentAt: m.now().UTC(),
-			Channel: n.Name, Event: event, OK: err == nil}
-		if err != nil {
-			a.Error = err.Error()
-		}
-		if serr := m.store.InsertAlert(ctx, a); serr != nil {
-			m.logger.Error("store alert", "err", serr)
-		}
+		}()
 	}
+	wg.Wait()
+}
+
+// deliver sends ev through one channel, retrying with exponential backoff.
+func (m *Monitor) deliver(ctx context.Context, n notify.Named, ev notify.Event) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(m.retryBase << (attempt - 1)):
+			case <-ctx.Done():
+				return err
+			}
+		}
+		// Each attempt gets its own deadline so one hung attempt leaves time to retry.
+		actx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err = n.Notify(actx, ev)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		m.logger.Warn("alert failed", "channel", n.Name, "attempt", attempt+1, "err", err)
+	}
+	return err
 }
 
 // SendTest sends a synthetic event through one channel by name.

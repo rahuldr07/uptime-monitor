@@ -390,3 +390,39 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("want an up alert, got %+v", got)
 	}
 }
+
+// blocker is a channel that hangs until released, like a stalled SMTP server.
+type blocker struct{ release chan struct{} }
+
+func (b blocker) Notify(ctx context.Context, _ notify.Event) error {
+	select {
+	case <-b.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestSlowChannelDoesNotDelayOthers(t *testing.T) {
+	f := setup(t, 1)
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
+	slow := blocker{release: make(chan struct{})}
+	f.mon.SetNotifiers(notify.Multi{{Name: "slow", Notifier: slow}, {Name: "rec", Notifier: f.rec}})
+	atomic.StoreInt32(&f.status, 503)
+	f.clock = f.clock.Add(30 * time.Second)
+	f.mon.CheckNow(context.Background(), f.target.ID)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(f.rec.list()) == 0 {
+		if time.Now().After(deadline) {
+			close(slow.release)
+			t.Fatal("fast channel was held up by the slow one")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(slow.release)
+	f.mon.WaitAlerts()
+	in, err := f.st.OngoingIncident(context.Background(), f.target.ID)
+	if err != nil || in.Channels != "rec,slow" && in.Channels != "slow,rec" {
+		t.Fatalf("both deliveries should be recorded: %v %q", err, in.Channels)
+	}
+}
