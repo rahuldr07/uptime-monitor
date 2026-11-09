@@ -38,13 +38,63 @@ func TestParseErrors(t *testing.T) {
 		`{"targets":[{"name":"a","url":"https://a","expect_status":99}]}`:             "expect_status",
 		`{"targets":[],"notify":{"slack":{"webhook_url":"http://x"}}}`:                "https webhook",
 		`{"targets":[],"notify":{"email":{"smtp_host":"h"}}}`:                         "email notifier",
-		`{"interval":5}`: "duration must be a string",
+		`{"interval":5}`:      "duration must be a string",
+		`{"retention":"12h"}`: "at least 24h",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want containing %q", in, err, want)
 		}
+	}
+}
+
+func TestCheckAuth(t *testing.T) {
+	cases := []struct {
+		listen, password string
+		insecure, ok     bool
+	}{
+		{":8080", "", false, false},
+		{"0.0.0.0:8080", "", false, false},
+		{"192.168.1.5:8080", "", false, false},
+		{":8080", "", true, true},
+		{":8080", "pw", false, true},
+		{"127.0.0.1:8080", "", false, true},
+		{"[::1]:8080", "", false, true},
+		{"localhost:8080", "", false, true},
+	}
+	for _, c := range cases {
+		cfg := &Config{Listen: c.listen, AdminPassword: c.password, InsecureNoAuth: c.insecure}
+		if err := cfg.CheckAuth(); (err == nil) != c.ok {
+			t.Errorf("listen=%q password=%q insecure=%v: got %v, want ok=%v", c.listen, c.password, c.insecure, err, c.ok)
+		}
+	}
+}
+
+func TestTargetNameControlChars(t *testing.T) {
+	if err := ValidateTarget("a\r\nBcc: x@y", "https://a", time.Minute, time.Second, 0); err == nil {
+		t.Fatal("control characters in a name should be rejected")
+	}
+}
+
+func TestUnsetChannelVariablesMeanNoChannel(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	os.WriteFile(p, []byte(`{"notify":{"telegram":{"bot_token":"${UNSET_TG_TOKEN_X}","chat_id":"${UNSET_TG_CHAT_X}"},
+		"slack":{"webhook_url":"${UNSET_SLACK_X}"},"email":{"smtp_host":"","to":[]}}}`), 0o600)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("blank channels from unset variables should not fail startup: %v", err)
+	}
+	if c.Notify.Telegram != nil || c.Notify.Slack != nil || c.Notify.Email != nil {
+		t.Fatalf("blank channels should be dropped: %+v", c.Notify)
+	}
+	os.WriteFile(p, []byte(`{"notify":{"email":{"to":["${UNSET_OPS_EMAIL_X}"]}}}`), 0o600)
+	if c, err := Load(p); err != nil || c.Notify.Email != nil {
+		t.Fatalf("an email channel whose only recipient is unset should be dropped: %v %+v", err, c)
+	}
+	// A half-filled channel is still a mistake worth reporting.
+	if _, err := Parse([]byte(`{"notify":{"telegram":{"bot_token":"t"}}}`)); err == nil {
+		t.Fatal("telegram without chat_id should be rejected")
 	}
 }
 

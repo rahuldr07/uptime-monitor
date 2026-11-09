@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // Duration is a time.Duration that unmarshals from strings like "30s".
@@ -77,7 +80,9 @@ type Config struct {
 	Listen           string   `json:"listen"`
 	DB               string   `json:"db"`
 	AdminPassword    string   `json:"admin_password"`    // empty disables login (local use only)
-	TrustProxy       bool     `json:"trust_proxy"`       // read client IP from X-Forwarded-For (behind a reverse proxy)
+	InsecureNoAuth   bool     `json:"insecure_no_auth"`  // allow an empty password on a non-loopback address
+	TrustProxy       bool     `json:"trust_proxy"`       // trust X-Forwarded-For/-Proto from a reverse proxy
+	TrustedProxies   int      `json:"trusted_proxies"`   // proxies in front of the server (default 1 with trust_proxy)
 	FailureThreshold int      `json:"failure_threshold"` // consecutive failures before "down"
 	Interval         Duration `json:"interval"`
 	Timeout          Duration `json:"timeout"`
@@ -108,6 +113,42 @@ func Parse(data []byte) (*Config, error) {
 	return &c, nil
 }
 
+// CheckAuth refuses an empty admin password when the server listens on a
+// non-loopback address, because the dashboard can edit monitors and probe
+// arbitrary URLs. A typo or an unset ${UPTIME_ADMIN_PASSWORD} must not
+// silently expose it. Set insecure_no_auth to override.
+func (c *Config) CheckAuth() error {
+	if c.AdminPassword != "" || c.InsecureNoAuth || isLoopback(c.Listen) {
+		return nil
+	}
+	return fmt.Errorf("admin_password is empty but listen %q is reachable from other machines: "+
+		"set admin_password (or UPTIME_ADMIN_PASSWORD), listen on 127.0.0.1, or set \"insecure_no_auth\": true", c.Listen)
+}
+
+// ProxyHops is how many reverse proxies' X-Forwarded-For entries to trust,
+// or 0 when trust_proxy is off.
+func (c *Config) ProxyHops() int {
+	if !c.TrustProxy {
+		return 0
+	}
+	if c.TrustedProxies > 0 {
+		return c.TrustedProxies
+	}
+	return 1
+}
+
+func isLoopback(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // ValidateTarget checks the fields shared by config targets and targets
 // created from the web UI.
 func ValidateTarget(name, rawURL string, interval, timeout time.Duration, expectStatus int) error {
@@ -116,6 +157,9 @@ func ValidateTarget(name, rawURL string, interval, timeout time.Duration, expect
 	}
 	if len(name) > 64 {
 		return errors.New("target name must be 64 characters or fewer")
+	}
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return errors.New("target name must not contain control characters")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -152,6 +196,10 @@ func (c *Config) applyDefaults() error {
 	if c.Retention.Duration <= 0 {
 		c.Retention.Duration = 7 * 24 * time.Hour
 	}
+	// The 24h uptime figures, latency percentiles and hourly bars read raw checks.
+	if c.Retention.Duration < 24*time.Hour {
+		return fmt.Errorf("config: retention %s is too short; use at least 24h", c.Retention.Duration)
+	}
 	if c.FailureThreshold <= 0 {
 		c.FailureThreshold = 2
 	}
@@ -175,10 +223,36 @@ func (c *Config) applyDefaults() error {
 			return fmt.Errorf("config: %w", err)
 		}
 	}
+	c.Notify.dropEmpty()
 	if err := ValidateNotify(&c.Notify); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil
+}
+
+// dropEmpty removes channels whose fields are all blank, which is what a
+// config like {"bot_token": "${TELEGRAM_BOT_TOKEN}"} becomes when the
+// variables are unset. Such a channel is simply not configured.
+func (n *Notify) dropEmpty() {
+	if t := n.Telegram; t != nil && t.BotToken == "" && t.ChatID == "" {
+		n.Telegram = nil
+	}
+	if s := n.Slack; s != nil && s.WebhookURL == "" {
+		n.Slack = nil
+	}
+	if e := n.Email; e != nil {
+		// "to": ["${OPS_EMAIL}"] with the variable unset leaves an empty entry.
+		to := e.To[:0]
+		for _, a := range e.To {
+			if a = strings.TrimSpace(a); a != "" {
+				to = append(to, a)
+			}
+		}
+		e.To = to
+		if e.SMTPHost == "" && e.From == "" && len(e.To) == 0 && e.Username == "" && e.Password == "" {
+			n.Email = nil
+		}
+	}
 }
 
 // ValidateNotify checks alert channel settings and fills in defaults.
