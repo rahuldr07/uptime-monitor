@@ -422,6 +422,7 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.resetStatus(r.Context(), ws)
 	msg := "Alerts unmuted for " + t.Name + "."
 	if t.Muted {
 		msg = "Alerts muted for " + t.Name + ". Incidents are still recorded."

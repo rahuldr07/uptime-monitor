@@ -771,7 +771,9 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 	}
 	// Saving a blank form must not copy the config webhook into the workspace.
 	c := e.client(t)
-	e.post(t, c, "/alerts", url.Values{})
+	if resp, _ := e.post(t, c, "/alerts", url.Values{}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("blank alerts POST: %d", resp.StatusCode)
+	}
 	n, err := e.st.Workspace(1).Notify(context.Background())
 	if err != nil {
 		t.Fatal(err)

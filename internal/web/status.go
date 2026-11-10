@@ -235,6 +235,13 @@ func (c *pageCache) evict() {
 	}
 }
 
+// buildCtx is the context for a shared page build. It keeps the leader
+// request's values but not its cancellation, so one visitor leaving cannot
+// fail the build for every visitor waiting on it.
+func buildCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+}
+
 // statusLimited answers 429 and reports true when the client has used up its
 // anonymous status page budget. Every call counts, allowed or not.
 func (s *Server) statusLimited(w http.ResponseWriter, r *http.Request) bool {
@@ -314,7 +321,9 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		key += "|partial"
 	}
 	body, err := s.statusCache.get(r.Context(), key, func() ([]byte, error) {
-		d, err := s.statusData(r.Context(), ws, theme, partial)
+		bctx, cancel := buildCtx(r.Context())
+		defer cancel()
+		d, err := s.statusData(bctx, ws, theme, partial)
 		if err != nil {
 			return nil, err
 		}

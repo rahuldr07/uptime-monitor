@@ -528,3 +528,71 @@ func TestStatusRateLimited(t *testing.T) {
 		t.Fatalf("admin must not be limited: %d", resp.StatusCode)
 	}
 }
+
+func TestStatusCacheNeverEvictsBuilding(t *testing.T) {
+	c := pageCache{maxBytes: 100}
+	ctx := context.Background()
+	c.get(ctx, "a|1", func() ([]byte, error) { return make([]byte, 60), nil })
+	c.reset("a")
+	started, release := make(chan struct{}), make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.get(ctx, "a|1", func() ([]byte, error) { close(started); <-release; return make([]byte, 60), nil })
+	}()
+	<-started // a|1 is rebuilding and is the least recently used entry
+	c.get(ctx, "b|1", func() ([]byte, error) { return make([]byte, 60), nil })
+	c.mu.Lock()
+	_, hasA := c.entries["a|1"]
+	c.mu.Unlock()
+	if !hasA {
+		t.Fatal("an entry that is rebuilding must not be evicted")
+	}
+	close(release)
+	<-done
+}
+
+func TestStatusBuildSurvivesCancelledLeader(t *testing.T) {
+	var c pageCache
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	started, release := make(chan struct{}), make(chan struct{})
+	var buildErr atomic.Value
+	build := func() ([]byte, error) {
+		bctx, cancel := buildCtx(leaderCtx)
+		defer cancel()
+		close(started)
+		<-release
+		if err := bctx.Err(); err != nil {
+			buildErr.Store(err)
+			return nil, err
+		}
+		return []byte("page"), nil
+	}
+	go c.get(leaderCtx, "k", build)
+	<-started
+	waiterDone := make(chan error, 1)
+	var got atomic.Value
+	go func() {
+		b, err := c.get(context.Background(), "k", build)
+		got.Store(string(b))
+		waiterDone <- err
+	}()
+	// Wait until the waiter is parked on the flight, then cancel the leader.
+	for {
+		c.mu.Lock()
+		f := c.entries["k"].building
+		c.mu.Unlock()
+		if f != nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancelLeader()
+	close(release)
+	if err := <-waiterDone; err != nil || got.Load() != "page" {
+		t.Fatalf("waiter: %v %v", got.Load(), err)
+	}
+	if v := buildErr.Load(); v != nil {
+		t.Fatalf("build ctx was cancelled with the leader: %v", v)
+	}
+}
