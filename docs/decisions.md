@@ -387,3 +387,8 @@ Full design:
   - `security.txt`
 
   The design leaves room for each.
+
+### D-122: M1b ships the guard only
+- **Status:** Accepted (amends D-119's step contents)
+- **Decision:** The non-redirecting webhook client and Telegram token validation move from M1b to M1e. `netguard.Transport` replaces the spec's `netguard.Wrap`, and the monitor takes `AllowPrivate bool` until M1c makes it per workspace.
+- **Why:** Both restrictions apply only to non-operator workspaces (§7.2), which first exist in M1e. Built earlier, they would be unused code. Every call site builds a new transport, so a constructor lets the static test forbid transport literals everywhere else.
