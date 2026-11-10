@@ -111,6 +111,9 @@ func (h *Hasher) encode(pw, salt []byte) string {
 
 // Hash returns a PHC-format argon2id hash of pw with a fresh random salt.
 func (h *Hasher) Hash(ctx context.Context, pw string) (string, error) {
+	if len(pw) > maxBytes {
+		return "", ErrTooLong
+	}
 	if err := h.acquire(ctx); err != nil {
 		return "", err
 	}
@@ -122,9 +125,21 @@ func (h *Hasher) Hash(ctx context.Context, pw string) (string, error) {
 	return h.encode([]byte(pw), salt), nil
 }
 
+// Ceilings on what Verify accepts from a stored hash, so a corrupt row cannot
+// request a huge allocation or run for ages. Raise them together with
+// DefaultParams.
+const (
+	maxStoredMemory  = 4 * 19456 // KiB; 4 * DefaultParams.Memory
+	maxStoredTime    = 10
+	maxStoredThreads = 4
+)
+
 // Verify reports whether pw matches phc. The cost parameters come from phc,
 // so hashes made under older parameters keep working.
 func (h *Hasher) Verify(ctx context.Context, phc, pw string) (bool, error) {
+	if len(pw) > maxBytes {
+		return false, ErrTooLong
+	}
 	var version int
 	var p Params
 	parts := strings.Split(phc, "$")
@@ -137,12 +152,23 @@ func (h *Hasher) Verify(ctx context.Context, phc, pw string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.Memory, &p.Time, &p.Threads); err != nil {
 		return false, errBadHash
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(salt) == 0 {
+	if p.Memory == 0 || p.Memory > maxStoredMemory || p.Time == 0 || p.Time > maxStoredTime ||
+		p.Threads == 0 || p.Threads > maxStoredThreads {
 		return false, errBadHash
 	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 || p.Memory == 0 || p.Time == 0 || p.Threads == 0 {
+	b64 := base64.RawStdEncoding.Strict()
+	salt, err := b64.DecodeString(parts[4])
+	if err != nil || len(salt) != saltLen {
+		return false, errBadHash
+	}
+	want, err := b64.DecodeString(parts[5])
+	if err != nil || len(want) != keyLen {
+		return false, errBadHash
+	}
+	// Reject trailing junk, newlines and non-canonical forms by rebuilding.
+	canon := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		version, p.Memory, p.Time, p.Threads, parts[4], parts[5])
+	if canon != phc || strings.ContainsAny(phc, "\r\n") {
 		return false, errBadHash
 	}
 	if err := h.acquire(ctx); err != nil {
@@ -154,9 +180,12 @@ func (h *Hasher) Verify(ctx context.Context, phc, pw string) (bool, error) {
 }
 
 // VerifyDummy burns the cost of one Verify against a fixed hash, so unknown
-// emails take as long as known ones. The result and any error are ignored.
-func (h *Hasher) VerifyDummy(ctx context.Context) {
-	_, _ = h.Verify(ctx, h.dummy, "wrong password")
+// emails take as long as known ones. It returns ErrBusy or the context's
+// error exactly when Verify would, so a busy server does not reveal which
+// emails exist.
+func (h *Hasher) VerifyDummy(ctx context.Context) error {
+	_, err := h.Verify(ctx, h.dummy, "wrong password")
+	return err
 }
 
 // CheckLength enforces the password length rule: at least 10 runes, at most

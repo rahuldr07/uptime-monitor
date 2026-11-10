@@ -54,12 +54,71 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 		"$argon2id$v=19$m=x,t=1,p=1$c2FsdA$aGFzaA",
 		"$argon2id$v=19$m=64,t=1,p=1$!!$aGFzaA",
 		"$argon2id$v=19$m=64,t=1,p=1$c2FsdA$",
+		good + "\n",
+		strings.Replace(good, "v=19", "v=19junk", 1),
+		strings.Replace(good, "m=64,t=1,p=1", "m=64,t=1,p=1,x=1", 1),
+		strings.Replace(good, "m=64", "m=4194304", 1),
+		strings.Replace(good, "t=1", "t=100", 1),
+		strings.Replace(good, "p=1", "p=0", 1),
+		strings.Replace(good, "p=1", "p=8", 1),
+		"$argon2id$v=19$m=64,t=1,p=1$AAAAAAAAAAAAAAAAAAAA$" + parts32(good),
+		"$argon2id$v=19$m=64,t=1,p=1$" + strings.Split(good, "$")[4] + "$YQ",
 	} {
 		ok, err := h.Verify(context.Background(), phc, "pw")
 		if ok || err == nil {
 			t.Errorf("Verify(%q) = %v, %v; want false with error", phc, ok, err)
 		}
 	}
+}
+
+func parts32(phc string) string { return strings.Split(phc, "$")[5] }
+
+func TestLengthGuard(t *testing.T) {
+	h := New(fast)
+	long := strings.Repeat("a", 257)
+	if _, err := h.Hash(context.Background(), long); err != ErrTooLong {
+		t.Errorf("Hash: %v", err)
+	}
+	if ok, err := h.Verify(context.Background(), h.dummy, long); ok || err != ErrTooLong {
+		t.Errorf("Verify: %v, %v", ok, err)
+	}
+}
+
+func TestVerifyDummy(t *testing.T) {
+	h := New(Params{Memory: 4096, Time: 2, Threads: 1})
+	phc, _ := h.Hash(context.Background(), "pw")
+	s := time.Now()
+	if _, err := h.Verify(context.Background(), phc, "pw"); err != nil {
+		t.Fatal(err)
+	}
+	vd := time.Since(s)
+	s = time.Now()
+	if err := h.VerifyDummy(context.Background()); err != nil {
+		t.Fatalf("VerifyDummy = %v", err)
+	}
+	if dd := time.Since(s); dd < vd/4 || dd > vd*4 {
+		t.Errorf("VerifyDummy took %v, Verify %v", dd, vd)
+	}
+
+	// Saturated: returns ErrBusy like Verify would.
+	h.wait = 20 * time.Millisecond
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	h.hashFn = func(pw, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+		started <- struct{}{}
+		<-release
+		return make([]byte, keyLen)
+	}
+	for i := 0; i < 4; i++ {
+		go h.Hash(context.Background(), "pw")
+	}
+	for i := 0; i < 4; i++ {
+		<-started
+	}
+	if err := h.VerifyDummy(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Errorf("saturated VerifyDummy = %v, want ErrBusy", err)
+	}
+	close(release)
 }
 
 func TestCheckLength(t *testing.T) {
@@ -151,5 +210,11 @@ func TestBusy(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Errorf("running hash err = %v", err)
 		}
+	}
+	if n := len(h.sem); n != 0 {
+		t.Errorf("sem not drained: %d", n)
+	}
+	if n := h.waiters.Load(); n != 0 {
+		t.Errorf("waiters not zero: %d", n)
 	}
 }
