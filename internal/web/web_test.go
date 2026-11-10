@@ -97,7 +97,7 @@ func TestAuthFlow(t *testing.T) {
 	if resp, _ := e.get(t, c, "/api/status"); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anon api should be 401, got %d", resp.StatusCode)
 	}
-	if resp, body := e.get(t, c, "/status"); resp.StatusCode != 200 || !strings.Contains(body, "No services configured yet") {
+	if resp, body := e.get(t, c, "/s/default"); resp.StatusCode != 200 || !strings.Contains(body, "No services configured yet") {
 		t.Fatalf("public status page: %d", resp.StatusCode)
 	}
 	if resp, body := e.post(t, c, "/login", url.Values{"password": {"wrong"}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Wrong password") {
@@ -277,7 +277,7 @@ func TestNewEndpoints(t *testing.T) {
 	if r, _ := e.post(t, c, "/status/settings", url.Values{"title": {"Acme status"}, "description": {"All the things"}}); r.StatusCode != http.StatusSeeOther {
 		t.Fatal("status settings")
 	}
-	if _, body := e.get(t, c, "/status"); !strings.Contains(body, "Acme status") || !strings.Contains(body, "All the things") || !strings.Contains(body, `class="group-title">Core`) {
+	if _, body := e.get(t, c, "/s/default"); !strings.Contains(body, "Acme status") || !strings.Contains(body, "All the things") || !strings.Contains(body, `class="group-title">Core`) {
 		t.Fatal("status page should show title, description and group")
 	}
 
@@ -540,7 +540,7 @@ func TestReviewRegressions(t *testing.T) {
 		t.Fatalf("Origin: null should be rejected, got %d", r.StatusCode)
 	}
 	// Public status page never echoes ?msg=.
-	if _, body := e.get(t, c, "/status?msg=All+systems+compromised"); strings.Contains(body, "compromised") {
+	if _, body := e.get(t, c, "/s/default?msg=All+systems+compromised"); strings.Contains(body, "compromised") {
 		t.Fatal("anonymous flash must not render")
 	}
 	// backTo keeps the query and drops the old flash.
@@ -607,7 +607,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	if !strings.Contains(body, "Active now") || !strings.Contains(body, "API deploy") || !strings.Contains(body, "End now") {
 		t.Fatal("active window not shown")
 	}
-	for _, path := range []string{"/", "/status"} {
+	for _, path := range []string{"/", "/s/default"} {
 		if _, body := e.get(t, c, path); !strings.Contains(body, "aintenance in progress") || !strings.Contains(body, "API deploy") {
 			t.Fatalf("%s should show the maintenance banner", path)
 		}
@@ -629,7 +629,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	if len(list) != 2 || !list[1].StartsAt.Equal(time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)) {
 		t.Fatalf("scheduled start should be 03:30 UTC: %+v", list)
 	}
-	if _, body := e.get(t, c, "/status"); !strings.Contains(body, "Upcoming maintenance") || !strings.Contains(body, "Disk swap") {
+	if _, body := e.get(t, c, "/s/default"); !strings.Contains(body, "Upcoming maintenance") || !strings.Contains(body, "Disk swap") {
 		t.Fatal("status page should list the upcoming window")
 	}
 	if _, body := e.get(t, c, "/maintenance"); !strings.Contains(body, "Upcoming") || !strings.Contains(body, "Disk swap") {
@@ -768,5 +768,15 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 	// A stored channel shows "leave blank to keep"; an unconfigured one shows the placeholder.
 	if strings.Contains(body, "leave blank to keep") || !strings.Contains(body, "https://hooks.slack.com/services/") {
 		t.Fatal("slack should show as not configured when nothing is stored")
+	}
+	// Saving a blank form must not copy the config webhook into the workspace.
+	c := e.client(t)
+	e.post(t, c, "/alerts", url.Values{})
+	n, err := e.st.Workspace(1).Notify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Slack != nil && n.Slack.WebhookURL != "" {
+		t.Fatalf("config secret was inherited into the stored notify setting: %+v", n.Slack)
 	}
 }

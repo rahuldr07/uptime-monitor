@@ -1,10 +1,14 @@
 package web
 
 import (
+	"container/list"
 	"context"
 	"errors"
+	"io"
+	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,91 +38,183 @@ type statusData struct {
 // on the same database connection that records checks.
 const statusCacheTTL = 10 * time.Second
 
-// pageCache holds rendered pages for anonymous visitors. Its lock only
-// guards the map: it is never held while a page is built or written, so a
-// slow client cannot stall other visitors.
+const (
+	// statusCacheMaxBytes caps the total size of cached page bodies.
+	statusCacheMaxBytes = 32 << 20
+	// statusMaxRebuilds caps page builds running at once across all keys.
+	statusMaxRebuilds = 2
+	// statusRatePerMinute is the anonymous request budget per client address.
+	statusRatePerMinute = 120
+)
+
+// pageCache holds rendered pages for anonymous visitors. Keys are
+// "slug|theme[|partial]". Its lock only guards the maps: it is never held
+// while a page is built or written, so a slow client cannot stall others.
+// The zero value is ready to use, with no byte limit.
 type pageCache struct {
-	mu      sync.Mutex
-	gen     uint64 // bumped by reset; entries from older generations are stale
-	entries map[string]*cachedPage
+	mu       sync.Mutex
+	maxBytes int               // 0 means unlimited
+	total    int               // bytes in all cached bodies
+	gens     map[string]uint64 // per slug; bumped by reset, older entries are stale
+	entries  map[string]*cachedPage
+	lru      *list.List // of *cachedPage holding a body; front = most recently used
+	sem      chan struct{}
 }
 
 type cachedPage struct {
+	key      string
 	body     []byte
 	at       time.Time
 	gen      uint64
-	building *flight // non-nil while a rebuild runs
+	building *flight       // non-nil while a rebuild runs
+	elem     *list.Element // in pageCache.lru while body != nil
 }
 
 // flight is one rebuild. Callers that wait on it share its result, so a
 // failing build is not retried by each waiter in turn.
 type flight struct {
-	done chan struct{} // closed when the rebuild ends
-	body []byte
-	err  error
+	done  chan struct{} // closed when the rebuild ends
+	body  []byte
+	err   error
+	retry bool // the leader gave up (its context ended); waiters start over
 }
 
 var errBuildPanicked = errors.New("status page build panicked")
 
-// reset marks every cached page stale, e.g. after an admin change.
-func (c *pageCache) reset() {
+func slugOf(key string) string {
+	slug, _, _ := strings.Cut(key, "|")
+	return slug
+}
+
+// reset marks every cached page of one workspace stale, e.g. after an
+// admin change.
+func (c *pageCache) reset(slug string) {
 	c.mu.Lock()
-	c.gen++
+	if c.gens == nil {
+		c.gens = map[string]uint64{}
+	}
+	c.gens[slug]++
 	c.mu.Unlock()
+}
+
+// drop removes p from the cache; caller holds mu and p is not building.
+func (c *pageCache) drop(p *cachedPage) {
+	if p.elem != nil {
+		c.lru.Remove(p.elem)
+		p.elem = nil
+		c.total -= len(p.body)
+	}
+	if c.entries[p.key] == p {
+		delete(c.entries, p.key)
+	}
 }
 
 // get returns the page for key, calling build when it is missing or stale.
 // Only one caller builds a key at a time. Meanwhile other callers get the
 // previous copy if there is one, or wait for that build's result (or ctx).
+// At most statusMaxRebuilds builds run at once; a caller that cannot get a
+// slot gets the stale copy if there is one, else waits for a slot.
 func (c *pageCache) get(ctx context.Context, key string, build func() ([]byte, error)) ([]byte, error) {
+	for {
+		body, retry, err := c.try(ctx, key, build)
+		if !retry {
+			return body, err
+		}
+	}
+}
+
+func (c *pageCache) try(ctx context.Context, key string, build func() ([]byte, error)) (body []byte, retry bool, err error) {
 	c.mu.Lock()
 	if c.entries == nil {
 		c.entries = map[string]*cachedPage{}
+		c.lru = list.New()
+		c.sem = make(chan struct{}, statusMaxRebuilds)
 	}
 	p := c.entries[key]
 	if p == nil {
-		p = &cachedPage{}
+		p = &cachedPage{key: key}
 		c.entries[key] = p
 	}
-	if p.body != nil && p.gen == c.gen && time.Since(p.at) < statusCacheTTL {
+	slug := slugOf(key)
+	if p.elem != nil {
+		c.lru.MoveToFront(p.elem)
+	}
+	if p.body != nil && p.gen == c.gens[slug] && time.Since(p.at) < statusCacheTTL {
 		body := p.body
 		c.mu.Unlock()
-		return body, nil
+		return body, false, nil
 	}
 	if f := p.building; f != nil {
 		stale := p.body
 		c.mu.Unlock()
 		if stale != nil {
-			return stale, nil // serve stale while one rebuild runs
+			return stale, false, nil // serve stale while one rebuild runs
 		}
 		select {
 		case <-f.done:
-			return f.body, f.err
+			return f.body, f.retry && ctx.Err() == nil, f.err
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
+	}
+	got := false
+	select {
+	case c.sem <- struct{}{}:
+		got = true
+	default:
+	}
+	if !got && p.body != nil {
+		stale := p.body
+		c.mu.Unlock()
+		return stale, false, nil // all rebuild slots are busy
 	}
 	f := &flight{done: make(chan struct{})}
 	p.building = f
-	gen := c.gen
+	gen := c.gens[slug]
 	c.mu.Unlock()
-	return c.rebuild(p, gen, f, build)
+	if !got {
+		select {
+		case c.sem <- struct{}{}:
+		case <-ctx.Done():
+			c.mu.Lock()
+			f.err, f.retry = ctx.Err(), true
+			p.building = nil
+			if p.body == nil {
+				c.drop(p)
+			}
+			close(f.done)
+			c.mu.Unlock()
+			return nil, false, ctx.Err()
+		}
+	}
+	body, err = c.rebuild(p, gen, f, build)
+	return body, false, err
 }
 
 func (c *pageCache) rebuild(p *cachedPage, gen uint64, f *flight, build func() ([]byte, error)) (body []byte, err error) {
 	finished := false
 	defer func() {
 		c.mu.Lock()
+		<-c.sem
 		if !finished {
 			// build panicked: keep the previous copy and fail the waiters;
 			// the panic itself continues to net/http, which logs it.
 			body, err = nil, errBuildPanicked
 		}
+		p.building = nil
 		if err == nil && body != nil {
+			c.total += len(body) - len(p.body)
 			p.body, p.at, p.gen = body, time.Now(), gen
+			if p.elem == nil {
+				p.elem = c.lru.PushFront(p)
+			} else {
+				c.lru.MoveToFront(p.elem)
+			}
+			c.evict()
+		} else if p.body == nil {
+			c.drop(p)
 		}
 		f.body, f.err = body, err
-		p.building = nil
 		close(f.done)
 		c.mu.Unlock()
 	}()
@@ -127,36 +223,102 @@ func (c *pageCache) rebuild(p *cachedPage, gen uint64, f *flight, build func() (
 	return body, err
 }
 
+// evict drops the least recently used pages until the total fits; caller
+// holds mu. A page that is rebuilding is never evicted.
+func (c *pageCache) evict() {
+	for el := c.lru.Back(); el != nil && c.maxBytes > 0 && c.total > c.maxBytes; {
+		p := el.Value.(*cachedPage)
+		el = el.Prev()
+		if p.building == nil {
+			c.drop(p)
+		}
+	}
+}
+
+// statusLimited answers 429 and reports true when the client has used up its
+// anonymous status page budget. Every call counts, allowed or not.
+func (s *Server) statusLimited(w http.ResponseWriter, r *http.Request) bool {
+	key := clientKey(r, s.cfg.ProxyHops())
+	ok, retry := s.statusLimiter.Allow(key)
+	s.statusLimiter.Hit(key)
+	if ok {
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
+	io.WriteString(w, "too many requests")
+	return true
+}
+
+// statusRedirect sends /status to the status page of the pinned workspace.
+func (s *Server) statusRedirect(w http.ResponseWriter, r *http.Request) {
+	info, err := s.ws(r).Info(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/s/"+info.Slug, http.StatusFound)
+}
+
+// statusURL is the path of ws's public status page.
+func (s *Server) statusURL(ctx context.Context, ws *store.WS) string {
+	info, err := ws.Info(ctx)
+	if err != nil {
+		return "/status"
+	}
+	return "/s/" + info.Slug
+}
+
+// resetStatus invalidates the cached public pages of ws.
+func (s *Server) resetStatus(ctx context.Context, ws *store.WS) {
+	info, err := ws.Info(ctx)
+	if err != nil {
+		s.logger.Error("status cache: cannot resolve workspace", "workspace", ws.ID(), "err", err)
+		return
+	}
+	s.statusCache.reset(info.Slug)
+}
+
 func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	// Admins see live data and the settings form; everyone else shares a
+	// Anonymous visitors are rate limited before any lookup.
+	if !s.isAdmin(r) && s.statusLimited(w, r) {
+		return
+	}
+	info, err := s.sys.WorkspaceBySlug(r.Context(), r.PathValue("slug"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	ws := s.sys.Workspace(info.ID)
+	// The owner sees live data and the settings form; everyone else shares a
 	// briefly cached copy per theme and render mode. Anonymous visitors never
 	// bypass the cache, whatever headers they send.
 	if s.isAdmin(r) {
-		// The admin view carries the settings form, so unlike the public page
-		// it must not be framed, not even by a same-site origin that would
-		// receive the SameSite=Lax session cookie.
-		w.Header().Set("Content-Security-Policy", cspBase+"frame-ancestors 'none'")
-		w.Header().Set("X-Frame-Options", "DENY")
-		d, err := s.statusData(r, ws)
-		if err != nil {
-			s.fail(w, err)
+		if info.ID == s.ws(r).ID() {
+			s.statusOwner(w, r, ws, info)
 			return
 		}
-		s.render(w, r, "status", d)
-		return
+		if s.statusLimited(w, r) {
+			return
+		}
 	}
 	// Both parts take a handful of fixed values, so visitors cannot grow the map.
-	key := themeFrom(r)
-	if r.Header.Get("X-Partial") == "1" {
+	theme, partial := themeFrom(r), r.Header.Get("X-Partial") == "1"
+	key := info.Slug + "|" + theme
+	if partial {
 		key += "|partial"
 	}
 	body, err := s.statusCache.get(r.Context(), key, func() ([]byte, error) {
-		d, err := s.statusData(r, ws)
+		d, err := s.statusData(r.Context(), ws, theme, partial)
 		if err != nil {
 			return nil, err
 		}
-		return s.renderBytes(r, "status", d)
+		return s.renderPage("status", partial, d)
 	})
 	if err != nil {
 		if r.Context().Err() == nil {
@@ -167,21 +329,39 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	writeHTML(w, http.StatusOK, body)
 }
 
-func (s *Server) statusData(r *http.Request, ws *store.WS) (statusData, error) {
-	d := statusData{base: s.base(r, ws, "status", "Status")}
-	d.StatusTitle, d.StatusDesc = s.statusMeta(r.Context(), ws)
-	d.Title = d.StatusTitle
+// statusOwner renders the live page with the settings form.
+func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, ws *store.WS, info store.Workspace) {
+	// The owner view carries the settings form, so unlike the public page
+	// it must not be framed, not even by a same-site origin that would
+	// receive the SameSite=Lax session cookie.
+	w.Header().Set("Content-Security-Policy", cspBase+"frame-ancestors 'none'")
+	w.Header().Set("X-Frame-Options", "DENY")
+	d, err := s.statusData(r.Context(), ws, themeFrom(r), false)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	d.base = s.base(r, ws, "status", d.StatusTitle)
 	scheme := "http"
 	if s.isHTTPS(r) {
 		scheme = "https"
 	}
-	d.ShareURL = scheme + "://" + r.Host + "/status"
-	views, err := s.views(r, ws, viewOpts{days: true})
+	d.ShareURL = scheme + "://" + r.Host + "/s/" + info.Slug
+	s.render(w, r, "status", d)
+}
+
+// statusData builds the anonymous view of ws. It needs no request, and
+// nothing request-specific enters it, so the result is safe to cache.
+func (s *Server) statusData(ctx context.Context, ws *store.WS, theme string, partial bool) (statusData, error) {
+	d := statusData{base: s.baseFor(ctx, ws, "status", "Status", theme, false)}
+	d.StatusTitle, d.StatusDesc = s.statusMeta(ctx, ws)
+	d.Title = d.StatusTitle
+	views, err := s.views(ctx, ws, viewOpts{days: true})
 	if err != nil {
 		return d, err
 	}
 	d.Total = len(views)
-	sched, err := ws.ListMaintenance(r.Context(), d.Now, 20)
+	sched, err := ws.ListMaintenance(ctx, d.Now, 20)
 	if err != nil {
 		return d, err
 	}
@@ -224,7 +404,7 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if len(title) > 80 || len(desc) > 200 {
-		redirect(w, r, "/status", "Title or description too long.")
+		redirect(w, r, s.statusURL(r.Context(), ws), "Title or description too long.")
 		return
 	}
 	if err := ws.SetSetting(r.Context(), "status_title", title); err != nil {
@@ -235,6 +415,6 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.statusCache.reset()
-	redirect(w, r, "/status", "Status page saved.")
+	s.resetStatus(r.Context(), ws)
+	redirect(w, r, s.statusURL(r.Context(), ws), "Status page saved.")
 }

@@ -70,7 +70,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// the SameSite=Lax session cookie is not sent to a cross-site frame, so
 		// a framed page is always the anonymous, read-only view. Everything
 		// else refuses framing (clickjacking).
-		if r.URL.Path == "/status" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		if strings.HasPrefix(r.URL.Path, "/s/") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			h.Set("Content-Security-Policy", cspBase+"frame-ancestors *")
 		} else {
 			h.Set("Content-Security-Policy", cspBase+"frame-ancestors 'none'")

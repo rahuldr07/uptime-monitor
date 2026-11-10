@@ -20,14 +20,14 @@ import (
 func TestSecurityHeaders(t *testing.T) {
 	e := newEnv(t, "pw")
 	c := e.client(t)
-	for _, path := range []string{"/status", "/login", "/healthz"} {
+	for _, path := range []string{"/s/default", "/login", "/healthz"} {
 		resp, _ := e.get(t, c, path)
 		h := resp.Header
 		csp := h.Get("Content-Security-Policy")
 		if !strings.Contains(csp, "script-src 'self';") || h.Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("%s missing security headers: %v", path, h)
 		}
-		if path == "/status" {
+		if path == "/s/default" {
 			if !strings.Contains(csp, "frame-ancestors *") || h.Get("X-Frame-Options") != "" {
 				t.Fatalf("the public status page should be embeddable: %v", h)
 			}
@@ -41,12 +41,12 @@ func TestSecurityHeaders(t *testing.T) {
 	// The admin view of /status has the settings form and must not be framed.
 	admin := e.client(t)
 	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
-	if resp, body := e.get(t, admin, "/status"); !strings.Contains(body, "Status page settings") ||
+	if resp, body := e.get(t, admin, "/s/default"); !strings.Contains(body, "Status page settings") ||
 		!strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("admin /status must refuse framing: %v", resp.Header)
 	}
 	// The strict CSP only works if no template uses inline handlers.
-	_, body := e.get(t, c, "/status")
+	_, body := e.get(t, c, "/s/default")
 	for _, attr := range []string{"onclick=", "onchange=", "onsubmit=", "<script>"} {
 		if strings.Contains(body, attr) {
 			t.Fatalf("status page contains inline script %q", attr)
@@ -125,21 +125,21 @@ func TestStatusPageCachedForVisitors(t *testing.T) {
 	anon := e.client(t)
 	ctx := context.Background()
 	e.st.Workspace(1).SetSetting(ctx, "status_title", "First title")
-	if _, body := e.get(t, anon, "/status"); !strings.Contains(body, "First title") {
+	if _, body := e.get(t, anon, "/s/default"); !strings.Contains(body, "First title") {
 		t.Fatal("status page title")
 	}
 	e.st.Workspace(1).SetSetting(ctx, "status_title", "Second title")
-	if _, body := e.get(t, anon, "/status"); !strings.Contains(body, "First title") {
+	if _, body := e.get(t, anon, "/s/default"); !strings.Contains(body, "First title") {
 		t.Fatal("anonymous visitors should get the cached page within the TTL")
 	}
 	// Admins always see live data, and saving settings clears the cache.
 	admin := e.client(t)
 	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
-	if _, body := e.get(t, admin, "/status"); !strings.Contains(body, "Second title") {
+	if _, body := e.get(t, admin, "/s/default"); !strings.Contains(body, "Second title") {
 		t.Fatal("admins should bypass the cache")
 	}
 	e.post(t, admin, "/status/settings", url.Values{"title": {"Third title"}})
-	if _, body := e.get(t, anon, "/status"); !strings.Contains(body, "Third title") {
+	if _, body := e.get(t, anon, "/s/default"); !strings.Contains(body, "Third title") {
 		t.Fatal("saving settings should invalidate the cache")
 	}
 }
@@ -149,7 +149,7 @@ func TestStatusCacheNotBypassedByPartialHeader(t *testing.T) {
 	ctx := context.Background()
 	e.st.Workspace(1).SetSetting(ctx, "status_title", "Old title")
 	get := func() string {
-		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/status", nil)
+		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/s/default", nil)
 		req.Header.Set("X-Partial", "1")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -195,7 +195,7 @@ func TestPageCacheSingleFlightAndStale(t *testing.T) {
 	}
 
 	// After a reset, one caller rebuilds while others get the stale copy at once.
-	c.reset()
+	c.reset("k")
 	block := make(chan struct{})
 	started := make(chan struct{})
 	go c.get(ctx, "k", func() ([]byte, error) { close(started); <-block; return []byte("v2"), nil })
@@ -262,7 +262,7 @@ func TestPageCachePanicKeepsStaleCopy(t *testing.T) {
 	var c pageCache
 	ctx := context.Background()
 	c.get(ctx, "k", func() ([]byte, error) { return []byte("v1"), nil })
-	c.reset()
+	c.reset("k")
 	func() {
 		defer func() { recover() }()
 		c.get(ctx, "k", func() ([]byte, error) { panic("boom") })
@@ -305,14 +305,14 @@ func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 	h := s.Handler()
 	slow := &stalledWriter{header: http.Header{}, writing: make(chan struct{}), release: make(chan struct{})}
 	defer close(slow.release)
-	go h.ServeHTTP(slow, httptest.NewRequest(http.MethodGet, "/status", nil))
+	go h.ServeHTTP(slow, httptest.NewRequest(http.MethodGet, "/s/default", nil))
 	<-slow.writing // the slow visitor is now stuck mid-response
 
 	for _, label := range []string{"cached copy", "rebuild after reset"} {
 		done := make(chan int, 1)
 		go func() {
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s/default", nil))
 			done <- rec.Code
 		}()
 		select {
@@ -323,7 +323,7 @@ func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("%s: a stalled reader blocked another visitor", label)
 		}
-		s.statusCache.reset()
+		s.statusCache.reset("default")
 	}
 }
 
@@ -398,7 +398,7 @@ func TestPasswordEqual(t *testing.T) {
 func TestAssetsAreVersioned(t *testing.T) {
 	e := newEnv(t, "")
 	c := e.client(t)
-	for _, page := range []string{"/", "/status"} {
+	for _, page := range []string{"/", "/s/default"} {
 		_, body := e.get(t, c, page)
 		for _, name := range []string{"app.js", "app.css"} {
 			want := "/static/" + name + "?v=" + assetVersions[name]
@@ -414,5 +414,117 @@ func TestAssetsAreVersioned(t *testing.T) {
 	resp, _ = e.get(t, c, "/static/app.js?v=stale")
 	if strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
 		t.Fatal("a wrong version must not be cached long-term")
+	}
+}
+
+func TestStatusSlugRouting(t *testing.T) {
+	e := newEnv(t, "pw")
+	c := e.client(t)
+	resp, _ := e.get(t, c, "/status")
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/s/default" {
+		t.Fatalf("/status: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if resp, _ := e.get(t, c, "/s/nope"); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown slug: %d", resp.StatusCode)
+	}
+	e.srv.statusCache.mu.Lock()
+	for k := range e.srv.statusCache.entries {
+		if strings.HasPrefix(k, "nope") {
+			t.Errorf("unknown slug reached the cache: %q", k)
+		}
+	}
+	e.srv.statusCache.mu.Unlock()
+	resp, _ = e.get(t, c, "/s/default")
+	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors *") {
+		t.Fatalf("/s/default: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+func TestStatusCacheBounded(t *testing.T) {
+	c := pageCache{maxBytes: 100}
+	ctx := context.Background()
+	put := func(key string, n int) {
+		t.Helper()
+		if _, err := c.get(ctx, key, func() ([]byte, error) { return make([]byte, n), nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("a|1", 40)
+	put("b|1", 40)
+	put("a|1", 40) // a|1 is now the most recently used
+	put("c|1", 40) // 120 > 100: evicts b|1, the least recently used
+	c.mu.Lock()
+	_, hasA := c.entries["a|1"]
+	_, hasB := c.entries["b|1"]
+	_, hasC := c.entries["c|1"]
+	total := c.total
+	c.mu.Unlock()
+	if total > 100 || !hasA || hasB || !hasC {
+		t.Fatalf("total=%d a=%v b=%v c=%v", total, hasA, hasB, hasC)
+	}
+
+	// reset("a") stales only a's entries.
+	c.reset("a")
+	var builds atomic.Int32
+	build := func() ([]byte, error) { builds.Add(1); return make([]byte, 40), nil }
+	c.get(ctx, "c|1", build)
+	if builds.Load() != 0 {
+		t.Fatal("reset(a) must not invalidate c")
+	}
+	c.get(ctx, "a|1", build)
+	if builds.Load() != 1 {
+		t.Fatal("reset(a) must invalidate a")
+	}
+}
+
+func TestStatusRebuildCap(t *testing.T) {
+	var c pageCache
+	ctx := context.Background()
+	var running, peak atomic.Int32
+	release := make(chan struct{})
+	build := func() ([]byte, error) {
+		n := running.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		<-release
+		running.Add(-1)
+		return []byte("x"), nil
+	}
+	var wg sync.WaitGroup
+	for _, k := range []string{"a|1", "b|1", "c|1"} {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.get(ctx, k, build) }()
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := running.Load(); n != statusMaxRebuilds {
+		t.Fatalf("running builds = %d, want %d", n, statusMaxRebuilds)
+	}
+	close(release)
+	wg.Wait()
+	if peak.Load() > statusMaxRebuilds {
+		t.Fatalf("peak concurrent builds = %d", peak.Load())
+	}
+}
+
+func TestStatusRateLimited(t *testing.T) {
+	e := newEnv(t, "pw")
+	c := e.client(t)
+	for i := 1; i <= 120; i++ {
+		if resp, _ := e.get(t, c, "/s/default"); resp.StatusCode != 200 {
+			t.Fatalf("request %d: %d", i, resp.StatusCode)
+		}
+	}
+	resp, body := e.get(t, c, "/s/default")
+	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" || body != "too many requests" {
+		t.Fatalf("121st: %d %q %q", resp.StatusCode, resp.Header.Get("Retry-After"), body)
+	}
+	admin := e.client(t)
+	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
+	if resp, _ := e.get(t, admin, "/s/default"); resp.StatusCode != 200 {
+		t.Fatalf("admin must not be limited: %d", resp.StatusCode)
 	}
 }

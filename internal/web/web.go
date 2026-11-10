@@ -31,15 +31,16 @@ var staticFS embed.FS
 
 // Server holds the HTTP handlers.
 type Server struct {
-	cfg      *config.Config
-	sys      *store.Store
-	mon      *monitor.Monitor
-	logger   *slog.Logger
-	now      func() time.Time
-	sessions *sessions
-	limiter  *ratelimit.Limiter
-	pages    map[string]*template.Template
-	mux      *http.ServeMux
+	cfg           *config.Config
+	sys           *store.Store
+	mon           *monitor.Monitor
+	logger        *slog.Logger
+	now           func() time.Time
+	sessions      *sessions
+	limiter       *ratelimit.Limiter
+	statusLimiter *ratelimit.Limiter
+	pages         map[string]*template.Template
+	mux           *http.ServeMux
 
 	statusCache pageCache
 }
@@ -69,6 +70,9 @@ func New(o Options) (*Server, error) {
 		sessions: newSessions(now), pages: map[string]*template.Template{}}
 	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
 	s.limiter.Now = now
+	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
+	s.statusLimiter.Now = now
+	s.statusCache.maxBytes = statusCacheMaxBytes
 	funcs := template.FuncMap{
 		"ago":    func(t time.Time) string { return humanAgo(s.now().Sub(t)) },
 		"dur":    humanDur,
@@ -200,21 +204,30 @@ type base struct {
 	NewForm     targetForm
 	Groups      []string
 	Maint       []store.Maintenance // windows active right now
+	StatusURL   string              // /s/<slug> of this workspace
 }
 
 func (s *Server) base(r *http.Request, ws *store.WS, page, title string) base {
-	b := base{Title: title, Page: page, Admin: s.isAdmin(r), AuthEnabled: s.authEnabled(), Now: s.now(), Theme: themeFrom(r)}
+	b := s.baseFor(r.Context(), ws, page, title, themeFrom(r), s.isAdmin(r))
 	if b.Admin {
 		// Only admin flows redirect with a flash; never echo ?msg= to anonymous
 		// visitors, and only show messages the server itself signed.
 		b.Flash = flashFrom(r)
 	}
+	return b
+}
+
+// baseFor is base without a request, so the anonymous status page can be
+// built (and cached) from nothing but the workspace.
+func (s *Server) baseFor(ctx context.Context, ws *store.WS, page, title, theme string, admin bool) base {
+	b := base{Title: title, Page: page, Admin: admin, AuthEnabled: s.authEnabled(), Now: s.now(), Theme: theme}
+	b.StatusURL = s.statusURL(ctx, ws)
 	b.NewForm = targetForm{Action: "/targets", Submit: "Create monitor", ShowTest: true,
 		Interval: shortDur(s.cfg.Interval.Duration), Timeout: shortDur(s.cfg.Timeout.Duration)}
 	if b.Admin {
-		b.Unacked, _ = ws.CountUnacknowledged(r.Context())
+		b.Unacked, _ = ws.CountUnacknowledged(ctx)
 	}
-	b.Maint, _ = ws.ActiveMaintenance(r.Context(), b.Now)
+	b.Maint, _ = ws.ActiveMaintenance(ctx, b.Now)
 	for _, st := range s.mon.Snapshot(ws.ID()) {
 		if st.Status == monitor.Down {
 			b.DownCount++
@@ -339,8 +352,7 @@ func uptimeCell(d store.Stats, label string) cell {
 	}
 }
 
-func (s *Server) views(r *http.Request, ws *store.WS, o viewOpts) ([]targetView, error) {
-	ctx := r.Context()
+func (s *Server) views(ctx context.Context, ws *store.WS, o viewOpts) ([]targetView, error) {
 	states := s.mon.Snapshot(ws.ID())
 	out := make([]targetView, 0, len(states))
 	for _, st := range states {

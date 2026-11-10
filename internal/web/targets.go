@@ -36,7 +36,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	ws := s.ws(r)
 	ctx := r.Context()
 	d := overviewData{base: s.base(r, ws, "overview", "Overview")}
-	views, err := s.views(r, ws, viewOpts{spark: true})
+	views, err := s.views(r.Context(), ws, viewOpts{spark: true})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -94,7 +94,7 @@ func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request) {
 	ws := s.ws(r)
 	d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
 	var err error
-	if d.Rows, err = s.views(r, ws, viewOpts{}); err != nil {
+	if d.Rows, err = s.views(r.Context(), ws, viewOpts{}); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -184,7 +184,7 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
 		d.Error = err.Error()
-		d.Rows, _ = s.views(r, ws, viewOpts{})
+		d.Rows, _ = s.views(r.Context(), ws, viewOpts{})
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
 		return
 	}
@@ -192,7 +192,7 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	to := fmt.Sprintf("/targets/%d", t.ID)
 	if wantsJSON(r) {
 		writeJSON(w, map[string]any{"ok": true, "redirect": withFlash(to, "Monitor created. First check is running.")})
@@ -365,7 +365,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	redirect(w, r, fmt.Sprintf("/targets/%d?tab=settings", t.ID), "Monitor saved.")
 }
 
@@ -380,7 +380,7 @@ func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	redirect(w, r, "/targets", "Deleted "+t.Name+".")
 }
 
@@ -399,7 +399,7 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	msg := "Resumed " + t.Name + "."
 	if t.Paused {
 		msg = "Paused " + t.Name + "."

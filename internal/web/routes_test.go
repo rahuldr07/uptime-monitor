@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t, "pw")
 	routes := testRoutes(t, e)
-	if len(routes) != 32 {
-		t.Errorf("len = %d, want 32", len(routes))
+	if len(routes) != 33 {
+		t.Errorf("len = %d, want 33", len(routes))
 	}
 	seen := map[string]bool{}
 	public := map[string]bool{}
@@ -38,7 +38,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 			public[key] = true
 		}
 	}
-	want := []string{"GET /static/", "GET /healthz", "GET /status", "GET /login", "POST /login", "POST /logout"}
+	want := []string{"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /login", "POST /login", "POST /logout"}
 	if len(public) != len(want) {
 		t.Errorf("public routes = %v, want %v", public, want)
 	}

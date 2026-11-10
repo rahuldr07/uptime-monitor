@@ -34,7 +34,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case ev := <-ch:
-			if ev.WorkspaceID != wsID {
+			if ev.WorkspaceID == 0 || ev.WorkspaceID != wsID {
 				continue
 			}
 			b, _ := json.Marshal(ev)

@@ -31,7 +31,7 @@ type apiTarget struct {
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	ws := s.ws(r)
-	views, err := s.views(r, ws, viewOpts{})
+	views, err := s.views(r.Context(), ws, viewOpts{})
 	if err != nil {
 		s.fail(w, err)
 		return

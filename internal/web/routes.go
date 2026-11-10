@@ -27,7 +27,8 @@ func (s *Server) routeTable() []route {
 	return []route{
 		{"GET", "/static/", classPublic, files.ServeHTTP},
 		{"GET", "/healthz", classPublic, s.healthz},
-		{"GET", "/status", classPublic, s.statusPage},
+		{"GET", "/status", classPublic, s.statusRedirect},
+		{"GET", "/s/{slug}", classPublic, s.statusPage},
 		{"GET", "/login", classPublic, s.loginPage},
 		{"POST", "/login", classPublic, s.loginPost},
 		{"POST", "/logout", classPublic, s.logout},

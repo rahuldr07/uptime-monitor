@@ -129,7 +129,7 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	msg := "Maintenance started: alerts are paused until " + formatTS(m.EndsAt) + "."
 	if m.Upcoming(s.now()) {
 		msg = "Maintenance scheduled for " + formatTS(m.StartsAt) + "."
@@ -149,7 +149,7 @@ func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	redirect(w, r, backTo(r, "/maintenance"), "Ended "+m.Title+". Alerts are live again.")
 }
 
@@ -164,7 +164,7 @@ func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
-	s.statusCache.reset()
+	s.resetStatus(r.Context(), ws)
 	redirect(w, r, "/maintenance", "Removed "+m.Title+".")
 }
 

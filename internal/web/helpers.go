@@ -62,8 +62,13 @@ func loadByID[T any](s *Server, w http.ResponseWriter, r *http.Request, get func
 }
 
 func (s *Server) renderBytes(r *http.Request, page string, data any) ([]byte, error) {
+	return s.renderPage(page, r.Header.Get("X-Partial") == "1", data)
+}
+
+// renderPage renders the full page, or only its content block when partial.
+func (s *Server) renderPage(page string, partial bool, data any) ([]byte, error) {
 	name := "layout"
-	if r.Header.Get("X-Partial") == "1" {
+	if partial {
 		name = "content"
 	}
 	var buf bytes.Buffer
