@@ -1,6 +1,7 @@
 package netguard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -18,7 +20,7 @@ func TestBlocked(t *testing.T) {
 		"169.254.169.254", "100.64.0.1", "fd00::1", "fe80::1", "fec0::1", "240.0.0.1",
 		"255.255.255.255", "224.0.0.1", "192.0.0.1", "192.88.99.1", "198.18.0.1",
 		"100::1", "::ffff:127.0.0.1", "64:ff9b::7f00:1", "2002:7f00:1::1", "2001::1",
-		"2001:db8::1", "3fff::1",
+		"2001:db8::1", "3fff::1", "fd00::1%eth0", "fe80::1%eth0", "::7f00:1",
 	}
 	for _, s := range blocked {
 		if !Blocked(netip.MustParseAddr(s)) {
@@ -74,7 +76,12 @@ func TestGuardedRedirectRefused(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot listen on 127.0.0.2: %v", err)
 	}
-	front := &http.Server{Handler: http.RedirectHandler(target.URL, http.StatusFound)}
+	var hits atomic.Int32
+	redirect := http.RedirectHandler(target.URL, http.StatusFound)
+	front := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		redirect.ServeHTTP(w, r)
+	})}
 	go front.Serve(ln)
 	t.Cleanup(func() { front.Close() })
 
@@ -86,6 +93,9 @@ func TestGuardedRedirectRefused(t *testing.T) {
 	_, err = c.Get("http://" + ln.Addr().String() + "/")
 	if !errors.Is(err, ErrBlocked) {
 		t.Errorf("redirect to loopback: err = %v, want ErrBlocked", err)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("front hit %d times, want 1 (redirect never happened)", hits.Load())
 	}
 }
 
@@ -99,7 +109,7 @@ func TestGuardedTransportIgnoresProxy(t *testing.T) {
 }
 
 func TestCheckHost(t *testing.T) {
-	for _, h := range []string{"localhost", "LOCALHOST", "api.localhost", "127.0.0.1", "::1", "169.254.169.254", "10.0.0.5"} {
+	for _, h := range []string{"localhost", "LOCALHOST", "api.localhost", "localhost.", "api.localhost.", "127.0.0.1", "::1", "169.254.169.254", "10.0.0.5"} {
 		if err := CheckHost(h); !errors.Is(err, ErrBlocked) {
 			t.Errorf("CheckHost(%q) = %v, want ErrBlocked", h, err)
 		}
@@ -107,6 +117,21 @@ func TestCheckHost(t *testing.T) {
 	for _, h := range []string{"example.com", "8.8.8.8", "2606:4700:4700::1111", ""} {
 		if err := CheckHost(h); err != nil {
 			t.Errorf("CheckHost(%q) = %v, want nil", h, err)
+		}
+	}
+}
+
+func TestControlRejectsUnparsableAddress(t *testing.T) {
+	d := Dialer(false, time.Second)
+	if err := d.ControlContext(context.Background(), "tcp", "not-an-addr", nil); !errors.Is(err, ErrBlocked) {
+		t.Errorf("err = %v, want ErrBlocked", err)
+	}
+}
+
+func TestPrefixListEntriesBlocked(t *testing.T) {
+	for _, p := range blockedPrefixes {
+		if !Blocked(p.Addr()) {
+			t.Errorf("first address of %s is not blocked", p)
 		}
 	}
 }
