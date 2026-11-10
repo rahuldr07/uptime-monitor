@@ -1075,3 +1075,15 @@ func TestClientKeyIPv6Grouping(t *testing.T) {
 		t.Errorf("IPv4 unchanged, got %q", got)
 	}
 }
+
+// waitFor10s polls cond until it holds, failing the test after 10 seconds.
+func waitFor10s(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for " + what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

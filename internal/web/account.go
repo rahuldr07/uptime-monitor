@@ -174,6 +174,9 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 
 // restartRunners reloads every target of ws after a failed delete.
 func (s *Server) restartRunners(ctx context.Context, ws *store.WS) {
+	// The request context may be the reason the delete failed.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
 	ts, err := ws.ListTargets(ctx)
 	if err != nil {
 		s.logger.Error("restart runners after failed account delete", "workspace", ws.ID(), "err", err)

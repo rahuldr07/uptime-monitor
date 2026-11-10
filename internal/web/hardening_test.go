@@ -472,7 +472,7 @@ func TestStatusCacheBounded(t *testing.T) {
 	}
 	c.get(ctx, "2|1", build)
 	if builds.Load() != 1 {
-		t.Fatal("reset(2) must invalidate a")
+		t.Fatal("reset(2) must invalidate 2")
 	}
 }
 

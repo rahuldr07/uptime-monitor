@@ -151,6 +151,8 @@ type Monitor struct {
 	// gone holds deleted workspaces (IDs are never reused). Reload starts
 	// nothing for them and apply starts no alert for them.
 	gone map[int64]bool // guarded by mu
+
+	afterReloadCheck func() // tests only: runs between Reload's two lock sections
 }
 
 // New creates a Monitor. Call Start to begin checking.
@@ -353,10 +355,20 @@ func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
 		return nil // Start not called yet
 	}
 	rctx, cancel := context.WithCancel(runCtx)
+	if m.afterReloadCheck != nil {
+		m.afterReloadCheck() // tests: ForgetWorkspace lands in the gap
+	}
 	m.mu.Lock()
+	// ForgetWorkspace may have tombstoned the workspace since the first check;
+	// its Remove found no cancel func, so this is the last place to stop.
+	if m.gone[t.WorkspaceID] {
+		m.mu.Unlock()
+		cancel()
+		return nil
+	}
 	m.cancels[t.ID] = cancel
-	m.mu.Unlock()
 	m.wg.Add(1)
+	m.mu.Unlock()
 	go m.run(rctx, t.ID)
 	m.Events.publish(Event{TargetID: t.ID, WorkspaceID: t.WorkspaceID, Kind: "reload"})
 	return nil

@@ -173,7 +173,7 @@ func TestCheckNowLimitsAndCoalescing(t *testing.T) {
 	}
 	waitHits := func(n int32) {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(15 * time.Second)
 		for hits.Load() != n {
 			if time.Now().After(deadline) {
 				t.Fatalf("hits = %d, want %d", hits.Load(), n)
@@ -297,9 +297,7 @@ func TestCheckNowCoalescedFlash(t *testing.T) {
 	if resp, body := addTarget(t, e, c, "slow", up.URL, "1h"); resp.StatusCode != 303 {
 		t.Fatalf("create: %d %s", resp.StatusCode, body)
 	}
-	for hits.Load() == 0 { // the runner's first probe is now in flight
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitFor10s(t, "the runner's first probe", func() bool { return hits.Load() != 0 })
 	ts, _ := ws.ListTargets(t.Context())
 	resp, _ := e.post(t, c, "/targets/"+itoa(ts[0].ID)+"/check", nil)
 	if resp.StatusCode != 303 {

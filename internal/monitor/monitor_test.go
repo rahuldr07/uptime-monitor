@@ -54,9 +54,13 @@ type fixture struct {
 	target store.Target
 	status int32
 	body   string
-	clock  time.Time
+	clk    atomic.Int64 // UnixNano; use now, advance, setClock
 	srv    *httptest.Server
 }
+
+func (f *fixture) now() time.Time          { return time.Unix(0, f.clk.Load()).UTC() }
+func (f *fixture) setClock(t time.Time)    { f.clk.Store(t.UnixNano()) }
+func (f *fixture) advance(d time.Duration) { f.clk.Add(int64(d)) }
 
 func setup(t *testing.T, threshold int) *fixture {
 	t.Helper()
@@ -72,19 +76,19 @@ func setup(t *testing.T, threshold int) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f.st = st
-	f.clock = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	f.target, _ = st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "api", URL: f.srv.URL, Interval: time.Hour, Timeout: 2 * time.Second, Keyword: "hello"}, f.clock)
+	f.setClock(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC))
+	f.target, _ = st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "api", URL: f.srv.URL, Interval: time.Hour, Timeout: 2 * time.Second, Keyword: "hello"}, f.now())
 	f.rec = &recorder{}
 	f.mon = New(Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
 		return notify.Multi{{Name: "rec", Notifier: f.rec}}, nil
 	}, Logger: slog.Default(),
-		FailureThreshold: threshold, Client: f.srv.Client(), Now: func() time.Time { return f.clock }, RetryBase: time.Millisecond})
+		FailureThreshold: threshold, Client: f.srv.Client(), Now: f.now, RetryBase: time.Millisecond})
 	return f
 }
 
 func (f *fixture) tick(t *testing.T) State {
 	t.Helper()
-	f.clock = f.clock.Add(30 * time.Second)
+	f.advance(30 * time.Second)
 	f.mon.CheckNow(context.Background(), f.target.ID)
 	f.mon.WaitAlerts()
 	s, _ := f.mon.Get(1, f.target.ID)
@@ -112,7 +116,7 @@ func TestStateMachineWithThreshold(t *testing.T) {
 	if s.Status != Down || s.IncidentID == 0 {
 		t.Fatalf("second failure should be Down with incident: %+v", s)
 	}
-	if !s.Since.Equal(f.clock.Add(-30 * time.Second)) {
+	if !s.Since.Equal(f.now().Add(-30 * time.Second)) {
 		t.Errorf("down since should be the first failure, got %v", s.Since)
 	}
 	evs := f.rec.list()
@@ -163,13 +167,13 @@ func TestKeywordAndExpectStatus(t *testing.T) {
 func TestRestoreFromStore(t *testing.T) {
 	f := setup(t, 1)
 	ctx := context.Background()
-	id, _ := f.st.OpenIncident(ctx, f.target.ID, f.clock.Add(-time.Hour), "HTTP 500")
-	f.st.InsertCheck(ctx, store.Check{TargetID: f.target.ID, CheckedAt: f.clock.Add(-time.Minute), OK: false, StatusCode: 500})
+	id, _ := f.st.OpenIncident(ctx, f.target.ID, f.now().Add(-time.Hour), "HTTP 500")
+	f.st.InsertCheck(ctx, store.Check{TargetID: f.target.ID, CheckedAt: f.now().Add(-time.Minute), OK: false, StatusCode: 500})
 	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
 	s, _ := f.mon.Get(1, f.target.ID)
-	if s.Status != Down || s.IncidentID != id || !s.Since.Equal(f.clock.Add(-time.Hour)) {
+	if s.Status != Down || s.IncidentID != id || !s.Since.Equal(f.now().Add(-time.Hour)) {
 		t.Fatalf("restore: %+v", s)
 	}
 	// Target comes back up: closes the restored incident, alerts once, no down alert.
@@ -276,8 +280,8 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	// Still failing after resume: a fresh incident starting now, not before the pause.
 	before := len(f.rec.list())
 	s = f.tick(t)
-	if s.Status != Down || !s.Since.Equal(f.clock) {
-		t.Fatalf("new incident should start at the post-resume failure: %+v (clock %v)", s, f.clock)
+	if s.Status != Down || !s.Since.Equal(f.now()) {
+		t.Fatalf("new incident should start at the post-resume failure: %+v (clock %v)", s, f.now())
 	}
 	if list, _ := f.st.Workspace(1).ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 1 {
 		t.Fatalf("exactly one ongoing incident, got %d", len(list))
@@ -359,7 +363,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("want up, got %v", s.Status)
 	}
 	// A window covering the next hour, for every target.
-	if _, err := f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "deploy", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour)}, f.clock); err != nil {
+	if _, err := f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "deploy", StartsAt: f.now(), EndsAt: f.now().Add(time.Hour)}, f.now()); err != nil {
 		t.Fatal(err)
 	}
 	atomic.StoreInt32(&f.status, 500)
@@ -379,7 +383,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("no incidents expected during maintenance, got %+v", list)
 	}
 	// Window over: failures count again from zero, so threshold 2 needs two ticks.
-	f.clock = f.clock.Add(time.Hour)
+	f.advance(time.Hour)
 	if s := f.tick(t); s.Status != Up || s.Failures != 1 {
 		t.Fatalf("first failure after window: %v %d", s.Status, s.Failures)
 	}
@@ -391,7 +395,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("want one down alert, got %+v", got)
 	}
 	// A recovery seen inside a later window still closes the incident.
-	f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "fix", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour), Group: ""}, f.clock)
+	f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "fix", StartsAt: f.now(), EndsAt: f.now().Add(time.Hour), Group: ""}, f.now())
 	atomic.StoreInt32(&f.status, 200)
 	if s := f.tick(t); s.Status != Up || s.IncidentID != 0 {
 		t.Fatalf("recovery during maintenance: %+v", s)
@@ -419,7 +423,7 @@ func TestSlowChannelDoesNotDelayOthers(t *testing.T) {
 	slow := blocker{release: make(chan struct{})}
 	f.mon.SetNotifiers(1, notify.Multi{{Name: "slow", Notifier: slow}, {Name: "rec", Notifier: f.rec}})
 	atomic.StoreInt32(&f.status, 503)
-	f.clock = f.clock.Add(30 * time.Second)
+	f.advance(30 * time.Second)
 	f.mon.CheckNow(context.Background(), f.target.ID)
 	deadline := time.Now().Add(2 * time.Second)
 	for len(f.rec.list()) == 0 {
@@ -820,4 +824,48 @@ func TestRemoveWorkspaceWaitsOnlyForItsOwnAlerts(t *testing.T) {
 	close(slow1.release)
 	cancel()
 	m.Wait()
+}
+
+// ForgetWorkspace landing between Reload's two lock sections must not leave
+// a runner behind.
+func TestReloadRacingForgetWorkspaceStartsNoRunner(t *testing.T) {
+	f := setup(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.RemoveWorkspace(1)
+	// Reload holds the target's checkMu here, so ForgetWorkspace's Remove must
+	// wait for it; the hook only waits until the tombstone is set.
+	forgotten := make(chan struct{})
+	f.mon.afterReloadCheck = func() {
+		go func() { f.mon.ForgetWorkspace(1); close(forgotten) }()
+		waitFor(t, "tombstone", func() bool {
+			f.mon.mu.Lock()
+			defer f.mon.mu.Unlock()
+			return f.mon.gone[1]
+		})
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.afterReloadCheck = nil
+	<-forgotten
+	if _, ok := f.mon.Get(1, f.target.ID); ok {
+		t.Fatal("state of a forgotten workspace is still tracked")
+	}
+	f.mon.mu.Lock()
+	n := len(f.mon.cancels)
+	f.mon.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("cancels = %d, want 0", n)
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { f.mon.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a runner goroutine outlived the context")
+	}
 }

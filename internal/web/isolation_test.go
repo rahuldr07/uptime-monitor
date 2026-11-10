@@ -398,7 +398,10 @@ func testIsolationLive(t *testing.T) {
 		t.Fatal("A's own stream got no event; the test would pass vacuously")
 	}
 	// Let the check finish publishing before judging B's stream.
-	time.Sleep(300 * time.Millisecond)
+	waitFor10s(t, "A's check result", func() bool {
+		st, ok := e.mon.Get(e.opWS.ID(), a.target)
+		return ok && st.Last != nil
+	})
 	quiet(t, b, 300*time.Millisecond)
 	e.delivered(t, b, bws.ID())
 }
@@ -416,6 +419,10 @@ func testIsolationStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.mon.CheckNow(ctx, tg.ID) // refused connection: B's monitor is down
+	waitFor10s(t, "B's monitor to be down", func() bool {
+		st, ok := e.mon.Get(bws.ID(), tg.ID)
+		return ok && st.Status == monitor.Down
+	})
 	if _, err := bws.CreateMaintenance(ctx, store.Maintenance{Title: "B-maint-zz", StartsAt: e.now().Add(-time.Hour), EndsAt: e.now().Add(time.Hour)}, e.now()); err != nil {
 		t.Fatal(err)
 	}
