@@ -319,9 +319,7 @@ func testIsolationDelete(t *testing.T) {
 	a := seedA(t, e)
 	b := seedWorkspace(t, e, bws, "B-target-zz", "B-maint-zz")
 	// A second A target on a short interval, so its runner is seen working
-	// without any manual check. It is made after the snapshot's counterpart
-	// is taken below, so the snapshot's target list stays as seeded.
-	before := snapshotWS(t, e.opWS, a)
+	// without any manual check.
 	live, err := e.opWS.CreateTarget(context.Background(), store.Target{Name: "A-live", URL: isoURL, Interval: time.Second, Timeout: time.Second, ExpectStatus: 200}, e.now())
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +328,7 @@ func testIsolationDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor10s(t, "A's live target first check", func() bool { return e.countChecks(t, live.ID) > 0 })
+	before := snapshotWS(t, e.opWS, a)
 	users := e.userCount(t)
 
 	resp, body := e.post(t, bob, "/account/delete", url.Values{"current": {testSecret}})
@@ -342,10 +341,7 @@ func testIsolationDelete(t *testing.T) {
 	if _, ok := e.mon.Get(bws.ID(), b.target); ok {
 		t.Error("B's runner survived B's deletion")
 	}
-	before.Targets = nil // the live target was added after the snapshot
-	after := snapshotWS(t, e.opWS, a)
-	after.Targets = nil
-	if !reflect.DeepEqual(before, after) {
+	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
 		t.Errorf("B's deletion changed A's data:\nbefore %+v\nafter  %+v", before, after)
 	}
 	if _, ok := e.mon.Get(e.opWS.ID(), a.target); !ok {
@@ -370,8 +366,8 @@ func (e *env) userRow(t *testing.T, email string) string {
 	}
 	defer db.Close()
 	var id int64
-	var hash, created string
-	if err := db.QueryRow(`SELECT id, password_hash, CAST(created_at AS TEXT) FROM users WHERE email = ?`, email).Scan(&id, &hash, &created); err != nil {
+	var hash, created, op, verified, disabled string
+	if err := db.QueryRow(`SELECT id, password_hash, CAST(created_at AS TEXT), CAST(is_operator AS TEXT), IFNULL(CAST(verified_at AS TEXT), 'NULL'), IFNULL(CAST(disabled_at AS TEXT), 'NULL') FROM users WHERE email = ?`, email).Scan(&id, &hash, &created, &op, &verified, &disabled); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.Query(`SELECT workspace_id, role FROM memberships WHERE user_id = ? ORDER BY workspace_id`, id)
@@ -379,7 +375,7 @@ func (e *env) userRow(t *testing.T, email string) string {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	out := strconv.FormatInt(id, 10) + "|" + hash + "|" + created
+	out := strconv.FormatInt(id, 10) + "|" + hash + "|" + created + "|" + op + "|" + verified + "|" + disabled
 	for rows.Next() {
 		var ws int64
 		var role string
