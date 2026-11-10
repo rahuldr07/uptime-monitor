@@ -246,7 +246,27 @@ func TestSetPasswordRevokes(t *testing.T) {
 	if err := s.SetPassword(ctx, 9999, "x", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)
 	}
-	// Session revocation (keepSessionHash) is covered with Task 4's sessions.
+	// Sessions are revoked except the one kept.
+	keep, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPassword(ctx, u.ID, "newer", hashSecret(keep)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, keep, now); err != nil {
+		t.Fatalf("kept session: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, other, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other session survived: %v", err)
+	}
 }
 
 func TestCreateAccountAndDuplicate(t *testing.T) {
@@ -391,5 +411,135 @@ func TestResetTokenScopedPerUser(t *testing.T) {
 	}
 	if _, err := s.PeekToken(ctx, TokenReset, rawB, now); err != nil {
 		t.Fatalf("B's token lost: %v", err)
+	}
+}
+
+func newVerified(t *testing.T, s *Store, now time.Time) User {
+	t.Helper()
+	ctx := context.Background()
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "s@b.co", PasswordHash: "x", WorkspaceName: "S", Slug: "s", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func TestSessionLifecycle(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u := newVerified(t, s, now)
+	ws, _, err := s.UserWorkspace(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE token_hash = ?`, raw).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("raw token stored: %d, %v", n, err)
+	}
+	a, err := s.SessionAuth(ctx, raw, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.User.ID != u.ID || a.Workspace.ID != ws.ID() || a.WS.ID() != ws.ID() || a.SessionHash != hashSecret(raw) {
+		t.Fatalf("auth = %+v", a)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now.Add(SessionIdle+time.Second)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("idle: %v", err)
+	}
+
+	// Activity keeps a session alive until the absolute expiry.
+	raw, _ = s.CreateSession(ctx, u.ID, now)
+	day := 24 * time.Hour
+	if _, err := s.SessionAuth(ctx, raw, now.Add(6*day)); err != nil {
+		t.Fatalf("+6d: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now.Add(12*day)); err != nil {
+		t.Fatalf("+12d: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now.Add(SessionTTL+time.Second)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("absolute expiry: %v", err)
+	}
+
+	raw, _ = s.CreateSession(ctx, u.ID, now)
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, now.UnixMilli(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("disabled: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = NULL, verified_at = NULL WHERE id = ?`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unverified: %v", err)
+	}
+}
+
+func TestSessionCapAndRevoke(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u := newVerified(t, s, now)
+	var raws []string
+	for i := 0; i < MaxSessionsPerUser+1; i++ {
+		raw, err := s.CreateSession(ctx, u.ID, now.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raws = append(raws, raw)
+	}
+	at := now.Add(time.Minute)
+	if _, err := s.SessionAuth(ctx, raws[0], at); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("oldest survived: %v", err)
+	}
+	for _, r := range raws[1:] {
+		if _, err := s.SessionAuth(ctx, r, at); err != nil {
+			t.Fatalf("newest 20: %v", err)
+		}
+	}
+	if err := s.DeleteSession(ctx, raws[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSession(ctx, raws[1]); err != nil {
+		t.Fatalf("missing session: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raws[1], at); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted session works: %v", err)
+	}
+	if err := s.DeleteUserSessions(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range raws[2:] {
+		if _, err := s.SessionAuth(ctx, r, at); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("after DeleteUserSessions: %v", err)
+		}
+	}
+
+	// Prune removes expired and idle sessions only.
+	live, _ := s.CreateSession(ctx, u.ID, now)
+	idle, _ := s.CreateSession(ctx, u.ID, now)
+	expired, _ := s.CreateSession(ctx, u.ID, now)
+	if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`,
+		now.Add(-SessionIdle-time.Second).UnixMilli(), hashSecret(idle)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET expires_at = ? WHERE token_hash = ?`,
+		now.Add(-time.Second).UnixMilli(), hashSecret(expired)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.PruneSessions(ctx, now)
+	if err != nil || n != 2 {
+		t.Fatalf("pruned %d, %v", n, err)
+	}
+	if _, err := s.SessionAuth(ctx, live, now); err != nil {
+		t.Fatalf("live pruned: %v", err)
 	}
 }

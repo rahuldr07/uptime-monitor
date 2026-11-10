@@ -131,8 +131,9 @@ func isUpgradedInstall(ctx context.Context, q querier) (bool, error) {
 	return has, err
 }
 
-// SetupInput describes the first-run setup. An empty SetupToken means the
-// password-unlock path, where the caller has already checked the password.
+// SetupInput describes the first-run setup. The password-unlock path
+// (no SetupToken) requires PasswordUnlocked, set only after the caller has
+// checked the password.
 type SetupInput struct {
 	Email, PasswordHash, WorkspaceName, SetupToken string
 	// PasswordUnlocked authorizes the password-unlock path; the caller sets
