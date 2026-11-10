@@ -33,7 +33,7 @@ func TestDeleteAccountRemovesEverything(t *testing.T) {
 	defer up.Close()
 	const email = "bob@example.com"
 	bc, bws := e.account(t, email)
-	tg, err := bws.CreateTarget(t.Context(), store.Target{Name: "B", URL: up.URL, Interval: time.Second, Timeout: time.Second}, e.clock)
+	tg, err := bws.CreateTarget(t.Context(), store.Target{Name: "B", URL: up.URL, Interval: time.Second, Timeout: time.Second}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestDeletedTargetNotRestarted(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer up.Close()
 	bc, bws := e.account(t, "bob@example.com")
-	tg, err := bws.CreateTarget(t.Context(), store.Target{Name: "B", URL: up.URL, Interval: time.Second, Timeout: time.Second}, e.clock)
+	tg, err := bws.CreateTarget(t.Context(), store.Target{Name: "B", URL: up.URL, Interval: time.Second, Timeout: time.Second}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,5 +143,45 @@ func TestDeletedTargetNotRestarted(t *testing.T) {
 	}
 	if len(e.mon.Snapshot(bws.ID())) != 0 {
 		t.Error("snapshot not empty")
+	}
+}
+
+// A request in flight can Reload a target between RemoveWorkspace and
+// DeleteAccount; the tombstone must stop that runner for good.
+func TestReloadDuringDeleteDoesNotLeaveRunner(t *testing.T) {
+	e := newEnv(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	_, bws := e.account(t, "bob@example.com")
+	tg, err := bws.CreateTarget(t.Context(), store.Target{Name: "B", URL: up.URL, Interval: time.Second, Timeout: time.Second}, e.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mon.Reload(t.Context(), tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.mon.RemoveWorkspace(bws.ID())
+	if err := e.mon.Reload(t.Context(), tg.ID); err != nil { // target still in the DB
+		t.Fatal(err)
+	}
+	u, _, err := e.st.UserByEmail(t.Context(), "bob@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := e.st.DeleteAccount(t.Context(), u.ID)
+	if err != nil || len(deleted) != 1 {
+		t.Fatalf("DeleteAccount: %v %v", deleted, err)
+	}
+	e.mon.ForgetWorkspace(bws.ID())
+	if _, ok := e.mon.Get(bws.ID(), tg.ID); ok {
+		t.Fatal("orphan runner state survived")
+	}
+	if err := e.mon.Reload(t.Context(), tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	n := e.countChecks(t, tg.ID)
+	time.Sleep(1500 * time.Millisecond)
+	if m := e.countChecks(t, tg.ID); m != n {
+		t.Errorf("checks kept arriving for a deleted target: %d -> %d", n, m)
 	}
 }

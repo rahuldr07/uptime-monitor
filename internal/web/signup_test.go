@@ -20,7 +20,7 @@ func newSignupEnv(t *testing.T, cfgJSON string) *env {
 
 func (e *env) invite(t *testing.T, email string) string {
 	t.Helper()
-	raw, err := e.st.CreateInvite(t.Context(), email, time.Hour, e.clock)
+	raw, err := e.st.CreateInvite(t.Context(), email, time.Hour, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestSignupLimits(t *testing.T) {
 		if resp.StatusCode != 403 || !strings.Contains(body, msgNoNewAccounts) {
 			t.Fatalf("cap: %d %s", resp.StatusCode, body)
 		}
-		if _, err := e.st.PeekToken(t.Context(), store.TokenInvite, raw, e.clock); err != nil {
+		if _, err := e.st.PeekToken(t.Context(), store.TokenInvite, raw, e.now()); err != nil {
 			t.Fatalf("invite consumed by refused sign-up: %v", err)
 		}
 	})

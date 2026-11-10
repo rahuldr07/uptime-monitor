@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,13 +23,17 @@ import (
 	"uptimemon/internal/store"
 )
 
+func (e *env) now() time.Time          { return time.Unix(0, e.clk.Load()).UTC() }
+func (e *env) setClock(t time.Time)    { e.clk.Store(t.UnixNano()) }
+func (e *env) advance(d time.Duration) { e.clk.Add(int64(d)) }
+
 type env struct {
 	ts     *httptest.Server
 	srv    *Server
 	st     *store.Store
 	mon    *monitor.Monitor
 	cfg    *config.Config
-	clock  time.Time
+	clk    atomic.Int64 // UnixNano; use now, advance, setClock
 	hash   *password.Hasher
 	op     *http.Client // signed in as the operator
 	opWS   *store.WS
@@ -64,9 +69,10 @@ func newEnvConfig(t *testing.T, hasher *password.Hasher, cfgJSON string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
+	e := &env{st: st, cfg: cfg,
 		hash: hasher, dbPath: dbPath}
-	now := func() time.Time { return e.clock }
+	e.setClock(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC))
+	now := e.now
 	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
 		return notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}}, nil
 	},
@@ -129,7 +135,7 @@ func (e *env) account(t *testing.T, email string) (*http.Client, *store.WS) {
 	}
 	local := strings.SplitN(email, "@", 2)[0]
 	_, ws, err := e.st.CreateAccount(context.Background(), store.AccountInput{Email: email, PasswordHash: phc,
-		WorkspaceName: local, Slug: local, Verified: true, Now: e.clock})
+		WorkspaceName: local, Slug: local, Verified: true, Now: e.now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +231,7 @@ func TestSignInFlow(t *testing.T) {
 
 func TestSignInReplacesIncomingSession(t *testing.T) {
 	e := newEnv(t)
-	t0 := e.clock
+	t0 := e.now()
 	resp, _ := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {testSecret}})
 	old := cookieNamed(resp, "uptime_session")
 	if old == nil {
@@ -236,7 +242,7 @@ func TestSignInReplacesIncomingSession(t *testing.T) {
 	}
 	// The session goes idle, so the guest wrapper lets the stale tab sign in
 	// again; the dead row it names must be removed, not left behind.
-	e.clock = e.clock.Add(store.SessionIdle + time.Hour)
+	e.advance(store.SessionIdle + time.Hour)
 	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("email="+opEmail+"&password="+url.QueryEscape(testSecret)))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(old)
@@ -252,7 +258,7 @@ func TestSignInReplacesIncomingSession(t *testing.T) {
 	if _, err := e.st.SessionAuth(context.Background(), old.Value, t0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("incoming session should be deleted, got %v", err)
 	}
-	if _, err := e.st.SessionAuth(context.Background(), fresh.Value, e.clock); err != nil {
+	if _, err := e.st.SessionAuth(context.Background(), fresh.Value, e.now()); err != nil {
 		t.Fatalf("new session should be live: %v", err)
 	}
 }
@@ -408,7 +414,7 @@ func TestNewEndpoints(t *testing.T) {
 	}
 
 	// Incident ack + note.
-	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock.Add(-time.Hour), "HTTP 500")
+	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.now().Add(-time.Hour), "HTTP 500")
 	if _, body := e.get(t, c, "/incidents"); !strings.Contains(body, "Acknowledge") || !strings.Contains(body, "1 ongoing and unacknowledged") {
 		t.Fatal("incidents page should offer acknowledge")
 	}
@@ -627,7 +633,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("old cookie should be revoked after logout, got %d", r.StatusCode)
 	}
-	if _, err := e.st.SessionAuth(context.Background(), cookie.Value, e.clock); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.st.SessionAuth(context.Background(), cookie.Value, e.now()); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("session row should be gone, got %v", err)
 	}
 	if r, _ := e.post(t, c, "/login", url.Values{"email": {opEmail}, "password": {testSecret}}); r.StatusCode != http.StatusSeeOther {
@@ -726,8 +732,8 @@ func TestReviewRegressions(t *testing.T) {
 func TestNoteLengthByRunes(t *testing.T) {
 	e := newEnv(t)
 	c := e.op
-	tg, _ := e.st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
-	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock, "x")
+	tg, _ := e.st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.now())
+	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.now(), "x")
 	ok := strings.Repeat("é", 500) // 1000 bytes, 500 chars: allowed
 	e.post(t, c, "/incidents/"+strconv.FormatInt(id, 10)+"/note", url.Values{"note": {ok}})
 	in, _ := e.st.Workspace(1).GetIncident(context.Background(), id)
@@ -792,7 +798,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "scheduled") {
 		t.Fatalf("schedule: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	list, _ := e.st.Workspace(1).ListMaintenance(context.Background(), e.clock, 0)
+	list, _ := e.st.Workspace(1).ListMaintenance(context.Background(), e.now(), 0)
 	if len(list) != 2 || !list[1].StartsAt.Equal(time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)) {
 		t.Fatalf("scheduled start should be 03:30 UTC: %+v", list)
 	}
@@ -953,7 +959,7 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 
 func TestWorkspaceIsolationBetweenAccounts(t *testing.T) {
 	e := newEnv(t)
-	tg, err := e.opWS.CreateTarget(context.Background(), store.Target{Name: "OpSecret", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	tg, err := e.opWS.CreateTarget(context.Background(), store.Target{Name: "OpSecret", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1022,7 +1028,7 @@ func TestOversizedPasswordFailsLikeAnyOther(t *testing.T) {
 func TestPlainCookieIgnoredOverHTTPS(t *testing.T) {
 	e := newEnv(t)
 	e.cfg.TrustProxy = true
-	raw, err := e.st.CreateSession(context.Background(), 1, e.clock)
+	raw, err := e.st.CreateSession(context.Background(), 1, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}

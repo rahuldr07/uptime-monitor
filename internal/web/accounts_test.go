@@ -40,9 +40,10 @@ func newSetupEnv(t *testing.T, upgraded bool, adminPassword string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
+	e := &env{st: st, cfg: cfg,
 		hash: password.New(password.Params{Memory: 64, Time: 1, Threads: 1})}
-	now := func() time.Time { return e.clock }
+	e.setClock(time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC))
+	now := e.now
 	if upgraded {
 		if _, err := st.Workspace(1).CreateTarget(context.Background(),
 			store.Target{Name: "old", URL: "http://example.com", Interval: time.Minute, Timeout: time.Second}, now()); err != nil {
@@ -67,7 +68,7 @@ func strconvQuote(s string) string { return `"` + s + `"` }
 
 func (e *env) setupToken(t *testing.T) string {
 	t.Helper()
-	tok, err := e.st.CreateToken(context.Background(), store.TokenSetup, 0, time.Hour, e.clock)
+	tok, err := e.st.CreateToken(context.Background(), store.TokenSetup, 0, time.Hour, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestSetupTokenFlow(t *testing.T) {
 	if resp.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control = %q", resp.Header.Get("Cache-Control"))
 	}
-	if _, err := e.st.PeekToken(context.Background(), store.TokenSetup, tok, e.clock); err != nil {
+	if _, err := e.st.PeekToken(context.Background(), store.TokenSetup, tok, e.now()); err != nil {
 		t.Fatalf("GET consumed the token: %v", err)
 	}
 
@@ -210,7 +211,7 @@ func TestSetupLimiter(t *testing.T) {
 			t.Fatalf("POST %d: %d, want %d", i, resp.StatusCode, want)
 		}
 	}
-	e.clock = e.clock.Add(16 * time.Minute)
+	e.advance(16 * time.Minute)
 	if resp, _ := e.post(t, e.client(t), "/setup", setupForm(nil)); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("after the window: %d", resp.StatusCode)
 	}
@@ -363,13 +364,13 @@ func TestLoginPerPairLimit(t *testing.T) {
 	// holds every failure.
 	for i := 0; i < 10; i++ {
 		if i%4 == 0 && i > 0 {
-			e.clock = e.clock.Add(2 * time.Minute)
+			e.advance(2 * time.Minute)
 		}
 		if resp, _ := e.loginFrom(t, "203.0.113.50", pairEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("failure %d: %d", i+1, resp.StatusCode)
 		}
 	}
-	e.clock = e.clock.Add(2 * time.Minute)
+	e.advance(2 * time.Minute)
 	resp, body := e.loginFrom(t, "203.0.113.50", pairEmail, "wrong")
 	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
 		t.Fatalf("11th for the pair: %d", resp.StatusCode)
@@ -400,7 +401,7 @@ func TestLoginPerEmailSlowdown(t *testing.T) {
 		t.Fatalf("slowed attempt: %d", resp.StatusCode)
 	}
 	// After the gate period one attempt goes through: never locked out.
-	e.clock = e.clock.Add(5 * time.Second)
+	e.advance(5 * time.Second)
 	resp, _ = e.loginFrom(t, addr(101), opEmail, testSecret)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("after 5s the correct password must succeed, got %d", resp.StatusCode)
@@ -449,7 +450,7 @@ func TestLoginNoEnumeration(t *testing.T) {
 	}
 	for i := 0; i < n+1; i++ {
 		// A fresh address per request; the clock moves past every window.
-		e.clock = e.clock.Add(time.Hour)
+		e.advance(time.Hour)
 		kAddr, uAddr := "192.0.2."+strconv.Itoa(2*i+1), "192.0.2."+strconv.Itoa(2*i+2)
 		uEmail := "nobody" + strconv.Itoa(i) + "@example.com"
 		var k, u result
@@ -493,7 +494,7 @@ func TestDisabledOnlyAfterCorrectPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`UPDATE users SET disabled_at=? WHERE email=?`, e.clock.UnixMilli(), "dis@example.com"); err != nil {
+	if _, err := db.Exec(`UPDATE users SET disabled_at=? WHERE email=?`, e.now().UnixMilli(), "dis@example.com"); err != nil {
 		t.Fatal(err)
 	}
 	c := e.client(t)
@@ -537,7 +538,7 @@ func TestLoginBurstIsBoundedByReservation(t *testing.T) {
 	}
 
 	// A fresh window: a success is not counted, so five failures still fit.
-	e.clock = e.clock.Add(2 * time.Minute)
+	e.advance(2 * time.Minute)
 	if resp, _ := e.loginFrom(t, "203.0.113.77", opEmail, testSecret); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("success: %d", resp.StatusCode)
 	}

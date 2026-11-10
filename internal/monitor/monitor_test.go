@@ -623,7 +623,7 @@ func TestNotifiersPerWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { cancel(); m.Wait() }()
-	waitFor(t, "alerts", func() bool { m.WaitAlerts(); return len(recs[2].list()) == 1 && len(recs[1].list()) == 1 })
+	waitFor(t, "alerts", func() bool { return len(recs[2].list()) == 1 && len(recs[1].list()) == 1 })
 	if got := m.Notifiers(ctx, 2); len(got) != 1 || got[0].Name != "ws2" {
 		t.Fatalf("ws2 notifiers: %+v", got)
 	}

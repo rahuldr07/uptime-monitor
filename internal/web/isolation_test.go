@@ -50,21 +50,21 @@ type isoA struct {
 func seedWorkspace(t *testing.T, e *env, ws *store.WS, name, maintTitle string) isoA {
 	t.Helper()
 	ctx := context.Background()
-	tg, err := ws.CreateTarget(ctx, store.Target{Name: name, URL: isoURL, Interval: time.Hour, Timeout: time.Second, ExpectStatus: 200}, e.clock)
+	tg, err := ws.CreateTarget(ctx, store.Target{Name: name, URL: isoURL, Interval: time.Hour, Timeout: time.Second, ExpectStatus: 200}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := e.mon.Reload(ctx, tg.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: e.clock.Add(-time.Minute), OK: false, Error: "boom"}); err != nil {
+	if err := e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: e.now().Add(-time.Minute), OK: false, Error: "boom"}); err != nil {
 		t.Fatal(err)
 	}
-	inc, err := e.st.OpenIncident(ctx, tg.ID, e.clock.Add(-time.Minute), "boom")
+	inc, err := e.st.OpenIncident(ctx, tg.ID, e.now().Add(-time.Minute), "boom")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := ws.CreateMaintenance(ctx, store.Maintenance{Title: maintTitle, StartsAt: e.clock.Add(-time.Hour), EndsAt: e.clock.Add(time.Hour)}, e.clock)
+	m, err := ws.CreateMaintenance(ctx, store.Maintenance{Title: maintTitle, StartsAt: e.now().Add(-time.Hour), EndsAt: e.now().Add(time.Hour)}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func seedA(t *testing.T, e *env) isoA {
 		}
 	}
 	// A failed Slack delivery: shows on /alerts as the channel's last status.
-	if err := e.st.InsertAlert(ctx, store.Alert{IncidentID: a.incident, TargetID: a.target, SentAt: e.clock,
+	if err := e.st.InsertAlert(ctx, store.Alert{IncidentID: a.incident, TargetID: a.target, SentAt: e.now(),
 		Channel: "slack", Event: "down", OK: false, Error: isoAlert}); err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func testIsolationStatus(t *testing.T) {
 	bob, bws := e.account(t, "b@example.com")
 	seedA(t, e)
 	ctx := context.Background()
-	tg, err := bws.CreateTarget(ctx, store.Target{Name: "B-target-zz", URL: isoURL, Interval: time.Hour, Timeout: time.Second, ExpectStatus: 200}, e.clock)
+	tg, err := bws.CreateTarget(ctx, store.Target{Name: "B-target-zz", URL: isoURL, Interval: time.Hour, Timeout: time.Second, ExpectStatus: 200}, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func testIsolationStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.mon.CheckNow(ctx, tg.ID) // refused connection: B's monitor is down
-	if _, err := bws.CreateMaintenance(ctx, store.Maintenance{Title: "B-maint-zz", StartsAt: e.clock.Add(-time.Hour), EndsAt: e.clock.Add(time.Hour)}, e.clock); err != nil {
+	if _, err := bws.CreateMaintenance(ctx, store.Maintenance{Title: "B-maint-zz", StartsAt: e.now().Add(-time.Hour), EndsAt: e.now().Add(time.Hour)}, e.now()); err != nil {
 		t.Fatal(err)
 	}
 	// B warms the shared cache for A's page, then an anonymous visitor reads it.

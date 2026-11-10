@@ -51,7 +51,7 @@ func TestChangePassword(t *testing.T) {
 	if e.status(t, other) != http.StatusUnauthorized {
 		t.Error("other session survived")
 	}
-	if _, err := e.st.PeekToken(context.Background(), store.TokenReset, resetTok, e.clock); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.st.PeekToken(context.Background(), store.TokenReset, resetTok, e.now()); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("reset token survived password change: %v", err)
 	}
 	if e.status(t, e.op) != http.StatusOK {
@@ -91,7 +91,7 @@ func TestSignOutEverywhere(t *testing.T) {
 
 func (e *env) resetToken(t *testing.T) string {
 	t.Helper()
-	tok, err := e.st.CreateToken(context.Background(), store.TokenReset, e.opID(t), time.Hour, e.clock)
+	tok, err := e.st.CreateToken(context.Background(), store.TokenReset, e.opID(t), time.Hour, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestResetFlow(t *testing.T) {
 	if resp.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control = %q", resp.Header.Get("Cache-Control"))
 	}
-	if _, err := e.st.PeekToken(context.Background(), store.TokenReset, tok, e.clock); err != nil {
+	if _, err := e.st.PeekToken(context.Background(), store.TokenReset, tok, e.now()); err != nil {
 		t.Fatalf("GET consumed the token: %v", err)
 	}
 	resp, body = e.post(t, c, "/reset", url.Values{"token": {tok}, "password": {newSecretPW}, "confirm": {newSecretPW}})

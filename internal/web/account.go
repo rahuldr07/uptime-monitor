@@ -47,7 +47,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		fail(http.StatusUnprocessableEntity, msgMismatch)
 		return
 	}
-	if !s.checkCurrent(w, ctx, a, cur, fail) {
+	if !s.checkCurrent(ctx, w, a, cur, fail) {
 		return
 	}
 	newPHC, err := s.hasher.Hash(ctx, pw)
@@ -79,7 +79,7 @@ func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *au
 
 // checkCurrent verifies the signed-in user's current password with the
 // per-user limiter. On failure it has already answered and reports false.
-func (s *Server) checkCurrent(w http.ResponseWriter, ctx context.Context, a *authCtx, cur string, fail func(int, string)) bool {
+func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *authCtx, cur string, fail func(int, string)) bool {
 	phc, err := s.sys.PasswordHash(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -119,8 +119,8 @@ func (s *Server) checkCurrent(w http.ResponseWriter, ctx context.Context, a *aut
 // accountDelete deletes the signed-in user, their workspace and all its data.
 // Sessions go first so the account cannot be used mid-delete, then the
 // workspace's runners stop so nothing writes to rows about to disappear, then
-// the rows go in one transaction. An operator's delete is attempted first,
-// because it can be refused (last operator) and must then change nothing.
+// the rows go in one transaction, and last the workspace is tombstoned so an
+// in-flight request cannot restart a runner.
 func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
 	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator}
@@ -128,40 +128,60 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 		d.Error = msg
 		s.renderStatus(w, r, code, "account", d)
 	}
-	if !s.checkCurrent(w, ctx, a, r.FormValue("current"), fail) {
+	if !s.checkCurrent(ctx, w, a, r.FormValue("current"), fail) {
 		return
 	}
-	var deleted []int64
-	var err error
-	if a.User.IsOperator {
-		// Never revoked first: a refused delete must leave the operator signed in.
-		if deleted, err = s.sys.DeleteAccount(ctx, a.User.ID); err == nil {
-			for _, ws := range deleted {
-				s.mon.RemoveWorkspace(ws)
-			}
-		}
-	} else {
-		if err = s.sys.DeleteUserSessions(ctx, a.User.ID); err != nil {
-			s.fail(w, err)
-			return
-		}
-		if id := a.WS.ID(); id != store.OperatorWorkspaceID {
-			s.mon.RemoveWorkspace(id)
-		}
-		deleted, err = s.sys.DeleteAccount(ctx, a.User.ID)
-	}
-	if errors.Is(err, store.ErrLastOperator) {
-		fail(http.StatusUnprocessableEntity, msgLastOperator)
-		return
-	}
+	// Refused before anything is revoked or stopped. DeleteAccount repeats the
+	// check in its transaction and stays the authority.
+	last, err := s.sys.IsLastOperator(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
+	if last {
+		fail(http.StatusUnprocessableEntity, msgLastOperator)
+		return
+	}
+	if err := s.sys.DeleteUserSessions(ctx, a.User.ID); err != nil {
+		s.fail(w, err)
+		return
+	}
+	wsID := a.WS.ID()
+	if wsID != store.OperatorWorkspaceID {
+		s.mon.RemoveWorkspace(wsID)
+	}
+	deleted, err := s.sys.DeleteAccount(ctx, a.User.ID)
+	if err != nil {
+		// Nothing was deleted: bring the runners back so monitoring does not stop silently.
+		if wsID != store.OperatorWorkspaceID {
+			s.restartRunners(ctx, a.WS)
+		}
+		if errors.Is(err, store.ErrLastOperator) {
+			fail(http.StatusUnprocessableEntity, msgLastOperator)
+			return
+		}
+		s.fail(w, err)
+		return
+	}
 	for _, id := range deleted {
+		s.mon.ForgetWorkspace(id)
 		s.statusCache.forget(id)
 	}
 	s.clearSessionCookie(w, r)
 	s.logger.Info("account deleted", "event", "account_deleted", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	redirect(w, r, "/login", msgAccountDeleted)
+}
+
+// restartRunners reloads every target of ws after a failed delete.
+func (s *Server) restartRunners(ctx context.Context, ws *store.WS) {
+	ts, err := ws.ListTargets(ctx)
+	if err != nil {
+		s.logger.Error("restart runners after failed account delete", "workspace", ws.ID(), "err", err)
+		return
+	}
+	for _, t := range ts {
+		if err := s.mon.Reload(ctx, t.ID); err != nil {
+			s.logger.Error("restart runner after failed account delete", "target", t.ID, "err", err)
+		}
+	}
 }

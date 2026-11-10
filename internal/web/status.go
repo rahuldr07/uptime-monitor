@@ -99,9 +99,9 @@ func (c *pageCache) reset(wsID int64) {
 	c.mu.Unlock()
 }
 
-// forget removes every cached page and the generation counter of a deleted
-// workspace. A page that is rebuilding is only marked stale; it is dropped
-// the next time it is requested, and no request can reach it any more.
+// forget removes the cached pages of a deleted workspace. A page that is
+// rebuilding stays until its build ends; bumping the generation (always, even
+// for a workspace never reset) marks it stale so it is never served.
 func (c *pageCache) forget(wsID int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -110,9 +110,10 @@ func (c *pageCache) forget(wsID int64) {
 			c.drop(p)
 		}
 	}
-	if _, ok := c.gens[wsID]; ok {
-		c.gens[wsID]++ // keeps rebuilding pages stale
+	if c.gens == nil {
+		c.gens = map[int64]uint64{}
 	}
+	c.gens[wsID]++
 }
 
 // drop removes p from the cache; caller holds mu and p is not building.

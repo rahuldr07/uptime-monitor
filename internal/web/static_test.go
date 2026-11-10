@@ -24,7 +24,7 @@ var sysAllowed = map[string][]string{
 	"login.go|(*Server).logout":              {"DeleteSession"},
 	"account.go|(*Server).accountPassword":   {"SetPassword"},
 	"account.go|(*Server).accountSignOutAll": {"DeleteUserSessions"},
-	"account.go|(*Server).accountDelete":     {"DeleteAccount", "DeleteUserSessions"},
+	"account.go|(*Server).accountDelete":     {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
 	"account.go|(*Server).checkCurrent":      {"PasswordHash"},
 	"reset.go|(*Server).resetPage":           {"PeekToken"},
 	"reset.go|(*Server).resetPost":           {"PeekToken", "ResetPassword", "CreateSession"},

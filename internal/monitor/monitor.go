@@ -148,6 +148,9 @@ type Monitor struct {
 	// wsAlerts counts each workspace's pending alert deliveries, so
 	// RemoveWorkspace can wait for them without waiting on other workspaces.
 	wsAlerts map[int64]*sync.WaitGroup // guarded by mu
+	// gone holds deleted workspaces (IDs are never reused). Reload starts
+	// nothing for them and apply starts no alert for them.
+	gone map[int64]bool // guarded by mu
 }
 
 // New creates a Monitor. Call Start to begin checking.
@@ -183,6 +186,7 @@ func New(o Options) *Monitor {
 		states:     map[int64]*state{},
 		cancels:    map[int64]context.CancelFunc{},
 		wsAlerts:   map[int64]*sync.WaitGroup{},
+		gone:       map[int64]bool{},
 	}
 }
 
@@ -290,6 +294,10 @@ func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
 	if cancel, ok := m.cancels[t.ID]; ok {
 		cancel()
 		delete(m.cancels, t.ID)
+	}
+	if m.gone[t.WorkspaceID] {
+		m.mu.Unlock()
+		return nil // the workspace was deleted; never restart its runners
 	}
 	st, ok := m.states[t.ID]
 	if !ok {
@@ -410,10 +418,19 @@ func (m *Monitor) RemoveWorkspace(ws int64) {
 	m.notifMu.Unlock()
 }
 
-// alertGroup returns ws's pending-alert counter.
-func (m *Monitor) alertGroup(ws int64) *sync.WaitGroup {
+// ForgetWorkspace is called after a workspace's rows are deleted. It
+// tombstones the workspace, so a Reload racing with the delete cannot start a
+// runner, then runs RemoveWorkspace again to catch anything started before the
+// tombstone and to drop a notifier entry that was loaded again meanwhile.
+func (m *Monitor) ForgetWorkspace(ws int64) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.gone[ws] = true
+	m.mu.Unlock()
+	m.RemoveWorkspace(ws)
+}
+
+// alertGroup returns ws's pending-alert counter. The caller holds mu.
+func (m *Monitor) alertGroup(ws int64) *sync.WaitGroup {
 	g := m.wsAlerts[ws]
 	if g == nil {
 		g = &sync.WaitGroup{}
@@ -751,9 +768,17 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 		m.logger.Info("alerts muted; not notifying", "target", t.Name)
 		return
 	}
+	// Add happens under mu and only for a workspace that is not tombstoned,
+	// so after ForgetWorkspace's RemoveWorkspace no Add can follow its Wait.
+	m.mu.Lock()
+	if m.gone[t.WorkspaceID] {
+		m.mu.Unlock()
+		return
+	}
 	g := m.alertGroup(t.WorkspaceID)
 	g.Add(1)
 	m.alertWG.Add(1)
+	m.mu.Unlock()
 	go func() {
 		defer g.Done()
 		m.alert(incidentID, t.ID, t.WorkspaceID, *ev)

@@ -9,6 +9,26 @@ import (
 // ErrLastOperator is returned when deleting the only operator.
 var ErrLastOperator = errors.New("the last operator cannot be deleted")
 
+// IsLastOperator reports whether userID is the only active operator, i.e.
+// whether DeleteAccount would refuse. It is a read-only precheck; DeleteAccount
+// repeats the check in its transaction and stays the authority.
+func (s *Store) IsLastOperator(ctx context.Context, userID int64) (bool, error) {
+	var op bool
+	err := s.db.QueryRowContext(ctx, `SELECT is_operator <> 0 FROM users WHERE id = ?`, userID).Scan(&op)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil || !op {
+		return false, err
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE is_operator <> 0 AND disabled_at IS NULL AND id <> ?`, userID).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
 // DeleteAccount deletes a user in one transaction. Workspaces where the user
 // is the only member are deleted with all their data (never the operator
 // workspace, D-123); the IDs are returned.

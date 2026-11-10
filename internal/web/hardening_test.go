@@ -297,7 +297,7 @@ func (w *stalledWriter) Write(b []byte) (int, error) {
 
 func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 	e := newEnv(t)
-	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon, Logger: slog.Default(), Now: func() time.Time { return e.clock }})
+	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon, Logger: slog.Default(), Now: func() time.Time { return e.now() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,19 +368,19 @@ func TestRequestBodyLimit(t *testing.T) {
 func TestThirtyDayUptimeUsesRollups(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	tg, _ := e.st.Workspace(1).CreateTarget(ctx, store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	tg, _ := e.st.Workspace(1).CreateTarget(ctx, store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.now())
 	// 20 days of checks, half failing, then raw checks pruned to the 7-day retention.
 	for d := 0; d < 20; d++ {
-		at := e.clock.AddDate(0, 0, -d)
+		at := e.now().AddDate(0, 0, -d)
 		e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: at, OK: d%2 == 0, LatencyMS: 10})
 	}
-	e.st.Prune(ctx, e.clock.Add(-e.cfg.Retention.Duration))
+	e.st.Prune(ctx, e.now().Add(-e.cfg.Retention.Duration))
 	s := &Server{sys: e.st, cfg: e.cfg}
-	up30, err := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.clock, 30)
+	up30, err := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.now(), 30)
 	if err != nil || up30.Total != 20 || up30.OKCount != 10 {
 		t.Fatalf("30d uptime should cover all 20 days from rollups: %v %+v", err, up30)
 	}
-	up7, _ := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.clock, 7)
+	up7, _ := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.now(), 7)
 	// Days 0..7 ago inclusive: the check exactly 7 days old is inside the window.
 	if up7.Total != 8 {
 		t.Fatalf("7d uptime from raw checks: %+v", up7)
@@ -450,8 +450,8 @@ func TestStatusCacheBounded(t *testing.T) {
 	}
 	put("2|1", 40)
 	put("3|1", 40)
-	put("2|1", 40) // a|1 is now the most recently used
-	put("4|1", 40) // 120 > 100: evicts b|1, the least recently used
+	put("2|1", 40) // 2|1 is now the most recently used
+	put("4|1", 40) // 120 > 100: evicts 3|1, the least recently used
 	c.mu.Lock()
 	_, hasA := c.entries["2|1"]
 	_, hasB := c.entries["3|1"]
@@ -468,11 +468,11 @@ func TestStatusCacheBounded(t *testing.T) {
 	build := func() ([]byte, error) { builds.Add(1); return make([]byte, 40), nil }
 	c.get(ctx, "4|1", build)
 	if builds.Load() != 0 {
-		t.Fatal("reset(a) must not invalidate c")
+		t.Fatal("reset(2) must not invalidate c")
 	}
 	c.get(ctx, "2|1", build)
 	if builds.Load() != 1 {
-		t.Fatal("reset(a) must invalidate a")
+		t.Fatal("reset(2) must invalidate a")
 	}
 }
 
@@ -538,7 +538,7 @@ func TestStatusCacheNeverEvictsBuilding(t *testing.T) {
 		defer close(done)
 		c.get(ctx, "2|1", func() ([]byte, error) { close(started); <-release; return make([]byte, 60), nil })
 	}()
-	<-started // a|1 is rebuilding and is the least recently used entry
+	<-started // 2|1 is rebuilding and is the least recently used entry
 	c.get(ctx, "3|1", func() ([]byte, error) { return make([]byte, 60), nil })
 	c.mu.Lock()
 	_, hasA := c.entries["2|1"]
@@ -627,7 +627,7 @@ func TestSecretClearedWhenDestinationChanges(t *testing.T) {
 		return (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1))
 	}
 	form.Set("smtp_pass", "")
-	form.Set("smtp_host", "9")
+	form.Set("smtp_host", "other")
 	resp, body := e.post(t, c, "/alerts", form)
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "re-enter the password") {
 		t.Fatalf("changed host, blank password: %d", resp.StatusCode)

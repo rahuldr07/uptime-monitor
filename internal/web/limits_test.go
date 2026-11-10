@@ -83,7 +83,7 @@ func TestCreateRate(t *testing.T) {
 	if resp, body := addTarget(t, e, e.op, "m", "https://late.example/", "1h"); resp.StatusCode != 303 {
 		t.Fatalf("operator: %d %s", resp.StatusCode, body)
 	}
-	e.clock = e.clock.Add(61 * time.Minute)
+	e.advance(61 * time.Minute)
 	if resp, body := addTarget(t, e, c, "m", "https://late.example/", "1h"); resp.StatusCode != 303 {
 		t.Fatalf("after window: %d %s", resp.StatusCode, body)
 	}
@@ -197,7 +197,7 @@ func TestCheckNowLimitsAndCoalescing(t *testing.T) {
 
 	// Workspace budget: 30 per minute across targets (one was spent above).
 	for i := 0; i < 29; i++ {
-		tg, err := ws.CreateTarget(t.Context(), storeTarget("t"+itoa(int64(i)), up.URL), e.clock)
+		tg, err := ws.CreateTarget(t.Context(), storeTarget("t"+itoa(int64(i)), up.URL), e.now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,12 +209,12 @@ func TestCheckNowLimitsAndCoalescing(t *testing.T) {
 			t.Fatalf("check %d: %d", i, resp.StatusCode)
 		}
 	}
-	tg, _ := ws.CreateTarget(t.Context(), storeTarget("last", up.URL), e.clock)
+	tg, _ := ws.CreateTarget(t.Context(), storeTarget("last", up.URL), e.now())
 	if resp, _ := e.post(t, c, "/targets/"+itoa(tg.ID)+"/check", nil); resp.StatusCode != 429 {
 		t.Fatalf("31st check: %d", resp.StatusCode)
 	}
 	// The operator is exempt.
-	otg, _ := e.opWS.CreateTarget(t.Context(), storeTarget("op", up.URL), e.clock)
+	otg, _ := e.opWS.CreateTarget(t.Context(), storeTarget("op", up.URL), e.now())
 	if err := e.mon.Reload(t.Context(), otg.ID); err != nil {
 		t.Fatal(err)
 	}
