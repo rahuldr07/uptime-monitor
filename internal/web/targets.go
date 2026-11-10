@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"uptimemon/internal/config"
 	"uptimemon/internal/monitor"
+	"uptimemon/internal/netguard"
 	"uptimemon/internal/store"
 )
 
@@ -167,6 +169,9 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 	f := formFromRequest(r, "/targets", "Create monitor")
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
+		err = s.checkDestination(t.URL)
+	}
+	if err == nil {
 		t, err = s.store.CreateTarget(r.Context(), t, s.now())
 	}
 	if err != nil {
@@ -193,6 +198,18 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, to, "Monitor created. First check is running.")
 }
 
+// checkDestination rejects internal hosts early when private targets are off.
+func (s *Server) checkDestination(rawURL string) error {
+	if s.cfg.AllowPrivate(true) {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	return netguard.CheckHost(u.Hostname())
+}
+
 // targetTest probes the URL in the form without saving anything.
 func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
 	f := formFromRequest(r, "", "")
@@ -200,6 +217,9 @@ func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
 		f.Name = "test"
 	}
 	t, err := f.toTarget(s.cfg)
+	if err == nil {
+		err = s.checkDestination(t.URL)
+	}
 	if err != nil {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
@@ -207,7 +227,7 @@ func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
 	if t.Timeout > 25*time.Second {
 		t.Timeout = 25 * time.Second
 	}
-	c := monitor.Probe(r.Context(), &http.Client{}, t, s.now)
+	c := s.mon.Test(r.Context(), t)
 	writeJSON(w, map[string]any{"ok": c.OK, "status_code": c.StatusCode, "latency_ms": c.LatencyMS, "error": c.Error})
 }
 
@@ -315,6 +335,9 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 	f := formFromRequest(r, fmt.Sprintf("/targets/%d", t.ID), "Save changes")
 	f.ShowFlags = true
 	nt, err := f.toTarget(s.cfg)
+	if err == nil {
+		err = s.checkDestination(nt.URL)
+	}
 	if err == nil {
 		nt.ID, nt.Paused, nt.CreatedAt = t.ID, t.Paused, t.CreatedAt
 		err = s.store.UpdateTarget(r.Context(), nt)

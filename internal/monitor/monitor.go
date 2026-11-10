@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"uptimemon/internal/netguard"
 	"uptimemon/internal/notify"
 	"uptimemon/internal/store"
 )
@@ -64,6 +65,7 @@ type Options struct {
 	Logger           *slog.Logger
 	FailureThreshold int
 	Client           *http.Client
+	AllowPrivate     bool // when Client is nil, allow probes to internal addresses
 	Now              func() time.Time
 	RetryBase        time.Duration // backoff base for alert retries
 }
@@ -137,14 +139,13 @@ func New(o Options) *Monitor {
 		o.Logger = slog.Default()
 	}
 	if o.Client == nil {
-		o.Client = &http.Client{Transport: &http.Transport{
-			Proxy:               http.ProxyFromEnvironment,
-			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-			TLSHandshakeTimeout: 10 * time.Second,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     90 * time.Second,
-			DisableKeepAlives:   true,
-		}}
+		c := netguard.Client(o.AllowPrivate, 0)
+		tr := c.Transport.(*http.Transport)
+		tr.TLSHandshakeTimeout = 10 * time.Second
+		tr.MaxIdleConnsPerHost = 2
+		tr.IdleConnTimeout = 90 * time.Second
+		tr.DisableKeepAlives = true
+		o.Client = c
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -437,6 +438,11 @@ func (m *Monitor) CheckAsync(id int64) {
 }
 
 // Probe performs one HTTP check of a target.
+// Test probes an unsaved target with the monitor's own client.
+func (m *Monitor) Test(ctx context.Context, t store.Target) store.Check {
+	return Probe(ctx, m.client, t, m.now)
+}
+
 func Probe(ctx context.Context, client *http.Client, t store.Target, now func() time.Time) store.Check {
 	c := store.Check{TargetID: t.ID, CheckedAt: now().UTC()}
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
@@ -474,6 +480,9 @@ func Probe(ctx context.Context, client *http.Client, t store.Target, now func() 
 }
 
 func describeErr(err error, timeout time.Duration) string {
+	if errors.Is(err, netguard.ErrBlocked) {
+		return netguard.ErrBlocked.Error()
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Sprintf("timeout after %s", timeout)
 	}

@@ -41,7 +41,7 @@ func newEnv(t *testing.T, password string) *env {
 	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
 	now := func() time.Time { return e.clock }
 	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}},
-		FailureThreshold: 1, Now: now})
+		FailureThreshold: 1, Now: now, AllowPrivate: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := e.mon.Start(ctx); err != nil {
@@ -692,5 +692,25 @@ func TestLoadByID(t *testing.T) {
 		if !tc.ok && w.Code != tc.code {
 			t.Errorf("id %q: status %d, want %d", tc.id, w.Code, tc.code)
 		}
+	}
+}
+
+func TestPrivateTargetsBlockedWhenNone(t *testing.T) {
+	e := newEnv(t, "")
+	e.cfg.AllowPrivateTargets = "none"
+	c := e.client(t)
+	const msg = "blocked: destination is an internal address"
+	resp, body := e.post(t, c, "/targets", url.Values{"name": {"x"}, "url": {"http://127.0.0.1:9/"}})
+	if resp.StatusCode != 422 || !strings.Contains(body, msg) {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	resp, body = e.post(t, c, "/targets/test", url.Values{"url": {"http://localhost:9/"}})
+	if resp.StatusCode != 422 || !strings.Contains(body, msg) {
+		t.Fatalf("test: %d %s", resp.StatusCode, body)
+	}
+	e.cfg.AllowPrivateTargets = "operator"
+	resp, body = e.post(t, c, "/targets", url.Values{"name": {"y"}, "url": {"http://127.0.0.1:9/"}})
+	if resp.StatusCode != 303 {
+		t.Fatalf("operator create: %d %s", resp.StatusCode, body)
 	}
 }

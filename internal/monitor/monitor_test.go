@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -424,5 +425,26 @@ func TestSlowChannelDoesNotDelayOthers(t *testing.T) {
 	in, err := f.st.OngoingIncident(context.Background(), f.target.ID)
 	if err != nil || in.Channels != "rec,slow" && in.Channels != "slow,rec" {
 		t.Fatalf("both deliveries should be recorded: %v %q", err, in.Channels)
+	}
+}
+
+func TestProbeBlockedHidesAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	tg := store.Target{URL: srv.URL, Timeout: 2 * time.Second}
+	c := New(Options{Store: st, AllowPrivate: false}).Test(context.Background(), tg)
+	if c.OK || c.Error != "blocked: destination is an internal address" {
+		t.Fatalf("want blocked, got %+v", c)
+	}
+	if strings.Contains(c.Error, "127.0.0.1") {
+		t.Fatal("error leaks address")
+	}
+	if c := New(Options{Store: st, AllowPrivate: true}).Test(context.Background(), tg); !c.OK {
+		t.Fatalf("want ok with AllowPrivate, got %+v", c)
 	}
 }

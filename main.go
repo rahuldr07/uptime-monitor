@@ -114,7 +114,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 		return err
 	}
 
-	mon := monitor.New(monitor.Options{Store: st, Notifiers: notifiers, Logger: logger, FailureThreshold: cfg.FailureThreshold})
+	mon := monitor.New(monitor.Options{Store: st, Notifiers: notifiers, Logger: logger, FailureThreshold: cfg.FailureThreshold, AllowPrivate: cfg.AllowPrivate(true)})
 	if err := mon.Start(ctx); err != nil {
 		return err
 	}
