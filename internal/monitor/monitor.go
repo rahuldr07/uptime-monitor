@@ -57,6 +57,7 @@ type state struct {
 	firstFailAt time.Time
 	checkMu     sync.Mutex // serialises probe+apply per target
 	busy        bool       // a check is running or queued; guarded by Monitor.mu
+	reprobe     bool       // the probe config changed; the next runner probes at once. Guarded by Monitor.mu
 }
 
 // Options configure a Monitor.
@@ -313,6 +314,9 @@ func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
 	st.checkMu.Lock()
 	defer st.checkMu.Unlock()
 	m.mu.Lock()
+	if ok && probeChanged(st.Target, t) {
+		st.reprobe = true
+	}
 	st.Target = t
 	m.mu.Unlock()
 
@@ -375,6 +379,12 @@ func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
 	go m.run(rctx, t.ID)
 	m.Events.publish(Event{TargetID: t.ID, WorkspaceID: t.WorkspaceID, Kind: "reload"})
 	return nil
+}
+
+// probeChanged reports whether an edit changes what a probe sends or expects.
+func probeChanged(old, cur store.Target) bool {
+	return old.URL != cur.URL || old.Timeout != cur.Timeout ||
+		old.ExpectStatus != cur.ExpectStatus || old.Keyword != cur.Keyword
 }
 
 // Remove stops and forgets a target.
@@ -523,10 +533,11 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	if st == nil {
 		return
 	}
-	// A reload (edit, pause, mute) restarts this loop; do not probe again
-	// when the last check is still fresh.
+	// A reload restarts this loop. Do not probe again when the last check is
+	// still fresh, unless the edit changed what is probed.
 	m.mu.Lock()
-	fresh := st.Last != nil && m.now().Sub(st.Last.CheckedAt) < interval
+	fresh := st.Last != nil && m.now().Sub(st.Last.CheckedAt) < interval && !st.reprobe
+	st.reprobe = false
 	m.mu.Unlock()
 	if !fresh {
 		m.CheckNow(ctx, id)

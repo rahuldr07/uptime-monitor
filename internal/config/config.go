@@ -427,8 +427,12 @@ func (l *Limits) applyDefaults() error {
 	if err := defInt("max_workspaces", &l.MaxWorkspaces, 0); err != nil {
 		return err
 	}
-	if err := defInt("signups_per_hour", &l.SignupsPerHour, 100); err != nil {
-		return err
+	if l.SignupsPerHour == nil {
+		l.SignupsPerHour = new(int)
+		*l.SignupsPerHour = 100
+	}
+	if *l.SignupsPerHour < 1 {
+		return errors.New("config: limits.signups_per_hour must be at least 1 (use signup \"closed\" to switch sign-ups off)")
 	}
 	if l.HostRequestsPerSecond == nil {
 		one := 1.0

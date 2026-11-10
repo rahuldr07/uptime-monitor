@@ -784,6 +784,56 @@ func TestReloadDoesNotReprobeFreshTarget(t *testing.T) {
 	}
 }
 
+// An edit that changes what is probed must probe at once, even when the last
+// check is still fresh; the clock does not move and CheckNow is not called.
+func TestReloadProbesAtOnceWhenProbeConfigChanged(t *testing.T) {
+	f := setup(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ws := f.st.Workspace(1)
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	waitFor(t, "first probe", func() bool { return count() == 1 })
+	// Unchanged probe config (a rename): still skipped.
+	cur, _ := f.st.TargetByID(ctx, f.target.ID)
+	cur.Name = "renamed"
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := count(); n != 1 {
+		t.Fatalf("%d checks after a rename; want 1", n)
+	}
+	// Changed keyword: probes without CheckNow or a clock change.
+	cur.Keyword = "nope"
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after edit", func() bool { return count() == 2 })
+	// Changed URL as well.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("hello")) }))
+	defer other.Close()
+	cur.URL = other.URL
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after URL edit", func() bool { return count() == 3 })
+}
+
 func TestRemoveWorkspaceWaitsOnlyForItsOwnAlerts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 	defer srv.Close()

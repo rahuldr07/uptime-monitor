@@ -422,24 +422,30 @@ Full design:
 - **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.
 
 ### D-125: M1e scope and rulings
-- **Status:** Accepted (amends the M1e row of the spec's delivery table)
+- **Status:** Accepted (amends §6.7, §8.2, §9.3, §12 and the M1e row of the spec's delivery table)
 - **Decision:**
   - `signup: open` is rejected until M2, which adds email. `signup.go` tests `Signup != "invite"`; change it when open mode lands.
-  - The operator workspace is `store.OperatorWorkspaceID` = 1. Operator exemptions (limits, rate limits, private targets under `operator`) follow it.
+  - The operator workspace is `store.OperatorWorkspaceID` = 1. Operator exemptions (limits, rate limits, private targets under `operator`) follow the operator account in the web layer (`a.IsOperator`) and workspace 1 in the monitor and notifiers (`main.go`). They are equivalent in v1, which has one operator; unifying them is deferred.
   - The status page cache is keyed by workspace ID, so changing a slug does not strand cached pages.
   - The secret-destination rule applies to every workspace: a saved secret is dropped when its destination changes.
   - The invite management UI arrives in M3. M1e has the `-invite` flag only.
   - The instance-wide sign-up budget is charged only after a valid invite, so invalid forms cannot exhaust it. With sign-up closed and no invite, `/signup` returns 404 before any validation. The invite is looked up once, after the address limit.
-  - Slug derivation tries `-2` to `-20`, then a random 4-character suffix, then fails.
-  - `TargetsInOtherWorkspaces` leaves out operator-owned workspaces, returns only ID, URL and interval, and feeds the per-host rate check.
+  - Slug derivation tries `-2` to `-20`, then up to 5 random 4-character suffixes, then fails.
+  - `TargetsInOtherWorkspaces` leaves out operator-owned workspaces, returns only ID, workspace ID, URL and interval, and feeds the per-host rate check.
   - The workspace cap is counted inside the account-creation transaction and refused with `ErrWorkspaceCap`. The monitor cap is checked inside the create transaction.
-  - An edit, pause or unmute restarts the runner but does not probe straight away when the last check is younger than its interval. This also holds when the URL, status or keyword changed; the next scheduled probe picks it up.
+  - An edit, pause/resume or mute/unmute restarts the runner but does not probe straight away when the last check is younger than its interval, unless the edit changed the URL, timeout, expected status or keyword (`probeChanged`); then it probes at once.
   - Account deletion:
     - A precheck refuses the last operator before any session is revoked or runner stopped. `DeleteAccount` repeats the check and stays the authority.
     - Workspace 1 is never deleted, even if its only member is.
     - After the commit the workspace is tombstoned (`Monitor.ForgetWorkspace`) and its runners removed again, so a `Reload` in flight cannot leave an orphan runner.
     - `Reload` cancels a runner it replaces.
     - If the delete fails, the runners are reloaded.
+  - `limits.signups_per_hour` below 1 is a startup error, because the limiter would treat 0 as 1. `signup: "closed"` switches sign-ups off.
+  - The last-operator check counts only active (not disabled) operators. The operator never sees the delete form, but the server refuses only the last operator, which matters when M3 adds more.
+  - The per-host rate comparison strips a trailing dot from the host.
+  - The alert-test limit is taken before the form is saved; when throttled, nothing is saved. Limits answer with an HTML 429 and `Retry-After`.
+  - `-invite` rejects extra arguments and flags after the email. It prints the invite link on purpose, a third exception to "secrets are never logged" next to the setup and reset links.
+  - `signup_throttled` is logged but is not in §12.
   - Check now sets a per-target busy flag. A check that is running or queued is not started again; the request answers "A check is already running." instead of probing twice.
   - The `limits.host_requests_per_second` value must be positive. `limits.min_interval` of `0s` means the default.
   - Alerts make 3 attempts in total (D-004 said "three retries").

@@ -40,6 +40,22 @@ go run . -config config.json
 
 Open http://localhost:8080. The public status page is at `/s/default`; `/status` redirects to it.
 
+With Docker:
+
+```bash
+cp config.example.json config.json   # keep it readable (0644): the container reads it as a non-root user
+docker compose up -d
+docker compose logs uptime | grep 'setup required'   # the setup link
+# or: docker compose exec uptime uptime-monitor -setup-link
+```
+
+The config is mounted read-only at `/etc/uptime-monitor/config.json` and the
+database lives in the `uptime-monitor-data` volume at `/data`. The container
+runs as a non-root user with a read-only root filesystem and a health check
+on `/healthz` (which assumes the default `listen` of `:8080`). If a reverse
+proxy on the same host fronts it, publish the port as `127.0.0.1:8080:8080`
+(see the comment in `docker-compose.yml`).
+
 ### Accounts
 
 Sign in with email and password. On first run there are no users, and the
@@ -89,8 +105,9 @@ through the sign-in limits.
 
 ### Sign-up and invites
 
-`signup` sets who may create an account. Both modes need an https `base_url`
-(http is allowed only for localhost). Each new account gets its own workspace.
+`signup` sets who may create an account. `invite` needs an https `base_url` (http is allowed only for localhost or a
+loopback address). `closed` does not, and `-invite` links then use the
+`listen` address. Each new account gets its own workspace.
 
 | `signup` | `/signup` without an invite | With a valid invite |
 |---|---|---|
@@ -119,11 +136,11 @@ exempt from the monitor, interval, host-rate and rate limits below. The
 |---|---|---|
 | `max_monitors` | `20` | monitors per workspace; `0` is unlimited |
 | `min_interval` | `30s` | shortest check interval a workspace may set (at least `1s`); `0s` or unset means the default |
-| `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
-| `signups_per_hour` | `100` | sign-ups across the instance per hour; `0` is treated as `1` |
+| `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included, so `5` allows 4 invited accounts and `1` allows none; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
+| `signups_per_hour` | `100` | sign-ups across the instance per hour; at least `1` (use `signup: "closed"` to switch sign-ups off) |
 | `host_requests_per_second` | `1` | combined check rate to one host from all non-operator workspaces (must be positive). A monitor that would exceed it is refused with a hint to use a longer interval |
 
-Fixed limits for non-operator workspaces (in memory, reset on restart):
+Fixed limits (in memory, reset on restart; all but the last row are for non-operator workspaces):
 
 | What | Limit |
 |---|---|
@@ -131,10 +148,12 @@ Fixed limits for non-operator workspaces (in memory, reset on restart):
 | Check now | 1 per 10 seconds per monitor, and 30 per minute per workspace. A check that is already running or queued is not started again |
 | Test URL | 10 per minute per workspace |
 | Alert channel tests | 5 per minute per workspace |
-| Sign-ups | 5 per hour per client address |
+| Sign-ups (everyone) | 5 per hour per client address |
 
-An edit, pause or unmute restarts the monitor but does not probe straight
-away when its last check is still fresh (younger than its interval).
+An edit, pause/resume or mute/unmute restarts the monitor. It probes straight
+away if the edit changed the URL, timeout, expected status or keyword. Otherwise
+it waits when the last check is still fresh (younger than its interval).
+When a limit is hit the response is a 429 with a `Retry-After` header.
 
 ### Alert channels in other workspaces
 
@@ -152,11 +171,11 @@ it again.
 ### Deleting an account
 
 `/account` lets a user delete their account after confirming their password.
-Operators don't see the form, and the server refuses it anyway for the last
-operator. The user, their sessions and the workspace they alone belong to (monitors,
+Operators don't see the form; the server itself refuses only the last operator.
+The user, their sessions and the workspace they alone belong to (monitors,
 checks, incidents, alert settings and status page) are removed, and its
-monitors stop. The last operator cannot delete their account, and workspace 1
-is never deleted.
+monitors stop; alerts already being delivered may still arrive. The last
+operator cannot delete their account, and workspace 1 is never deleted.
 
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
 delete those files.
@@ -175,34 +194,18 @@ Probes send `User-Agent: uptime-monitor/<version>`, followed by
 ` (+<base_url>)` when `base_url` is set, so site owners can see who is
 checking them.
 
-### Startup errors on public instances
+### Startup errors
 
 The server refuses to start when:
 
-- `signup` is `open` (not supported yet), or `mail` or `limits.mail_per_hour` is set
+- `signup` is anything other than `closed` or `invite` (`open` arrives later), or `mail` or `limits.mail_per_hour` is set
 - `signup` is not `closed` and `base_url` is empty
 - `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query
-- a limit is negative, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
+- a limit is negative, `signups_per_hour` is under 1, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
 
 It logs a WARN when `allow_private_targets` is `all` while sign-up is not
 closed: every invited user could then reach your internal network.
-
-With Docker:
-
-```bash
-cp config.example.json config.json   # keep it readable (0644): the container reads it as a non-root user
-docker compose up -d
-docker compose logs uptime | grep 'setup required'   # the setup link
-# or: docker compose exec uptime uptime-monitor -setup-link
-```
-
-The config is mounted read-only at `/etc/uptime-monitor/config.json` and the
-database lives in the `uptime-monitor-data` volume at `/data`. The container
-runs as a non-root user with a read-only root filesystem and a health check
-on `/healthz` (which assumes the default `listen` of `:8080`). If a reverse
-proxy on the same host fronts it, publish the port as `127.0.0.1:8080:8080`
-(see the comment in `docker-compose.yml`).
 
 ## Upgrading
 
@@ -280,7 +283,7 @@ From a release before the production hardening:
 | `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
-| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. `operator` means workspace 1 only; `all` is unsafe on an instance others can join. |
+| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. `operator` means the operator's own workspace 1 (checks and alerts) and operator accounts (the web form checks); v1 has one operator, so the two agree; `all` is unsafe on an instance others can join. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
@@ -391,5 +394,5 @@ go vet ./...
 - Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
 - Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
 - The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. The workspace owner always sees live data.
-- Passwords are hashed with argon2id, and failed sign-ins are rate limited per address and per email. Secrets are never logged, except the setup and reset links, which are printed on purpose.
+- Passwords are hashed with argon2id, and failed sign-ins are rate limited per address and per email. Secrets are never logged, except the setup, reset and invite links, which are printed on purpose.
 - Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.

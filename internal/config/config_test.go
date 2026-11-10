@@ -219,7 +219,8 @@ func TestLimitsValidation(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"max_monitors", `{"limits":{"max_monitors":-1}}`, "limits.max_monitors"},
 		{"max_workspaces", `{"limits":{"max_workspaces":-1}}`, "limits.max_workspaces"},
-		{"signups_per_hour", `{"limits":{"signups_per_hour":-1}}`, "limits.signups_per_hour"},
+		{"signups_per_hour", `{"limits":{"signups_per_hour":-1}}`, "limits.signups_per_hour must be at least 1"},
+		{"signups_per_hour zero", `{"limits":{"signups_per_hour":0}}`, "limits.signups_per_hour must be at least 1"},
 		{"host_requests_per_second", `{"limits":{"host_requests_per_second":-1}}`, "limits.host_requests_per_second must be positive"},
 		{"host_requests_per_second zero", `{"limits":{"host_requests_per_second":0}}`, "limits.host_requests_per_second must be positive"},
 		{"min_interval negative", `{"limits":{"min_interval":"-1m"}}`, "limits.min_interval"},
