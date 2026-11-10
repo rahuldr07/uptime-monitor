@@ -71,9 +71,9 @@ From a release before workspaces:
 - **Alert settings** saved in the browser now belong to the workspace.
 - **Status page rate limit.** Status pages (`/s/{slug}`) allow 120 requests
   per minute per client address, and at most 2 page rebuilds run at once.
-  The client address comes from `X-Forwarded-For` only when `trust_proxy` is
-  set. Behind a reverse proxy without it, every visitor shares one limit, so
-  proxied installs should set `trust_proxy`.
+  The client address comes from `X-Forwarded-For` (or `X-Real-IP`) only when
+  `trust_proxy` is set. Behind a reverse proxy without it, every visitor
+  shares one limit, so proxied installs should set `trust_proxy`.
 
 From a release before the production hardening:
 

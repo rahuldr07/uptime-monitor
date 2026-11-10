@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -113,29 +114,20 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 		if err != nil {
 			return err
 		}
-		var existing []string
 		if has {
-			existing, err = filepath.Glob(path + ".pre-accounts-*.bak")
+			existing, err := findBackup(path)
 			if err != nil {
 				return err
 			}
-		}
-		if len(existing) > 0 {
-			slog.Info("pre-migration backup already exists", "backup", existing[0])
-		} else if has {
-			dest := path + ".pre-accounts-" + time.Now().Format("20060102-150405") + ".bak"
-			// A migration that failed and is retried within the same second
-			// finds its earlier backup in the way; keep both.
-			for i := 2; ; i++ {
-				if _, err := os.Stat(dest); err != nil {
-					break
+			if existing != "" {
+				slog.Info("pre-migration backup already exists", "backup", existing)
+			} else {
+				dest := path + ".pre-accounts-" + time.Now().Format("20060102-150405") + ".bak"
+				if err := Backup(ctx, path, dest); err != nil {
+					return fmt.Errorf("pre-migration backup: %w", err)
 				}
-				dest = fmt.Sprintf("%s.pre-accounts-%s-%d.bak", path, time.Now().Format("20060102-150405"), i)
+				slog.Info("backed up database before the accounts migration", "backup", dest)
 			}
-			if err := Backup(ctx, path, dest); err != nil {
-				return fmt.Errorf("pre-migration backup: %w", err)
-			}
-			slog.Info("backed up database before the accounts migration", "backup", dest)
 		}
 	}
 	for v := cur + 1; v <= len(steps); v++ {
@@ -144,6 +136,38 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 		}
 	}
 	return nil
+}
+
+// findBackup returns the path of an earlier pre-migration backup of the
+// database at path, or "". The directory is listed rather than globbed so
+// that characters in path are never read as a pattern. An empty file, left by
+// a process killed mid-backup, is removed and does not count.
+func findBackup(path string) (string, error) {
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("look for pre-migration backup: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, base+".pre-accounts-") || !strings.HasSuffix(name, ".bak") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		if info.Size() == 0 {
+			slog.Warn("removing empty pre-migration backup", "backup", full)
+			if err := os.Remove(full); err != nil {
+				return "", err
+			}
+			continue
+		}
+		return full, nil
+	}
+	return "", nil
 }
 
 // hasData reports whether any row exists in targets, settings or maintenance.

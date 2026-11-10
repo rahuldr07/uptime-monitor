@@ -368,6 +368,95 @@ func TestMigrateRetryReusesBackup(t *testing.T) {
 	}
 }
 
+func baks(t *testing.T, dir string) []string {
+	t.Helper()
+	m, err := filepath.Glob(filepath.Join(dir, "*.bak"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestMigrateBackupPathWithGlobChars(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "[x")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "t.db")
+	openV1(t, path)
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("backups = %d, want 1", n)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+}
+
+func TestMigrateReplacesEmptyBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	openV1(t, path)
+	empty := path + ".pre-accounts-20000101-000000.bak"
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := os.Stat(empty); !os.IsNotExist(err) {
+		t.Fatalf("empty backup should be removed: %v", err)
+	}
+	b := baks(t, dir)
+	if len(b) != 1 {
+		t.Fatalf("backups = %v, want one", b)
+	}
+	if fi, err := os.Stat(b[0]); err != nil || fi.Size() == 0 {
+		t.Fatalf("backup empty: %v", err)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+}
+
+func TestMigrateIgnoresOtherDatabasesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	openV1(t, path)
+	other := filepath.Join(dir, "other.db.pre-accounts-20000101-000000.bak")
+	if err := os.WriteFile(other, []byte("not ours"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	own, err := filepath.Glob(filepath.Join(dir, "t.db.pre-accounts-*.bak"))
+	if err != nil || len(own) != 1 {
+		t.Fatalf("own backups = %v, %v; want one", own, err)
+	}
+	if len(baks(t, dir)) != 2 {
+		t.Fatalf("backups = %v", baks(t, dir))
+	}
+}
+
 func TestTwoWorkspacesSameTargetName(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
