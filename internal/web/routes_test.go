@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 42 {
-		t.Errorf("len = %d, want 42", len(routes))
+	if len(routes) != 43 {
+		t.Errorf("len = %d, want 43", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -49,7 +49,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}"},
 		classSetup:  {"GET /setup", "POST /setup"},
 		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /reset", "POST /reset"},
-		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all"},
+		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete"},
 	} {
 		if len(byClass[class]) != len(want) {
 			t.Errorf("class %d routes = %v, want %v", class, byClass[class], want)

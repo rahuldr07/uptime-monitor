@@ -779,3 +779,45 @@ func TestReloadDoesNotReprobeFreshTarget(t *testing.T) {
 		t.Fatalf("%d checks after 5 mute toggles; want at most one extra", n)
 	}
 }
+
+func TestRemoveWorkspaceWaitsOnlyForItsOwnAlerts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer srv.Close()
+	st, t1, t2 := twoWorkspaces(t, srv.URL)
+	m := New(Options{Store: st, Client: srv.Client(), Logger: slog.Default(), RetryBase: time.Millisecond})
+	slow1, slow2 := blocker{release: make(chan struct{})}, blocker{release: make(chan struct{})}
+	m.SetNotifiers(1, notify.Multi{{Name: "slow", Notifier: slow1}})
+	m.SetNotifiers(2, notify.Multi{{Name: "slow", Notifier: slow2}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "both down", func() bool {
+		a, _ := m.Get(1, t1.ID)
+		b, _ := m.Get(2, t2.ID)
+		return a.Status == Down && b.Status == Down
+	})
+	done := make(chan struct{})
+	go func() { m.RemoveWorkspace(2); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("RemoveWorkspace returned while its alert was still being delivered")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(slow2.release) // workspace 1's alert stays blocked and must not matter
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RemoveWorkspace waited on another workspace")
+	}
+	if _, ok := m.Get(2, t2.ID); ok {
+		t.Error("removed workspace still has a target")
+	}
+	if _, ok := m.Get(1, t1.ID); !ok {
+		t.Error("other workspace lost its target")
+	}
+	close(slow1.release)
+	cancel()
+	m.Wait()
+}

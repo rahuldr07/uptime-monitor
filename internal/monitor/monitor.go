@@ -145,6 +145,9 @@ type Monitor struct {
 	ctx     context.Context
 	wg      sync.WaitGroup
 	alertWG sync.WaitGroup
+	// wsAlerts counts each workspace's pending alert deliveries, so
+	// RemoveWorkspace can wait for them without waiting on other workspaces.
+	wsAlerts map[int64]*sync.WaitGroup // guarded by mu
 }
 
 // New creates a Monitor. Call Start to begin checking.
@@ -179,6 +182,7 @@ func New(o Options) *Monitor {
 		notifiers:  map[int64]notify.Multi{},
 		states:     map[int64]*state{},
 		cancels:    map[int64]context.CancelFunc{},
+		wsAlerts:   map[int64]*sync.WaitGroup{},
 	}
 }
 
@@ -371,6 +375,51 @@ func (m *Monitor) Remove(id int64) {
 	delete(m.states, id)
 	m.mu.Unlock()
 	m.Events.publish(Event{TargetID: id, WorkspaceID: ws, Kind: "removed"})
+}
+
+// RemoveWorkspace stops every runner of a workspace and returns once its
+// in-flight probes and alert deliveries have finished, then forgets its
+// notifier cache. Remove(id) waits for the target's checkMu, which a probe
+// holds from start to the store write, so no probe of ws can write after this
+// returns. apply starts alerts while holding checkMu, so once every target is
+// removed no new alert can start and the workspace's own WaitGroup drains.
+// Other workspaces are never waited on.
+func (m *Monitor) RemoveWorkspace(ws int64) {
+	m.mu.Lock()
+	var ids []int64
+	for id, st := range m.states {
+		if st.Target.WorkspaceID == ws {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Remove(id)
+	}
+	m.mu.Lock()
+	g := m.wsAlerts[ws]
+	m.mu.Unlock()
+	if g != nil {
+		g.Wait()
+	}
+	m.mu.Lock()
+	delete(m.wsAlerts, ws)
+	m.mu.Unlock()
+	m.notifMu.Lock()
+	delete(m.notifiers, ws)
+	m.notifMu.Unlock()
+}
+
+// alertGroup returns ws's pending-alert counter.
+func (m *Monitor) alertGroup(ws int64) *sync.WaitGroup {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g := m.wsAlerts[ws]
+	if g == nil {
+		g = &sync.WaitGroup{}
+		m.wsAlerts[ws] = g
+	}
+	return g
 }
 
 // restore sets initial state from stored history so a restart does not
@@ -702,8 +751,13 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 		m.logger.Info("alerts muted; not notifying", "target", t.Name)
 		return
 	}
+	g := m.alertGroup(t.WorkspaceID)
+	g.Add(1)
 	m.alertWG.Add(1)
-	go m.alert(incidentID, t.ID, t.WorkspaceID, *ev)
+	go func() {
+		defer g.Done()
+		m.alert(incidentID, t.ID, t.WorkspaceID, *ev)
+	}()
 }
 
 // alert delivers an event to every channel with retries and records each

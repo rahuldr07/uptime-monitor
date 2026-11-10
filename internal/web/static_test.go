@@ -22,8 +22,10 @@ var sysAllowed = map[string][]string{
 	"signup.go|(*Server).signupPost":         {"PeekToken", "CreateAccount", "CreateSession"},
 	"login.go|(*Server).loginPost":           {"UserByEmail", "DeleteSession", "CreateSession"},
 	"login.go|(*Server).logout":              {"DeleteSession"},
-	"account.go|(*Server).accountPassword":   {"PasswordHash", "SetPassword"},
+	"account.go|(*Server).accountPassword":   {"SetPassword"},
 	"account.go|(*Server).accountSignOutAll": {"DeleteUserSessions"},
+	"account.go|(*Server).accountDelete":     {"DeleteAccount", "DeleteUserSessions"},
+	"account.go|(*Server).checkCurrent":      {"PasswordHash"},
 	"reset.go|(*Server).resetPage":           {"PeekToken"},
 	"reset.go|(*Server).resetPost":           {"PeekToken", "ResetPassword", "CreateSession"},
 	"targets.go|(*Server).hostRateErr":       {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
@@ -114,7 +116,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 42
+	const want = 43
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

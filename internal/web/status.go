@@ -48,14 +48,14 @@ const (
 )
 
 // pageCache holds rendered pages for anonymous visitors. Keys are
-// "slug|theme[|partial]". Its lock only guards the maps: it is never held
+// "<workspace id>|theme[|partial]". Its lock only guards the maps: it is never held
 // while a page is built or written, so a slow client cannot stall others.
 // The zero value is ready to use, with no byte limit.
 type pageCache struct {
 	mu       sync.Mutex
-	maxBytes int               // 0 means unlimited
-	total    int               // bytes in all cached bodies
-	gens     map[string]uint64 // per slug; bumped by reset, older entries are stale
+	maxBytes int              // 0 means unlimited
+	total    int              // bytes in all cached bodies
+	gens     map[int64]uint64 // per workspace; bumped by reset, older entries are stale
 	entries  map[string]*cachedPage
 	lru      *list.List // of *cachedPage holding a body; front = most recently used
 	sem      chan struct{}
@@ -81,20 +81,38 @@ type flight struct {
 
 var errBuildPanicked = errors.New("status page build panicked")
 
-func slugOf(key string) string {
-	slug, _, _ := strings.Cut(key, "|")
-	return slug
+// wsOf is the workspace ID a cache key belongs to (0 for a malformed key).
+func wsOf(key string) int64 {
+	id, _, _ := strings.Cut(key, "|")
+	n, _ := strconv.ParseInt(id, 10, 64)
+	return n
 }
 
 // reset marks every cached page of one workspace stale, e.g. after an
 // admin change.
-func (c *pageCache) reset(slug string) {
+func (c *pageCache) reset(wsID int64) {
 	c.mu.Lock()
 	if c.gens == nil {
-		c.gens = map[string]uint64{}
+		c.gens = map[int64]uint64{}
 	}
-	c.gens[slug]++
+	c.gens[wsID]++
 	c.mu.Unlock()
+}
+
+// forget removes every cached page and the generation counter of a deleted
+// workspace. A page that is rebuilding is only marked stale; it is dropped
+// the next time it is requested, and no request can reach it any more.
+func (c *pageCache) forget(wsID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.entries {
+		if wsOf(p.key) == wsID && p.building == nil {
+			c.drop(p)
+		}
+	}
+	if _, ok := c.gens[wsID]; ok {
+		c.gens[wsID]++ // keeps rebuilding pages stale
+	}
 }
 
 // drop removes p from the cache; caller holds mu and p is not building.
@@ -135,11 +153,11 @@ func (c *pageCache) try(ctx context.Context, key string, build func() ([]byte, e
 		p = &cachedPage{key: key}
 		c.entries[key] = p
 	}
-	slug := slugOf(key)
+	wsID := wsOf(key)
 	if p.elem != nil {
 		c.lru.MoveToFront(p.elem)
 	}
-	if p.body != nil && p.gen == c.gens[slug] && time.Since(p.at) < statusCacheTTL {
+	if p.body != nil && p.gen == c.gens[wsID] && time.Since(p.at) < statusCacheTTL {
 		body := p.body
 		c.mu.Unlock()
 		return body, false, nil
@@ -170,7 +188,7 @@ func (c *pageCache) try(ctx context.Context, key string, build func() ([]byte, e
 	}
 	f := &flight{done: make(chan struct{})}
 	p.building = f
-	gen := c.gens[slug]
+	gen := c.gens[wsID]
 	c.mu.Unlock()
 	if !got {
 		select {
@@ -287,13 +305,8 @@ func (s *Server) statusURL(ctx context.Context, ws *store.WS) string {
 }
 
 // resetStatus invalidates the cached public pages of ws.
-func (s *Server) resetStatus(ctx context.Context, ws *store.WS) {
-	info, err := ws.Info(ctx)
-	if err != nil {
-		s.logger.Error("status cache: cannot resolve workspace", "workspace", ws.ID(), "err", err)
-		return
-	}
-	s.statusCache.reset(info.Slug)
+func (s *Server) resetStatus(ws *store.WS) {
+	s.statusCache.reset(ws.ID())
 }
 
 func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +339,7 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	}
 	// Both parts take a handful of fixed values, so visitors cannot grow the map.
 	theme, partial := themeFrom(r), r.Header.Get("X-Partial") == "1"
-	key := info.Slug + "|" + theme
+	key := strconv.FormatInt(info.ID, 10) + "|" + theme
 	if partial {
 		key += "|partial"
 	}
@@ -435,7 +448,7 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authC
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	redirect(w, r, s.statusURL(r.Context(), ws), "Status page saved.")
 }
 

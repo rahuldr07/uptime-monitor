@@ -271,7 +271,7 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request, a *authCtx
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	to := fmt.Sprintf("/targets/%d", t.ID)
 	if wantsJSON(r) {
 		writeJSON(w, map[string]any{"ok": true, "redirect": withFlash(to, "Monitor created. First check is running.")})
@@ -455,7 +455,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request, a *authCtx
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	redirect(w, r, fmt.Sprintf("/targets/%d?tab=settings", t.ID), "Monitor saved.")
 }
 
@@ -470,7 +470,7 @@ func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request, a *authCtx
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	redirect(w, r, "/targets", "Deleted "+t.Name+".")
 }
 
@@ -489,7 +489,7 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request, a *authCtx)
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	msg := "Resumed " + t.Name + "."
 	if t.Paused {
 		msg = "Paused " + t.Name + "."
@@ -512,7 +512,7 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request, a *authCtx) 
 		s.fail(w, err)
 		return
 	}
-	s.resetStatus(r.Context(), ws)
+	s.resetStatus(ws)
 	msg := "Alerts unmuted for " + t.Name + "."
 	if t.Muted {
 		msg = "Alerts muted for " + t.Name + ". Incidents are still recorded."

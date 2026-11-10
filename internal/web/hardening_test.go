@@ -181,7 +181,7 @@ func TestPageCacheSingleFlightAndStale(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if b, err := c.get(ctx, "k", slow); err != nil || string(b) != "v1" {
+			if b, err := c.get(ctx, "1", slow); err != nil || string(b) != "v1" {
 				t.Errorf("get: %q %v", b, err)
 			}
 		}()
@@ -194,13 +194,13 @@ func TestPageCacheSingleFlightAndStale(t *testing.T) {
 	}
 
 	// After a reset, one caller rebuilds while others get the stale copy at once.
-	c.reset("k")
+	c.reset(1)
 	block := make(chan struct{})
 	started := make(chan struct{})
-	go c.get(ctx, "k", func() ([]byte, error) { close(started); <-block; return []byte("v2"), nil })
+	go c.get(ctx, "1", func() ([]byte, error) { close(started); <-block; return []byte("v2"), nil })
 	<-started
 	done := make(chan []byte)
-	go func() { b, _ := c.get(ctx, "k", slow); done <- b }()
+	go func() { b, _ := c.get(ctx, "1", slow); done <- b }()
 	select {
 	case b := <-done:
 		if string(b) != "v1" {
@@ -211,17 +211,17 @@ func TestPageCacheSingleFlightAndStale(t *testing.T) {
 	}
 	close(block)
 	time.Sleep(20 * time.Millisecond)
-	if b, _ := c.get(ctx, "k", slow); string(b) != "v2" {
+	if b, _ := c.get(ctx, "1", slow); string(b) != "v2" {
 		t.Fatalf("want rebuilt v2, got %q", b)
 	}
 
 	// A waiter with no stale copy gives up when its request is cancelled.
 	hold := make(chan struct{})
-	go c.get(ctx, "other", func() ([]byte, error) { <-hold; return []byte("x"), nil })
+	go c.get(ctx, "9", func() ([]byte, error) { <-hold; return []byte("x"), nil })
 	time.Sleep(20 * time.Millisecond)
 	cctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if _, err := c.get(cctx, "other", slow); err == nil {
+	if _, err := c.get(cctx, "9", slow); err == nil {
 		t.Fatal("waiter should return when its context ends")
 	}
 	close(hold)
@@ -241,7 +241,7 @@ func TestPageCacheFailuresAreShared(t *testing.T) {
 	errs := make(chan error, 5)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); _, err := c.get(ctx, "k", failing); errs <- err }()
+		go func() { defer wg.Done(); _, err := c.get(ctx, "1", failing); errs <- err }()
 	}
 	time.Sleep(50 * time.Millisecond)
 	close(release)
@@ -260,20 +260,20 @@ func TestPageCacheFailuresAreShared(t *testing.T) {
 func TestPageCachePanicKeepsStaleCopy(t *testing.T) {
 	var c pageCache
 	ctx := context.Background()
-	c.get(ctx, "k", func() ([]byte, error) { return []byte("v1"), nil })
-	c.reset("k")
+	c.get(ctx, "1", func() ([]byte, error) { return []byte("v1"), nil })
+	c.reset(1)
 	func() {
 		defer func() { recover() }()
-		c.get(ctx, "k", func() ([]byte, error) { panic("boom") })
+		c.get(ctx, "1", func() ([]byte, error) { panic("boom") })
 	}()
 	c.mu.Lock()
-	p := c.entries["k"]
+	p := c.entries["1"]
 	body, building := string(p.body), p.building
 	c.mu.Unlock()
 	if body != "v1" || building != nil {
 		t.Fatalf("after a panicking build the stale copy must survive and no build may stay pending: %q %v", body, building)
 	}
-	if b, err := c.get(ctx, "k", func() ([]byte, error) { return []byte("v2"), nil }); err != nil || string(b) != "v2" {
+	if b, err := c.get(ctx, "1", func() ([]byte, error) { return []byte("v2"), nil }); err != nil || string(b) != "v2" {
 		t.Fatalf("the next visitor should rebuild: %q %v", b, err)
 	}
 }
@@ -322,7 +322,7 @@ func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("%s: a stalled reader blocked another visitor", label)
 		}
-		s.statusCache.reset("default")
+		s.statusCache.reset(1)
 	}
 }
 
@@ -448,29 +448,29 @@ func TestStatusCacheBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	put("a|1", 40)
-	put("b|1", 40)
-	put("a|1", 40) // a|1 is now the most recently used
-	put("c|1", 40) // 120 > 100: evicts b|1, the least recently used
+	put("2|1", 40)
+	put("3|1", 40)
+	put("2|1", 40) // a|1 is now the most recently used
+	put("4|1", 40) // 120 > 100: evicts b|1, the least recently used
 	c.mu.Lock()
-	_, hasA := c.entries["a|1"]
-	_, hasB := c.entries["b|1"]
-	_, hasC := c.entries["c|1"]
+	_, hasA := c.entries["2|1"]
+	_, hasB := c.entries["3|1"]
+	_, hasC := c.entries["4|1"]
 	total := c.total
 	c.mu.Unlock()
 	if total > 100 || !hasA || hasB || !hasC {
 		t.Fatalf("total=%d a=%v b=%v c=%v", total, hasA, hasB, hasC)
 	}
 
-	// reset("a") stales only a's entries.
-	c.reset("a")
+	// reset(2) stales only 2's entries.
+	c.reset(2)
 	var builds atomic.Int32
 	build := func() ([]byte, error) { builds.Add(1); return make([]byte, 40), nil }
-	c.get(ctx, "c|1", build)
+	c.get(ctx, "4|1", build)
 	if builds.Load() != 0 {
 		t.Fatal("reset(a) must not invalidate c")
 	}
-	c.get(ctx, "a|1", build)
+	c.get(ctx, "2|1", build)
 	if builds.Load() != 1 {
 		t.Fatal("reset(a) must invalidate a")
 	}
@@ -494,7 +494,7 @@ func TestStatusRebuildCap(t *testing.T) {
 		return []byte("x"), nil
 	}
 	var wg sync.WaitGroup
-	for _, k := range []string{"a|1", "b|1", "c|1"} {
+	for _, k := range []string{"2|1", "3|1", "4|1"} {
 		wg.Add(1)
 		go func() { defer wg.Done(); c.get(ctx, k, build) }()
 	}
@@ -530,18 +530,18 @@ func TestStatusRateLimited(t *testing.T) {
 func TestStatusCacheNeverEvictsBuilding(t *testing.T) {
 	c := pageCache{maxBytes: 100}
 	ctx := context.Background()
-	c.get(ctx, "a|1", func() ([]byte, error) { return make([]byte, 60), nil })
-	c.reset("a")
+	c.get(ctx, "2|1", func() ([]byte, error) { return make([]byte, 60), nil })
+	c.reset(2)
 	started, release := make(chan struct{}), make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c.get(ctx, "a|1", func() ([]byte, error) { close(started); <-release; return make([]byte, 60), nil })
+		c.get(ctx, "2|1", func() ([]byte, error) { close(started); <-release; return make([]byte, 60), nil })
 	}()
 	<-started // a|1 is rebuilding and is the least recently used entry
-	c.get(ctx, "b|1", func() ([]byte, error) { return make([]byte, 60), nil })
+	c.get(ctx, "3|1", func() ([]byte, error) { return make([]byte, 60), nil })
 	c.mu.Lock()
-	_, hasA := c.entries["a|1"]
+	_, hasA := c.entries["2|1"]
 	c.mu.Unlock()
 	if !hasA {
 		t.Fatal("an entry that is rebuilding must not be evicted")
@@ -566,19 +566,19 @@ func TestStatusBuildSurvivesCancelledLeader(t *testing.T) {
 		}
 		return []byte("page"), nil
 	}
-	go c.get(leaderCtx, "k", build)
+	go c.get(leaderCtx, "1", build)
 	<-started
 	waiterDone := make(chan error, 1)
 	var got atomic.Value
 	go func() {
-		b, err := c.get(context.Background(), "k", build)
+		b, err := c.get(context.Background(), "1", build)
 		got.Store(string(b))
 		waiterDone <- err
 	}()
 	// Wait until the waiter is parked on the flight, then cancel the leader.
 	for {
 		c.mu.Lock()
-		f := c.entries["k"].building
+		f := c.entries["1"].building
 		c.mu.Unlock()
 		if f != nil {
 			break
@@ -627,7 +627,7 @@ func TestSecretClearedWhenDestinationChanges(t *testing.T) {
 		return (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1))
 	}
 	form.Set("smtp_pass", "")
-	form.Set("smtp_host", "other")
+	form.Set("smtp_host", "9")
 	resp, body := e.post(t, c, "/alerts", form)
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "re-enter the password") {
 		t.Fatalf("changed host, blank password: %d", resp.StatusCode)
