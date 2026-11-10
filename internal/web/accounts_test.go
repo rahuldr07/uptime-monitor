@@ -2,11 +2,15 @@ package web
 
 import (
 	"context"
+	"database/sql"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -308,5 +312,194 @@ func TestSetupValidationWithoutCredentialHasHint(t *testing.T) {
 	resp, body := e.post(t, e.client(t), "/setup", setupForm(url.Values{"confirm": {"different password"}}))
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Open the setup link printed in the server log.") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+}
+
+// loginFrom posts a sign-in as if from addr (needs trust_proxy), optionally
+// carrying extra cookies.
+func (e *env) loginFrom(t *testing.T, addr, email, pw string, cookies ...*http.Cookie) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader(url.Values{"email": {email}, "password": {pw}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-For", addr)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp, string(b)
+}
+
+func TestLoginPerAddressLimit(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	for i := 0; i < 5; i++ {
+		if resp, _ := e.loginFrom(t, "203.0.113.1", opEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i+1, resp.StatusCode)
+		}
+	}
+	resp, body := e.loginFrom(t, "203.0.113.1", opEmail, "wrong")
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
+		t.Fatalf("6th from one address: %d", resp.StatusCode)
+	}
+	if resp, _ := e.loginFrom(t, "203.0.113.2", opEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("another address: %d", resp.StatusCode)
+	}
+}
+
+func TestLoginPerPairLimit(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	const pairEmail = "a@x.example"
+	// Two failures per minute from each address keep the per-address limit
+	// out of the way; advance the clock between batches.
+	for i := 0; i < 10; i++ {
+		if i%4 == 0 && i > 0 {
+			e.clock = e.clock.Add(2 * time.Minute)
+		}
+		if resp, _ := e.loginFrom(t, "203.0.113.50", pairEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i+1, resp.StatusCode)
+		}
+	}
+	e.clock = e.clock.Add(2 * time.Minute)
+	resp, body := e.loginFrom(t, "203.0.113.50", pairEmail, "wrong")
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
+		t.Fatalf("11th for the pair: %d", resp.StatusCode)
+	}
+	// Same email from another address is not blocked by the pair limit.
+	if resp, _ := e.loginFrom(t, "203.0.113.51", pairEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("other address, same email: %d", resp.StatusCode)
+	}
+	// Same address, other email: not blocked either.
+	if resp, _ := e.loginFrom(t, "203.0.113.50", "b@x.example", "wrong"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("same address, other email: %d", resp.StatusCode)
+	}
+}
+
+func TestLoginPerEmailSlowdown(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	addr := func(i int) string { return "198.51.100." + strconv.Itoa(i) }
+	for i := 1; i <= 21; i++ {
+		if resp, _ := e.loginFrom(t, addr(i), opEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i, resp.StatusCode)
+		}
+	}
+	// Slowed: the next attempt inside the 5s gate is refused, even with the
+	// right password and a fresh address.
+	resp, body := e.loginFrom(t, addr(100), opEmail, testSecret)
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
+		t.Fatalf("slowed attempt: %d", resp.StatusCode)
+	}
+	// After the gate period one attempt goes through: never locked out.
+	e.clock = e.clock.Add(5 * time.Second)
+	resp, _ = e.loginFrom(t, addr(101), opEmail, testSecret)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("after 5s the correct password must succeed, got %d", resp.StatusCode)
+	}
+	dev := cookieNamed(resp, deviceCookie)
+	if dev == nil || !dev.HttpOnly || dev.SameSite != http.SameSiteLaxMode || dev.MaxAge != 90*24*3600 || dev.Secure {
+		t.Fatalf("device cookie = %+v", dev)
+	}
+	// The gate is spent again; without the device cookie we are held back.
+	if resp, _ := e.loginFrom(t, addr(102), opEmail, testSecret); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second attempt in the gate window: %d", resp.StatusCode)
+	}
+	// A known device skips the slowdown at once.
+	if resp, _ := e.loginFrom(t, addr(103), opEmail, testSecret, dev); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("known device: %d", resp.StatusCode)
+	}
+	// A device cookie for another user, or a forged one, does not help.
+	for _, v := range []string{"2." + strings.SplitN(dev.Value, ".", 2)[1], "1.deadbeef", "garbage"} {
+		bad := &http.Cookie{Name: deviceCookie, Value: v}
+		if resp, _ := e.loginFrom(t, addr(104), opEmail, testSecret, bad); resp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("cookie %q: %d", v, resp.StatusCode)
+		}
+	}
+}
+
+func TestLoginNoEnumeration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses the real password hasher")
+	}
+	e := newEnvWith(t, password.Default())
+	e.cfg.TrustProxy = true
+	const n = 30
+	var known, unknown []time.Duration
+	var knownBody, unknownBody string
+	for i := 0; i < n+1; i++ {
+		// A fresh address per request; the clock moves past every window.
+		e.clock = e.clock.Add(time.Hour)
+		for _, c := range []struct {
+			email string
+			out   *[]time.Duration
+			body  *string
+		}{{opEmail, &known, &knownBody}, {"nobody" + strconv.Itoa(i) + "@example.com", &unknown, &unknownBody}} {
+			addr := "192.0.2." + strconv.Itoa(2*i+1)
+			if c.out == &unknown {
+				addr = "192.0.2." + strconv.Itoa(2*i+2)
+			}
+			start := time.Now()
+			resp, body := e.loginFrom(t, addr, c.email, "wrong password!")
+			d := time.Since(start)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("%s: %d", c.email, resp.StatusCode)
+			}
+			if i == 0 {
+				*c.body = strings.ReplaceAll(body, c.email, "")
+				continue // warm-up
+			}
+			*c.out = append(*c.out, d)
+		}
+		if i == 0 && knownBody != strings.ReplaceAll(unknownBody, "nobody0@example.com", "") {
+			t.Fatalf("bodies differ:\n%s\n---\n%s", knownBody, unknownBody)
+		}
+	}
+	med := func(ds []time.Duration) time.Duration {
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return ds[len(ds)/2]
+	}
+	mk, mu := med(known), med(unknown)
+	t.Logf("median known=%v unknown=%v", mk, mu)
+	diff := mk - mu
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff >= 50*time.Millisecond {
+		t.Fatalf("medians differ by %v (known %v, unknown %v)", diff, mk, mu)
+	}
+}
+
+func TestDisabledOnlyAfterCorrectPassword(t *testing.T) {
+	e := newEnv(t)
+	e.account(t, "dis@example.com")
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE users SET disabled_at=? WHERE email=?`, e.clock.UnixMilli(), "dis@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	c := e.client(t)
+	if resp, body := e.post(t, c, "/login", url.Values{"email": {"dis@example.com"}, "password": {"wrong"}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, msgBadLogin) {
+		t.Fatalf("wrong password: %d", resp.StatusCode)
+	}
+	if resp, body := e.post(t, c, "/login", url.Values{"email": {"dis@example.com"}, "password": {testSecret}}); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, msgDisabled) {
+		t.Fatalf("correct password: %d", resp.StatusCode)
+	}
+}
+
+func TestHashBusyGives503(t *testing.T) {
+	// A zero Hasher has no run slots at all, so every acquire gives ErrBusy.
+	e := newEnvWith(t, password.New(password.Params{Memory: 64, Time: 1, Threads: 1}))
+	e.srv.hasher = &password.Hasher{}
+	resp, body := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {testSecret}})
+	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, msgBusy) {
+		t.Fatalf("busy hasher: %d", resp.StatusCode)
 	}
 }

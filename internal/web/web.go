@@ -3,6 +3,7 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -42,7 +43,11 @@ type Server struct {
 	setupMode     atomic.Bool
 	upgraded      bool
 	afterSetup    func(ctx context.Context) error
-	limiter       *ratelimit.Limiter
+	loginByAddr   *ratelimit.Limiter
+	loginByPair   *ratelimit.Limiter
+	loginByEmail  *ratelimit.Limiter
+	loginSlow     *ratelimit.Limiter
+	deviceKey     []byte // HMAC key for device cookies, fresh per process
 	statusLimiter *ratelimit.Limiter
 	setupLimiter  *ratelimit.Limiter
 	pages         map[string]*template.Template
@@ -84,8 +89,17 @@ func New(o Options) (*Server, error) {
 		s.hasher = password.Default()
 	}
 	s.setupMode.Store(o.SetupMode)
-	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
-	s.limiter.Now = now
+	s.loginByAddr = ratelimit.New(loginAddrWindow, loginAddrMax, 0)
+	s.loginByPair = ratelimit.New(loginPairWindow, loginPairMax, 0)
+	s.loginByEmail = ratelimit.New(loginEmailWindow, loginEmailMax, 0)
+	s.loginSlow = ratelimit.New(loginSlowWindow, loginSlowMax, 0)
+	for _, l := range []*ratelimit.Limiter{s.loginByAddr, s.loginByPair, s.loginByEmail, s.loginSlow} {
+		l.Now = now
+	}
+	s.deviceKey = make([]byte, 32)
+	if _, err := rand.Read(s.deviceKey); err != nil {
+		return nil, fmt.Errorf("web: device key: %w", err)
+	}
 	s.setupLimiter = ratelimit.New(setupWindow, setupMaxAttempts, 0)
 	s.setupLimiter.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)

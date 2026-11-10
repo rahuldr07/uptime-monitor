@@ -3,6 +3,7 @@ package web
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 )
 
@@ -24,17 +25,30 @@ func clientKey(r *http.Request, proxyHops int) string {
 				i = 0 // fewer entries than hops: the leftmost was added by our first proxy
 			}
 			if ip := parseAddr(parts[i]); ip != nil {
-				return ip.String()
+				return groupAddr(ip.String())
 			}
 		} else if ip := parseAddr(r.Header.Get("X-Real-IP")); ip != nil {
-			return ip.String()
+			return groupAddr(ip.String())
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
-	return host
+	return groupAddr(host)
+}
+
+// groupAddr reduces an IPv6 address to its /64 prefix, since one subscriber
+// usually controls a whole /64. Anything else is returned unchanged.
+func groupAddr(s string) string {
+	a, err := netip.ParseAddr(s)
+	if err != nil || a.Zone() != "" {
+		return s
+	}
+	if a = a.Unmap(); a.Is6() {
+		return netip.PrefixFrom(a, 64).Masked().String()
+	}
+	return a.String()
 }
 
 // parseAddr parses a forwarded address that may carry a port, as some load

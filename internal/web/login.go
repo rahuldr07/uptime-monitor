@@ -1,12 +1,16 @@
 package web
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"uptimemon/internal/password"
 	"uptimemon/internal/store"
@@ -38,11 +42,53 @@ func safeNext(next string) string {
 	return next
 }
 
-// loginMaxFailures is how many failed sign-ins a client may make per minute.
-// Successful sign-ins are not counted, so users are never locked out by
-// their own use; attackers sharing a user's IP (or proxy, when trust_proxy is
-// off) still get throttled.
-const loginMaxFailures = 5
+// Sign-in limits. Only failures count, so a user's own successful sign-ins
+// never lock them out. The address and pair limits are hard; the per-email
+// limit only slows an email down (loginSlowGate), so an attacker spraying one
+// account from many addresses cannot lock its owner out.
+const (
+	loginAddrWindow  = time.Minute
+	loginAddrMax     = 5
+	loginPairWindow  = 15 * time.Minute
+	loginPairMax     = 10
+	loginEmailWindow = 15 * time.Minute
+	loginEmailMax    = 20
+	loginSlowWindow  = 5 * time.Second
+	loginSlowMax     = 1
+
+	deviceCookie = "uptime_device"
+	deviceMaxAge = 90 * 24 * time.Hour
+)
+
+// deviceMAC is the HMAC proving a browser has signed in as userID before.
+func (s *Server) deviceMAC(userID int64) string {
+	m := hmac.New(sha256.New, s.deviceKey)
+	m.Write([]byte("device|" + strconv.FormatInt(userID, 10)))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// deviceKnown reports whether the request carries a valid device cookie for
+// userID. It only ever relaxes the per-email slowdown.
+func (s *Server) deviceKnown(r *http.Request, userID int64) bool {
+	c, err := r.Cookie(deviceCookie)
+	if err != nil {
+		return false
+	}
+	return hmac.Equal([]byte(c.Value), []byte(strconv.FormatInt(userID, 10)+"."+s.deviceMAC(userID)))
+}
+
+func (s *Server) setDeviceCookie(w http.ResponseWriter, r *http.Request, userID int64) {
+	http.SetCookie(w, &http.Cookie{
+		Name: deviceCookie, Value: strconv.FormatInt(userID, 10) + "." + s.deviceMAC(userID),
+		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: s.cookieName(r) == hostSessionCookie, MaxAge: int(deviceMaxAge.Seconds()),
+	})
+}
+
+func emailHash(email string) string {
+	h := sha256.Sum256([]byte(email))
+	return hex.EncodeToString(h[:])[:16]
+}
 
 // passwordEqual compares in constant time. Hashing first gives both sides
 // the same length, since ConstantTimeCompare returns early on a length
@@ -68,15 +114,47 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "login", d)
 	}
-	key := clientKey(r, s.cfg.ProxyHops())
-	if ok, _ := s.limiter.Allow(key); !ok {
+	addr := clientKey(r, s.cfg.ProxyHops())
+	// An invalid address is keyed by its text, so it is limited like any other
+	// and nothing depends on whether the account exists.
+	email, emailErr := store.NormalizeEmail(d.Email)
+	emailKey := email
+	if emailErr != nil {
+		emailKey = strings.ToLower(d.Email)
+		if len(emailKey) > 254 {
+			emailKey = emailKey[:254]
+		}
+	}
+	pairKey := emailKey + "|" + addr
+	throttled := func() {
+		s.logger.Warn("sign-in throttled", "event", "login_throttled", "ip", addr)
 		fail(http.StatusTooManyRequests, msgTooMany)
+	}
+	// failed records a failure against all three limits and logs it. userID is
+	// 0 when the account is not known.
+	failed := func(userID int64) {
+		s.loginByAddr.Hit(addr)
+		s.loginByPair.Hit(pairKey)
+		s.loginByEmail.Hit(emailKey)
+		if userID != 0 {
+			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "user_id", userID)
+		} else {
+			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "email_hash", emailHash(emailKey))
+		}
+	}
+	// Every refusal happens before any hash.
+	if ok, _ := s.loginByAddr.Allow(addr); !ok {
+		throttled()
+		return
+	}
+	if ok, _ := s.loginByPair.Allow(pairKey); !ok {
+		throttled()
 		return
 	}
 	// Over-long passwords fail like any other wrong one, before any lookup,
 	// so they cannot tell known addresses from unknown ones.
 	if len(r.FormValue("password")) > 256 {
-		s.limiter.Hit(key)
+		failed(0)
 		fail(http.StatusUnauthorized, msgBadLogin)
 		return
 	}
@@ -85,7 +163,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	// response and its timing do not reveal which addresses have accounts.
 	var u store.User
 	var phc string
-	email, err := store.NormalizeEmail(d.Email)
+	err := emailErr
 	if err == nil {
 		u, phc, err = s.sys.UserByEmail(ctx, email)
 	}
@@ -93,6 +171,15 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrInvalidEmail) {
 		s.fail(w, err)
 		return
+	}
+	// A slowed email lets one attempt through per loginSlowWindow, except
+	// from a browser that has signed in as that user before. The slowdown
+	// itself is keyed by the email text alone.
+	if ok, _ := s.loginByEmail.Allow(emailKey); !ok && !(known && s.deviceKnown(r, u.ID)) {
+		if ok, _ := s.loginSlow.Take(emailKey); !ok {
+			throttled()
+			return
+		}
 	}
 	var ok bool
 	if known {
@@ -109,12 +196,16 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !known || !ok {
-		s.limiter.Hit(key)
+		if known {
+			failed(u.ID)
+		} else {
+			failed(0)
+		}
 		fail(http.StatusUnauthorized, msgBadLogin)
 		return
 	}
 	if u.DisabledAt != nil || u.VerifiedAt == nil {
-		s.limiter.Hit(key)
+		failed(u.ID)
 		if u.DisabledAt != nil {
 			fail(http.StatusForbidden, msgDisabled)
 		} else {
@@ -134,6 +225,8 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, r, raw)
+	s.setDeviceCookie(w, r, u.ID)
+	s.logger.Info("sign-in ok", "event", "login_ok", "user_id", u.ID, "ip", addr)
 	http.Redirect(w, r, d.Next, http.StatusSeeOther)
 }
 

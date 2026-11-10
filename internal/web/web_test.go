@@ -23,15 +23,16 @@ import (
 )
 
 type env struct {
-	ts    *httptest.Server
-	srv   *Server
-	st    *store.Store
-	mon   *monitor.Monitor
-	cfg   *config.Config
-	clock time.Time
-	hash  *password.Hasher
-	op    *http.Client // signed in as the operator
-	opWS  *store.WS
+	ts     *httptest.Server
+	srv    *Server
+	st     *store.Store
+	mon    *monitor.Monitor
+	cfg    *config.Config
+	clock  time.Time
+	hash   *password.Hasher
+	op     *http.Client // signed in as the operator
+	opWS   *store.WS
+	dbPath string
 }
 
 const (
@@ -41,14 +42,21 @@ const (
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	return newEnvWith(t, password.New(password.Params{Memory: 64, Time: 1, Threads: 1}))
+}
+
+// newEnvWith is newEnv with a caller-supplied hasher.
+func newEnvWith(t *testing.T, hasher *password.Hasher) *env {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg, _ := config.Parse([]byte(`{}`))
 	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
-		hash: password.New(password.Params{Memory: 64, Time: 1, Threads: 1})}
+		hash: hasher, dbPath: dbPath}
 	now := func() time.Time { return e.clock }
 	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
 		return notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}}, nil
@@ -639,8 +647,8 @@ func TestClientKeyTrustProxy(t *testing.T) {
 	}
 	for xff, want := range map[string]string{
 		"6.6.6.6, 203.0.113.9:51234": "203.0.113.9",
-		"6.6.6.6, [2001:db8::7]:443": "2001:db8::7",
-		"6.6.6.6, 2001:db8::8":       "2001:db8::8",
+		"6.6.6.6, [2001:db8::7]:443": "2001:db8::/64",
+		"6.6.6.6, 2001:db8::8":       "2001:db8::/64",
 		"6.6.6.6,203.0.113.10":       "203.0.113.10",
 	} {
 		r.Header.Set("X-Forwarded-For", xff)
@@ -1029,5 +1037,24 @@ func TestPlainCookieIgnoredOverHTTPS(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("__Host- cookie: %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestClientKeyIPv6Grouping(t *testing.T) {
+	key := func(xff string) string {
+		r := httptest.NewRequest(http.MethodPost, "/login", nil)
+		r.RemoteAddr = "10.0.0.1:4444"
+		r.Header.Set("X-Forwarded-For", xff)
+		return clientKey(r, 1)
+	}
+	a, b := key("2001:db8::1"), key("2001:db8::ffff")
+	if a != b || a != "2001:db8::/64" {
+		t.Errorf("same /64 should share a key: %q %q", a, b)
+	}
+	if c := key("2001:db8:0:1::1"); c == a {
+		t.Errorf("different /64 must differ: %q", c)
+	}
+	if got := key("203.0.113.9"); got != "203.0.113.9" {
+		t.Errorf("IPv4 unchanged, got %q", got)
 	}
 }
