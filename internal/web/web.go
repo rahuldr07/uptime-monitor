@@ -137,47 +137,6 @@ func New(o Options) (*Server, error) {
 // Handler returns the root handler.
 func (s *Server) Handler() http.Handler { return s.securityHeaders(s.mux) }
 
-func (s *Server) routes() {
-	m := http.NewServeMux()
-	static, _ := fs.Sub(staticFS, "static")
-	m.Handle("GET /static/", http.StripPrefix("/static/", cacheControl(http.FileServer(http.FS(static)))))
-	m.HandleFunc("GET /healthz", s.healthz)
-	m.HandleFunc("GET /status", s.statusPage)
-	m.HandleFunc("GET /login", s.loginPage)
-	m.HandleFunc("POST /login", sameOrigin(s.loginPost))
-	m.HandleFunc("POST /logout", sameOrigin(s.logout))
-
-	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.requireAdmin(h) }
-	post := func(h http.HandlerFunc) http.HandlerFunc { return sameOrigin(s.requireAdmin(h)) }
-	m.HandleFunc("GET /{$}", admin(s.overview))
-	m.HandleFunc("GET /events", admin(s.events))
-	m.HandleFunc("GET /targets", admin(s.monitorsPage))
-	m.HandleFunc("POST /targets", post(s.targetCreate))
-	m.HandleFunc("POST /targets/test", post(s.targetTest))
-	m.HandleFunc("GET /targets/{id}", admin(s.targetPage))
-	m.HandleFunc("POST /targets/{id}", post(s.targetUpdate))
-	m.HandleFunc("POST /targets/{id}/delete", post(s.targetDelete))
-	m.HandleFunc("POST /targets/{id}/pause", post(s.targetPause))
-	m.HandleFunc("POST /targets/{id}/mute", post(s.targetMute))
-	m.HandleFunc("POST /targets/{id}/check", post(s.targetCheck))
-	m.HandleFunc("GET /incidents", admin(s.incidentsPage))
-	m.HandleFunc("POST /incidents/{id}/ack", post(s.incidentAck))
-	m.HandleFunc("POST /incidents/{id}/note", post(s.incidentNote))
-	m.HandleFunc("GET /alerts", admin(s.alertsPage))
-	m.HandleFunc("POST /alerts", post(s.alertsSave))
-	m.HandleFunc("POST /alerts/test", post(s.alertsTest))
-	m.HandleFunc("POST /status/settings", post(s.statusSettings))
-	m.HandleFunc("GET /maintenance", admin(s.maintenancePage))
-	m.HandleFunc("POST /maintenance", post(s.maintenanceCreate))
-	m.HandleFunc("POST /maintenance/{id}/end", post(s.maintenanceEnd))
-	m.HandleFunc("POST /maintenance/{id}/delete", post(s.maintenanceDelete))
-	m.HandleFunc("GET /api/maintenance", admin(s.apiMaintenance))
-	m.HandleFunc("GET /api/status", admin(s.apiStatus))
-	m.HandleFunc("GET /api/targets/{id}/checks", admin(s.apiChecks))
-	m.HandleFunc("GET /api/incidents", admin(s.apiIncidents))
-	s.mux = m
-}
-
 // healthz reports ok only when the database answers, so an orchestrator
 // restarts the process if storage is wedged.
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
