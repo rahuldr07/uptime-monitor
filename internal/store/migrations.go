@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -81,9 +82,64 @@ INSERT INTO daily (target_id, day, total, ok, lat_sum)
 	FROM checks WHERE maint = 0 GROUP BY target_id, checked_at / 86400000;
 `
 
-// migrate adds columns and tables introduced after the first release. Each
-// step checks the current schema first, so it is safe to run on every start.
-func migrate(db *sql.DB) error {
+// querier is satisfied by *sql.DB and *sql.Tx. The store uses a single
+// connection, so code running inside a transaction must query through the
+// transaction, never the DB.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+var (
+	_ querier = (*sql.DB)(nil)
+	_ querier = (*sql.Tx)(nil)
+)
+
+// steps are the numbered schema migrations; step N brings PRAGMA user_version
+// to N. Append new steps, never edit existing ones.
+var steps = []func(context.Context, *sql.Tx) error{v1}
+
+// migrate runs every step above the database's user_version, each in its own
+// transaction together with the version bump.
+func migrate(ctx context.Context, db *sql.DB) error {
+	var cur int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&cur); err != nil {
+		return err
+	}
+	if cur > len(steps) {
+		return fmt.Errorf("database schema version %d is newer than this build supports (%d); use a newer uptime-monitor", cur, len(steps))
+	}
+	for v := cur + 1; v <= len(steps); v++ {
+		if err := runStep(ctx, db, v); err != nil {
+			return fmt.Errorf("migration %d: %w", v, err)
+		}
+	}
+	return nil
+}
+
+func runStep(ctx context.Context, db *sql.DB, v int) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := steps[v-1](ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", v)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// v1 is the schema of the first numbered release: the base tables plus the
+// columns and the daily rollup table added after the very first release. Each
+// part checks the current schema first, so it also upgrades older databases.
+func v1(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("init schema: %w", err)
+	}
 	adds := []struct{ table, col, def string }{
 		{"targets", "grp", "TEXT NOT NULL DEFAULT ''"},
 		{"targets", "muted", "INTEGER NOT NULL DEFAULT 0"},
@@ -92,45 +148,37 @@ func migrate(db *sql.DB) error {
 		{"checks", "maint", "INTEGER NOT NULL DEFAULT 0"},
 	}
 	for _, a := range adds {
-		has, err := hasColumn(db, a.table, a.col)
+		has, err := hasColumn(ctx, tx, a.table, a.col)
 		if err != nil {
 			return err
 		}
 		if has {
 			continue
 		}
-		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", a.table, a.col, a.def)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", a.table, a.col, a.def)); err != nil {
 			return err
 		}
 	}
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'daily'`).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'daily'`).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
-		// Create and backfill in one transaction so a crash cannot leave an
+		// Create and backfill in the same transaction so a crash cannot leave an
 		// empty rollup table that would never be backfilled. On a large
 		// database this takes a while before the server starts listening.
 		slog.Info("building daily uptime rollups from existing checks (one-time upgrade)")
 		start := time.Now()
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if _, err := tx.Exec(dailySchema); err != nil {
+		if _, err := tx.ExecContext(ctx, dailySchema); err != nil {
 			return fmt.Errorf("create daily rollups: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 		slog.Info("daily uptime rollups built", "took", time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
 
-func hasColumn(db *sql.DB, table, col string) (bool, error) {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+func hasColumn(ctx context.Context, q querier, table, col string) (bool, error) {
+	rows, err := q.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
 		return false, err
 	}

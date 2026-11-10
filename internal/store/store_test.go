@@ -303,6 +303,9 @@ func TestRollupBackfillAndPermissions(t *testing.T) {
 	if _, err := s.db.Exec(`DROP TABLE daily`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 0`); err != nil {
+		t.Fatal(err)
+	}
 	s.Close()
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
