@@ -46,7 +46,7 @@ Shipped in commits `ed48c6c`..`a2a3380`. Details in
 ### D-004: Deliver alert channels in parallel
 - **Status:** Accepted
 - **Decision:** Each channel is delivered in its own goroutine, with a
-  per-attempt timeout and three retries.
+  per-attempt timeout and 3 attempts in total.
 - **Why:** One slow or hung channel delayed every other channel.
 
 ### D-005: Strict browser security headers; HSTS left to the proxy
@@ -420,3 +420,28 @@ Full design:
   - The `password_check_throttled` event (the per-user current-password limit) is logged but is not in §12.
   - Session revocation on a password change or reset is covered by the `password_changed` and `password_reset` events; no separate `sessions_revoked` event is logged for those.
 - **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.
+
+### D-125: M1e scope and rulings
+- **Status:** Accepted (amends the M1e row of the spec's delivery table)
+- **Decision:**
+  - `signup: open` is rejected until M2, which adds email. `signup.go` tests `Signup != "invite"`; change it when open mode lands.
+  - The operator workspace is `store.OperatorWorkspaceID` = 1. Operator exemptions (limits, rate limits, private targets under `operator`) follow it.
+  - The status page cache is keyed by workspace ID, so changing a slug does not strand cached pages.
+  - The secret-destination rule applies to every workspace: a saved secret is dropped when its destination changes.
+  - The invite management UI arrives in M3. M1e has the `-invite` flag only.
+  - The instance-wide sign-up budget is charged only after a valid invite, so invalid forms cannot exhaust it. With sign-up closed and no invite, `/signup` returns 404 before any validation. The invite is looked up once, after the address limit.
+  - Slug derivation tries `-2` to `-20`, then a random 4-character suffix, then fails.
+  - `TargetsInOtherWorkspaces` leaves out operator-owned workspaces, returns only ID, URL and interval, and feeds the per-host rate check.
+  - The workspace cap is counted inside the account-creation transaction and refused with `ErrWorkspaceCap`. The monitor cap is checked inside the create transaction.
+  - An edit, pause or unmute restarts the runner but does not probe straight away when the last check is younger than its interval. This also holds when the URL, status or keyword changed; the next scheduled probe picks it up.
+  - Account deletion:
+    - A precheck refuses the last operator before any session is revoked or runner stopped. `DeleteAccount` repeats the check and stays the authority.
+    - Workspace 1 is never deleted, even if its only member is.
+    - After the commit the workspace is tombstoned (`Monitor.ForgetWorkspace`) and its runners removed again, so a `Reload` in flight cannot leave an orphan runner.
+    - `Reload` cancels a runner it replaces.
+    - If the delete fails, the runners are reloaded.
+  - Check now sets a per-target busy flag. A check that is running or queued is not started again; the request answers "A check is already running." instead of probing twice.
+  - The `limits.host_requests_per_second` value must be positive. `limits.min_interval` of `0s` means the default.
+  - Alerts make 3 attempts in total (D-004 said "three retries").
+  - The isolation suite seeds workspaces deterministically and uses longer wall-clock deadlines, because short ones flaked under `-race`.
+- **Why:** These rulings settle points the spec left open or got wrong while M1e was built. Each keeps one workspace from reaching, starving or outliving another.

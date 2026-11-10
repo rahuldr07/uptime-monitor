@@ -20,12 +20,13 @@ build step for the frontend.
 - A target is marked down after N consecutive failures (default 2) and up on
   the first success, so a single blip does not page you
 - Incidents with start, end, duration, cause and which channels were alerted
-- Alerts retried three times with backoff; every attempt is logged
+- Alerts are tried 3 times in total, with backoff; every attempt is logged
 - Dashboard with heartbeat bars, 24h/7d uptime and live refresh
 - Target detail with latency chart (24h/7d/30d), incidents and recent checks
 - Targets and alert channels editable in the browser, no restart needed
 - Public status page with 90-day history
 - Accounts: sign in with email and password, database-backed sessions, rate-limited sign-in
+- Several workspaces on one instance, joined by invitation, each with its own monitors, alert channels and status page, and per-workspace limits
 - JSON API for scripting
 - State is restored on restart, so an ongoing incident is not re-alerted
 
@@ -86,8 +87,106 @@ slowdown can then delay the owner's own sign-in. Recover with
 `uptime-monitor -reset-password <email>`: its link signs you in without going
 through the sign-in limits.
 
+### Sign-up and invites
+
+`signup` sets who may create an account. Both modes need an https `base_url`
+(http is allowed only for localhost). Each new account gets its own workspace.
+
+| `signup` | `/signup` without an invite | With a valid invite |
+|---|---|---|
+| `closed` (default) | 404 | works |
+| `invite` | explains that sign-up is by invitation | works |
+
+`open` is rejected at startup until a later release adds email.
+
+Create an invitation after setup with `uptime-monitor -invite` (any holder of
+the link may sign up) or `uptime-monitor -invite person@example.com` (the
+sign-up must use that address). It prints a link that works once and expires
+after 7 days. The email, if any, must come last, after any other flags. Invite
+management in the UI arrives in a later release.
+
+Sign-ups are limited to 5 per hour per client address, and
+`limits.signups_per_hour` across the instance (see below). Only a request with
+a valid invite counts against the instance-wide limit.
+
+### Limits
+
+Per-workspace limits apply to every workspace except the operator's, which is
+exempt from the monitor, interval, host-rate and rate limits below. The
+`limits` config section:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_monitors` | `20` | monitors per workspace; `0` is unlimited |
+| `min_interval` | `30s` | shortest check interval a workspace may set (at least `1s`); `0s` or unset means the default |
+| `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
+| `signups_per_hour` | `100` | sign-ups across the instance per hour; `0` is treated as `1` |
+| `host_requests_per_second` | `1` | combined check rate to one host from all non-operator workspaces (must be positive). A monitor that would exceed it is refused with a hint to use a longer interval |
+
+Fixed limits for non-operator workspaces (in memory, reset on restart):
+
+| What | Limit |
+|---|---|
+| Creating monitors | 30 per hour per workspace |
+| Check now | 1 per 10 seconds per monitor, and 30 per minute per workspace. A check that is already running or queued is not started again |
+| Test URL | 10 per minute per workspace |
+| Alert channel tests | 5 per minute per workspace |
+| Sign-ups | 5 per hour per client address |
+
+An edit, pause or unmute restarts the monitor but does not probe straight
+away when its last check is still fresh (younger than its interval).
+
+### Alert channels in other workspaces
+
+The operator's workspace is trusted. Every other workspace is restricted:
+
+- Telegram bot tokens must look like a bot token (`123456:ABC...`).
+- Email must use port 465 or 587, a username and TLS, and list at most 5 recipients.
+- Webhooks (Slack, Telegram) do not follow redirects.
+- Internal addresses are blocked unless `allow_private_targets` says otherwise.
+
+In every workspace, a saved secret is dropped when its destination changes
+(the Telegram chat ID, or the SMTP host, port or username), so you must enter
+it again.
+
+### Deleting an account
+
+`/account` lets a user delete their account after confirming their password.
+Operators don't see the form, and the server refuses it anyway for the last
+operator. The user, their sessions and the workspace they alone belong to (monitors,
+checks, incidents, alert settings and status page) are removed, and its
+monitors stop. The last operator cannot delete their account, and workspace 1
+is never deleted.
+
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
-delete those files. Account deletion arrives in a later release.
+delete those files.
+
+### Status page address
+
+The owner of a workspace can change the status page address (3 to 40
+lowercase letters, digits and hyphens, not starting or ending with a hyphen)
+and the workspace name on the status page settings. The old address stops
+working at once. New workspaces get an address derived from their name; on a
+collision a number is appended, and after repeated collisions a random suffix.
+
+### User-Agent
+
+Probes send `User-Agent: uptime-monitor/<version>`, followed by
+` (+<base_url>)` when `base_url` is set, so site owners can see who is
+checking them.
+
+### Startup errors on public instances
+
+The server refuses to start when:
+
+- `signup` is `open` (not supported yet), or `mail` or `limits.mail_per_hour` is set
+- `signup` is not `closed` and `base_url` is empty
+- `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
+- `base_url` is not an absolute http(s) URL with no path, userinfo or query
+- a limit is negative, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
+
+It logs a WARN when `allow_private_targets` is `all` while sign-up is not
+closed: every invited user could then reach your internal network.
 
 With Docker:
 
@@ -177,10 +276,11 @@ From a release before the production hardening:
 | `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
 | `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup and reset links; an https value makes session cookies always Secure |
-| `signup` | `closed` | only `closed` is accepted for now. The `mail` and `limits` keys are rejected until later releases |
+| `signup` | `closed` | `closed` or `invite`; see Sign-up and invites. `open` and the `mail` key are rejected until a later release |
+| `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
-| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until other workspaces exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
+| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. `operator` means workspace 1 only; `all` is unsafe on an instance others can join. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
@@ -201,6 +301,7 @@ Command-line flags:
 | `-log-format text\|json` | log output format (default `text`; the Docker image uses `json`) |
 | `-backup path` | write a consistent copy of the database to `path` (which must not exist) and exit; safe while the monitor is running; fails if the configured database does not exist |
 | `-setup-link` | during first-run setup, print a fresh setup link (replacing the previous one) and exit; fails once setup is complete |
+| `-invite [email]` | print a one-time sign-up link, valid for 7 days, optionally bound to that email (which must come last), and exit; fails before setup is complete |
 | `-reset-password email` | print a password reset link, valid for 1 hour, for that user and exit; fails for unknown and disabled users |
 | `-version` | print the version and exit |
 
