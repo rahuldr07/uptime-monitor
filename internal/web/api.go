@@ -29,8 +29,8 @@ type apiTarget struct {
 	Maintenance string     `json:"maintenance,omitempty"` // title of the window covering the target now
 }
 
-func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	views, err := s.views(r.Context(), ws, viewOpts{})
 	if err != nil {
 		s.fail(w, err)
@@ -61,8 +61,8 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"generated_at": s.now().UTC(), "targets": out})
 }
 
-func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
@@ -91,8 +91,8 @@ func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"target": t.Name, "checks": out})
 }
 
-func (s *Server) apiIncidents(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) apiIncidents(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	var f store.IncidentFilter
 	f.TargetID, _ = strconv.ParseInt(r.URL.Query().Get("target"), 10, 64)
 	f.OngoingOnly = r.URL.Query().Get("ongoing") == "1"

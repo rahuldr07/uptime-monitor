@@ -18,6 +18,7 @@ import (
 	"uptimemon/internal/config"
 	"uptimemon/internal/monitor"
 	"uptimemon/internal/notify"
+	"uptimemon/internal/password"
 	"uptimemon/internal/store"
 )
 
@@ -28,9 +29,17 @@ type env struct {
 	mon   *monitor.Monitor
 	cfg   *config.Config
 	clock time.Time
+	hash  *password.Hasher
+	op    *http.Client // signed in as the operator
+	opWS  *store.WS
 }
 
-func newEnv(t *testing.T, password string) *env {
+const (
+	opEmail    = "op@example.com"
+	testSecret = "correct horse battery"
+)
+
+func newEnv(t *testing.T) *env {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -38,8 +47,8 @@ func newEnv(t *testing.T, password string) *env {
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg, _ := config.Parse([]byte(`{}`))
-	cfg.AdminPassword = password
-	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
+	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
+		hash: password.New(password.Params{Memory: 64, Time: 1, Threads: 1})}
 	now := func() time.Time { return e.clock }
 	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
 		return notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}}, nil
@@ -50,14 +59,67 @@ func newEnv(t *testing.T, password string) *env {
 	if err := e.mon.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Options{Config: cfg, Store: st, Monitor: e.mon, Logger: slog.Default(), Now: now})
+	s, err := New(Options{Config: cfg, Store: st, Monitor: e.mon, Logger: slog.Default(), Now: now, Hasher: e.hash})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.srv = s
 	e.ts = httptest.NewServer(s.Handler())
 	t.Cleanup(e.ts.Close)
+	phc, err := e.hash.Hash(ctx, testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := st.CreateToken(ctx, store.TokenSetup, 0, time.Hour, now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CompleteSetup(ctx, store.SetupInput{Email: opEmail, PasswordHash: phc,
+		WorkspaceName: "Default", SetupToken: tok, Now: now()}); err != nil {
+		t.Fatal(err)
+	}
+	e.opWS = st.Workspace(1)
+	e.op = e.signIn(t, opEmail, testSecret)
 	return e
+}
+
+// signIn returns a client signed in through a real POST /login.
+func (e *env) signIn(t *testing.T, email, pw string) *http.Client {
+	t.Helper()
+	c := e.client(t)
+	resp, body := e.post(t, c, "/login", url.Values{"email": {email}, "password": {pw}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign in %s: %d %s", email, resp.StatusCode, body)
+	}
+	return c
+}
+
+// authorize copies the operator's session cookies onto req, for tests that
+// need a client without a cookie jar (streaming responses).
+func (e *env) authorize(req *http.Request) {
+	for _, ck := range e.op.Jar.Cookies(req.URL) {
+		req.AddCookie(ck)
+	}
+}
+
+// account creates a non-operator account with a workspace of its own and
+// returns a signed-in client.
+func (e *env) account(t *testing.T, email string) (*http.Client, *store.WS) {
+	t.Helper()
+	phc, err := e.hash.Hash(context.Background(), testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := strings.SplitN(email, "@", 2)[0]
+	u, ws, err := e.st.CreateAccount(context.Background(), store.AccountInput{Email: email, PasswordHash: phc,
+		WorkspaceName: local, Slug: local, Now: e.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.MarkVerified(context.Background(), u.ID, e.clock); err != nil {
+		t.Fatal(err)
+	}
+	return e.signIn(t, email, testSecret), ws
 }
 
 func (e *env) client(t *testing.T) *http.Client {
@@ -87,11 +149,20 @@ func (e *env) post(t *testing.T, c *http.Client, path string, form url.Values) (
 	return resp, string(b)
 }
 
-func TestAuthFlow(t *testing.T) {
-	e := newEnv(t, "secret")
+func cookieNamed(resp *http.Response, name string) *http.Cookie {
+	for _, c := range resp.Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestSignInFlow(t *testing.T) {
+	e := newEnv(t)
 	c := e.client(t)
 	resp, _ := e.get(t, c, "/")
-	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login?next=%2F" {
 		t.Fatalf("anon dashboard should redirect to login: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if resp, _ := e.get(t, c, "/api/status"); resp.StatusCode != http.StatusUnauthorized {
@@ -100,33 +171,105 @@ func TestAuthFlow(t *testing.T) {
 	if resp, body := e.get(t, c, "/s/default"); resp.StatusCode != 200 || !strings.Contains(body, "No services configured yet") {
 		t.Fatalf("public status page: %d", resp.StatusCode)
 	}
-	if resp, body := e.post(t, c, "/login", url.Values{"password": {"wrong"}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Wrong password") {
+	if resp, body := e.post(t, c, "/login", url.Values{"email": {opEmail}, "password": {"wrong"}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, msgBadLogin) {
 		t.Fatalf("wrong password: %d", resp.StatusCode)
 	}
-	resp, _ = e.post(t, c, "/login", url.Values{"password": {"secret"}, "next": {"//evil.com"}})
+	if resp, body := e.post(t, c, "/login", url.Values{"email": {"nobody@example.com"}, "password": {testSecret}}); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, msgBadLogin) {
+		t.Fatalf("unknown email: %d", resp.StatusCode)
+	}
+	resp, _ = e.post(t, c, "/login", url.Values{"email": {" OP@Example.com "}, "password": {testSecret}, "next": {"//evil.com"}})
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("login redirect should be sanitised: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if resp, body := e.get(t, c, "/"); resp.StatusCode != 200 || !strings.Contains(body, "Welcome") {
+	ck := cookieNamed(resp, "uptime_session")
+	if ck == nil || !ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie = %+v", ck)
+	}
+	if resp, body := e.get(t, c, "/"); resp.StatusCode != 200 || !strings.Contains(body, "Welcome") || !strings.Contains(body, opEmail) {
 		t.Fatalf("overview after login: %d", resp.StatusCode)
 	}
-	for i := 0; i < 6; i++ {
-		resp, _ = e.post(t, c, "/login", url.Values{"password": {"x"}})
+	resp, _ = e.post(t, c, "/logout", nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Fatalf("logout: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("expected rate limit, got %d", resp.StatusCode)
-	}
-	if resp, _ := e.post(t, c, "/logout", nil); resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("logout: %d", resp.StatusCode)
+	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/api/status", nil)
+	req.AddCookie(ck)
+	if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old cookie should be revoked after logout, got %d", r.StatusCode)
 	}
 	if resp, _ := e.get(t, c, "/"); resp.StatusCode != http.StatusSeeOther {
 		t.Fatal("should be logged out")
 	}
+	// Repeated failures are throttled.
+	for i := 0; i < 6; i++ {
+		resp, _ = e.post(t, c, "/login", url.Values{"email": {opEmail}, "password": {"x"}})
+	}
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected rate limit, got %d", resp.StatusCode)
+	}
+}
+
+func TestSignInReplacesIncomingSession(t *testing.T) {
+	e := newEnv(t)
+	t0 := e.clock
+	resp, _ := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {testSecret}})
+	old := cookieNamed(resp, "uptime_session")
+	if old == nil {
+		t.Fatal("no session cookie")
+	}
+	if _, err := e.st.SessionAuth(context.Background(), old.Value, t0); err != nil {
+		t.Fatalf("session should be live: %v", err)
+	}
+	// The session goes idle, so the guest wrapper lets the stale tab sign in
+	// again; the dead row it names must be removed, not left behind.
+	e.clock = e.clock.Add(store.SessionIdle + time.Hour)
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("email="+opEmail+"&password="+url.QueryEscape(testSecret)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(old)
+	resp2, err := e.client(t).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	fresh := cookieNamed(resp2, "uptime_session")
+	if fresh == nil || fresh.Value == old.Value {
+		t.Fatalf("expected a new session token, got %+v", fresh)
+	}
+	if _, err := e.st.SessionAuth(context.Background(), old.Value, t0); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("incoming session should be deleted, got %v", err)
+	}
+	if _, err := e.st.SessionAuth(context.Background(), fresh.Value, e.clock); err != nil {
+		t.Fatalf("new session should be live: %v", err)
+	}
+}
+
+func TestHostCookieOverHTTPS(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("email="+opEmail+"&password="+url.QueryEscape(testSecret)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := e.client(t).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := cookieNamed(resp, "__Host-uptime_session")
+	if resp.StatusCode != http.StatusSeeOther || ck == nil || !ck.Secure || ck.Path != "/" || ck.Domain != "" {
+		t.Fatalf("status %d cookie %+v", resp.StatusCode, ck)
+	}
+}
+
+func TestSignedInUserRedirectedFromLogin(t *testing.T) {
+	e := newEnv(t)
+	resp, _ := e.get(t, e.op, "/login")
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
+		t.Fatalf("GET /login signed in: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
 }
 
 func TestTargetLifecycleAndPages(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
 	defer up.Close()
 
@@ -199,8 +342,8 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 }
 
 func TestNewEndpoints(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("fine")) }))
 	defer up.Close()
 
@@ -295,6 +438,7 @@ func TestNewEndpoints(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, e.ts.URL+"/events", nil)
+	e.authorize(req)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -319,19 +463,19 @@ func TestNewEndpoints(t *testing.T) {
 }
 
 func TestAlertsPageCorruptNotify(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	if err := e.st.Workspace(1).SetSetting(context.Background(), "notify", "{bad"); err != nil {
 		t.Fatal(err)
 	}
-	resp, body := e.get(t, e.client(t), "/alerts")
+	resp, body := e.get(t, e.op, "/alerts")
 	if resp.StatusCode != 200 || !strings.Contains(body, "could not be read") {
 		t.Fatalf("status %d, body lacks the error banner", resp.StatusCode)
 	}
 }
 
 func TestAlertsSettings(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	if resp, body := e.get(t, c, "/alerts"); resp.StatusCode != 200 || !strings.Contains(body, "Telegram") {
 		t.Fatal("alerts page")
 	}
@@ -433,8 +577,8 @@ func TestSafeNextAndCSRF(t *testing.T) {
 	if safeNext("/targets/1?range=7d") != "/targets/1?range=7d" {
 		t.Error("safeNext should keep a local path")
 	}
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/targets", strings.NewReader("name=x&url=https://x"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://evil.example")
@@ -456,25 +600,23 @@ func TestSafeNextAndCSRF(t *testing.T) {
 }
 
 func TestLogoutRevokesSession(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
-	resp, _ := e.post(t, c, "/login", url.Values{"password": {"pw"}})
-	var cookie string
-	for _, ck := range resp.Cookies() {
-		if ck.Name == sessionCookie {
-			cookie = ck.Value
-		}
-	}
-	if cookie == "" {
+	resp, _ := e.post(t, c, "/login", url.Values{"email": {opEmail}, "password": {testSecret}})
+	cookie := cookieNamed(resp, sessionCookie)
+	if cookie == nil {
 		t.Fatal("no session cookie issued")
 	}
 	e.post(t, c, "/logout", nil)
 	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/api/status", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	req.AddCookie(cookie)
 	if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("old cookie should be revoked after logout, got %d", r.StatusCode)
 	}
-	if r, _ := e.post(t, c, "/login", url.Values{"password": {"pw"}}); r.StatusCode != http.StatusSeeOther {
+	if _, err := e.st.SessionAuth(context.Background(), cookie.Value, e.clock); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("session row should be gone, got %v", err)
+	}
+	if r, _ := e.post(t, c, "/login", url.Values{"email": {opEmail}, "password": {testSecret}}); r.StatusCode != http.StatusSeeOther {
 		t.Fatal("successful logins must not count toward the limiter")
 	}
 }
@@ -514,11 +656,11 @@ func TestClientKeyTrustProxy(t *testing.T) {
 }
 
 func TestLoginLimiterNotBypassedBySpoofedXFF(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	e.cfg.TrustProxy = true
 	var last int
 	for i := 0; i < 8; i++ {
-		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("password=wrong"))
+		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("email="+opEmail+"&password=wrong"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i)+", 9.9.9.9")
 		resp, err := e.client(t).Do(req)
@@ -533,7 +675,7 @@ func TestLoginLimiterNotBypassedBySpoofedXFF(t *testing.T) {
 }
 
 func TestReviewRegressions(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	// Programmatic requests get 401, not a redirect.
 	for _, h := range [][2]string{{"X-Partial", "1"}, {"Accept", "application/json"}, {"Accept", "text/event-stream"}} {
@@ -568,8 +710,8 @@ func TestReviewRegressions(t *testing.T) {
 }
 
 func TestNoteLengthByRunes(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	tg, _ := e.st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
 	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock, "x")
 	ok := strings.Repeat("é", 500) // 1000 bytes, 500 chars: allowed
@@ -585,8 +727,8 @@ func TestNoteLengthByRunes(t *testing.T) {
 }
 
 func TestMaintenanceWindows(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
 	defer up.Close()
 	resp, _ := e.post(t, c, "/targets", url.Values{"name": {"API"}, "url": {up.URL}, "interval": {"1h"}, "timeout": {"5s"}, "group": {"api"}})
@@ -676,7 +818,7 @@ func TestNewRequiresDependencies(t *testing.T) {
 }
 
 func TestLoadByID(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	s := e.srv
 	boom := errors.New("boom")
 	get := func(_ context.Context, id int64) (string, error) {
@@ -710,9 +852,9 @@ func TestLoadByID(t *testing.T) {
 }
 
 func TestPrivateTargetsBlockedWhenNone(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	e.cfg.AllowPrivateTargets = "none"
-	c := e.client(t)
+	c := e.op
 	const msg = "blocked: destination is an internal address"
 	resp, body := e.post(t, c, "/targets", url.Values{"name": {"x"}, "url": {"http://127.0.0.1:9/"}})
 	if resp.StatusCode != 422 || !strings.Contains(body, msg) {
@@ -739,10 +881,11 @@ func TestPrivateTargetsBlockedWhenNone(t *testing.T) {
 }
 
 func TestEventsFilteredByWorkspace(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.ts.URL+"/events", nil)
+	e.authorize(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -770,9 +913,9 @@ func TestEventsFilteredByWorkspace(t *testing.T) {
 }
 
 func TestAlertsNoConfigFallback(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	e.cfg.Notify = config.Notify{Slack: &config.Slack{WebhookURL: "https://hooks.example/x"}}
-	_, body := e.get(t, e.client(t), "/alerts")
+	_, body := e.get(t, e.op, "/alerts")
 	if strings.Contains(body, "hooks.example") {
 		t.Fatal("config webhook leaked into the alerts page")
 	}
@@ -781,7 +924,7 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 		t.Fatal("slack should show as not configured when nothing is stored")
 	}
 	// Saving a blank form must not copy the config webhook into the workspace.
-	c := e.client(t)
+	c := e.op
 	if resp, _ := e.post(t, c, "/alerts", url.Values{}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("blank alerts POST: %d", resp.StatusCode)
 	}
@@ -791,5 +934,48 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 	}
 	if n.Slack != nil && n.Slack.WebhookURL != "" {
 		t.Fatalf("config secret was inherited into the stored notify setting: %+v", n.Slack)
+	}
+}
+
+func TestWorkspaceIsolationBetweenAccounts(t *testing.T) {
+	e := newEnv(t)
+	tg, err := e.opWS.CreateTarget(context.Background(), store.Target{Name: "OpSecret", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mon.Reload(context.Background(), tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	bob, _ := e.account(t, "bob@example.com")
+	if _, body := e.get(t, e.op, "/api/status"); !strings.Contains(body, "OpSecret") {
+		t.Fatalf("operator should see own target: %s", body)
+	}
+	resp, body := e.get(t, bob, "/api/status")
+	if resp.StatusCode != 200 || strings.Contains(body, "OpSecret") {
+		t.Fatalf("account must see only its own workspace: %d %s", resp.StatusCode, body)
+	}
+	if _, body := e.get(t, bob, "/"); !strings.Contains(body, "bob@example.com") {
+		t.Fatal("footer should show the signed-in email")
+	}
+}
+
+func TestSetupGate(t *testing.T) {
+	e := newEnv(t)
+	e.srv.setupMode.Store(true)
+	c := e.client(t)
+	for _, p := range []string{"/", "/login", "/targets"} {
+		if resp, _ := e.get(t, c, p); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/setup" {
+			t.Errorf("GET %s in setup mode: %d %s", p, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+	for _, p := range []string{"/api/status", "/events"} {
+		if resp, _ := e.get(t, c, p); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("GET %s in setup mode: %d", p, resp.StatusCode)
+		}
+	}
+	for _, p := range []string{"/healthz", "/status", "/s/default", "/static/app.css"} {
+		if resp, _ := e.get(t, c, p); resp.StatusCode == http.StatusSeeOther || resp.StatusCode == http.StatusServiceUnavailable {
+			t.Errorf("GET %s should pass the gate: %d", p, resp.StatusCode)
+		}
 	}
 }

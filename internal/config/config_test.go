@@ -49,28 +49,6 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
-func TestCheckAuth(t *testing.T) {
-	cases := []struct {
-		listen, password string
-		insecure, ok     bool
-	}{
-		{":8080", "", false, false},
-		{"0.0.0.0:8080", "", false, false},
-		{"192.168.1.5:8080", "", false, false},
-		{":8080", "", true, true},
-		{":8080", "pw", false, true},
-		{"127.0.0.1:8080", "", false, true},
-		{"[::1]:8080", "", false, true},
-		{"localhost:8080", "", false, true},
-	}
-	for _, c := range cases {
-		cfg := &Config{Listen: c.listen, AdminPassword: c.password, InsecureNoAuth: c.insecure}
-		if err := cfg.CheckAuth(); (err == nil) != c.ok {
-			t.Errorf("listen=%q password=%q insecure=%v: got %v, want ok=%v", c.listen, c.password, c.insecure, err, c.ok)
-		}
-	}
-}
-
 func TestTargetNameControlChars(t *testing.T) {
 	if err := ValidateTarget("a\r\nBcc: x@y", "https://a", time.Minute, time.Second, 0); err == nil {
 		t.Fatal("control characters in a name should be rejected")

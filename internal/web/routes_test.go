@@ -12,49 +12,61 @@ func testRoutes(t *testing.T, e *env) []route {
 }
 
 func TestRouteTableIsComplete(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	routes := testRoutes(t, e)
 	if len(routes) != 33 {
 		t.Errorf("len = %d, want 33", len(routes))
 	}
 	seen := map[string]bool{}
-	public := map[string]bool{}
+	byClass := map[routeClass]map[string]bool{}
 	for _, r := range routes {
 		key := r.method + " " + r.pattern
 		if seen[key] {
 			t.Errorf("duplicate route %s", key)
 		}
 		seen[key] = true
-		if r.class != classPublic && r.class != classAdmin {
-			t.Errorf("%s: invalid class %d", key, r.class)
-		}
 		if r.method != "GET" && r.method != "POST" {
 			t.Errorf("%s: invalid method", key)
 		}
-		if r.handler == nil {
-			t.Errorf("%s: nil handler", key)
+		switch r.class {
+		case classPublic, classSetup, classGuest:
+			if r.handler == nil || r.authed != nil {
+				t.Errorf("%s: class %d needs handler only", key, r.class)
+			}
+		case classUser, classWorkspace:
+			if r.authed == nil || r.handler != nil {
+				t.Errorf("%s: class %d needs authed only", key, r.class)
+			}
+		default:
+			t.Errorf("%s: invalid class %d", key, r.class)
 		}
-		if r.class == classPublic {
-			public[key] = true
+		if byClass[r.class] == nil {
+			byClass[r.class] = map[string]bool{}
 		}
+		byClass[r.class][key] = true
 	}
-	want := []string{"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /login", "POST /login", "POST /logout"}
-	if len(public) != len(want) {
-		t.Errorf("public routes = %v, want %v", public, want)
-	}
-	for _, k := range want {
-		if !public[k] {
-			t.Errorf("%s is not public", k)
+	for class, want := range map[routeClass][]string{
+		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}"},
+		classGuest:  {"GET /login", "POST /login"},
+		classUser:   {"POST /logout"},
+	} {
+		if len(byClass[class]) != len(want) {
+			t.Errorf("class %d routes = %v, want %v", class, byClass[class], want)
+		}
+		for _, k := range want {
+			if !byClass[class][k] {
+				t.Errorf("%s is not class %d", k, class)
+			}
 		}
 	}
 }
 
 func TestRouteTableDefaultDeny(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	for _, r := range testRoutes(t, e) {
 		path := strings.ReplaceAll(strings.Replace(r.pattern, "/{$}", "/", 1), "{id}", "1")
-		if r.class == classAdmin {
+		if r.class == classWorkspace || r.class == classUser {
 			req, _ := http.NewRequest(r.method, e.ts.URL+path, nil)
 			if r.method == "POST" {
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

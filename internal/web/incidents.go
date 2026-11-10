@@ -19,9 +19,9 @@ type incidentsData struct {
 	Incidents []store.Incident
 }
 
-func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	d := incidentsData{base: s.base(r, ws, "incidents", "Incidents")}
+func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
+	d := incidentsData{base: s.base(r, a, "incidents", "Incidents")}
 	d.Filter.TargetID, _ = strconv.ParseInt(r.URL.Query().Get("target"), 10, 64)
 	d.Filter.OngoingOnly = r.URL.Query().Get("ongoing") == "1"
 	var err error
@@ -36,8 +36,8 @@ func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "incidents", d)
 }
 
-func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	in, ok := loadByID(s, w, r, ws.GetIncident)
 	if !ok {
 		return
@@ -53,8 +53,8 @@ func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, backTo(r, "/incidents"), "Acknowledged.")
 }
 
-func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	in, ok := loadByID(s, w, r, ws.GetIncident)
 	if !ok {
 		return

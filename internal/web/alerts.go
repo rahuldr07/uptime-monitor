@@ -38,19 +38,20 @@ func (s *Server) notifyConfig(ctx context.Context, ws *store.WS) config.Notify {
 	return n
 }
 
-func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	n, err := ws.Notify(r.Context())
 	errMsg := ""
 	if err != nil {
 		s.logger.Warn("read alert channels", "workspace", ws.ID(), "err", err)
 		errMsg = "Stored alert settings could not be read; saving this form will replace them."
 	}
-	s.renderAlerts(w, r, ws, http.StatusOK, n, errMsg)
+	s.renderAlerts(w, r, a, http.StatusOK, n, errMsg)
 }
 
-func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, ws *store.WS, code int, n config.Notify, errMsg string) {
-	d := alertsData{base: s.base(r, ws, "alerts", "Alert channels"), Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold,
+func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, a *authCtx, code int, n config.Notify, errMsg string) {
+	ws := a.WS
+	d := alertsData{base: s.base(r, a, "alerts", "Alert channels"), Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold,
 		Saved: map[string]bool{}, Stored: map[string]bool{}}
 	d.Error = errMsg
 	// Copy each channel so blanking secrets cannot touch shared config.
@@ -133,10 +134,11 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 }
 
 // saveNotify validates and persists settings, swapping the live notifiers.
-func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, ws *store.WS) (config.Notify, bool) {
+func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, a *authCtx) (config.Notify, bool) {
+	ws := a.WS
 	n := parseNotifyForm(r, s.notifyConfig(r.Context(), ws))
 	if err := config.ValidateNotify(&n); err != nil {
-		s.renderAlerts(w, r, ws, http.StatusUnprocessableEntity, n, err.Error())
+		s.renderAlerts(w, r, a, http.StatusUnprocessableEntity, n, err.Error())
 		return n, false
 	}
 	raw, _ := json.Marshal(n)
@@ -144,22 +146,21 @@ func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, ws *store.WS
 		s.fail(w, err)
 		return n, false
 	}
-	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(ws.ID() == pinnedWorkspace)))
+	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(a.IsOperator)))
 	return n, true
 }
 
-func (s *Server) alertsSave(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	if _, ok := s.saveNotify(w, r, ws); !ok {
+func (s *Server) alertsSave(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	if _, ok := s.saveNotify(w, r, a); !ok {
 		return
 	}
 	redirect(w, r, "/alerts", "Alert channels saved.")
 }
 
 // alertsTest saves the form first, then sends a test through one channel.
-func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	n, ok := s.saveNotify(w, r, ws)
+func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
+	n, ok := s.saveNotify(w, r, a)
 	if !ok {
 		return
 	}
@@ -168,7 +169,7 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.mon.SendTest(ctx, ws.ID(), ch); err != nil {
 		s.logger.Warn("test alert failed", "channel", ch, "err", err)
-		s.renderAlerts(w, r, ws, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
+		s.renderAlerts(w, r, a, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
 		return
 	}
 	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")

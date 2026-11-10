@@ -81,7 +81,7 @@ type Config struct {
 	Listen              string   `json:"listen"`
 	DB                  string   `json:"db"`
 	AdminPassword       string   `json:"admin_password"`        // empty disables login (local use only)
-	InsecureNoAuth      bool     `json:"insecure_no_auth"`      // allow an empty password on a non-loopback address
+	InsecureNoAuth      bool     `json:"insecure_no_auth"`      // no effect: sign-in is always required (main logs a warning)
 	TrustProxy          bool     `json:"trust_proxy"`           // trust X-Forwarded-For/-Proto from a reverse proxy
 	TrustedProxies      int      `json:"trusted_proxies"`       // proxies in front of the server (default 1 with trust_proxy)
 	AllowPrivateTargets string   `json:"allow_private_targets"` // none, operator or all: who may reach internal addresses (default operator)
@@ -118,18 +118,6 @@ func Parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
-}
-
-// CheckAuth refuses an empty admin password when the server listens on a
-// non-loopback address, because the dashboard can edit monitors and probe
-// arbitrary URLs. A typo or an unset ${UPTIME_ADMIN_PASSWORD} must not
-// silently expose it. Set insecure_no_auth to override.
-func (c *Config) CheckAuth() error {
-	if c.AdminPassword != "" || c.InsecureNoAuth || isLoopback(c.Listen) {
-		return nil
-	}
-	return fmt.Errorf("admin_password is empty but listen %q is reachable from other machines: "+
-		"set admin_password (or UPTIME_ADMIN_PASSWORD), listen on 127.0.0.1, or set \"insecure_no_auth\": true", c.Listen)
 }
 
 // ProxyHops is how many reverse proxies' X-Forwarded-For entries to trust,
@@ -176,18 +164,6 @@ func (c *Config) LinkBase() string {
 	}
 	host = strings.ReplaceAll(host, "%", "%25") // IPv6 zone, as a URL needs it
 	return "http://" + net.JoinHostPort(host, port)
-}
-
-func isLoopback(listen string) bool {
-	host, _, err := net.SplitHostPort(listen)
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // ValidateTarget checks the fields shared by config targets and targets

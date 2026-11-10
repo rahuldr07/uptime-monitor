@@ -32,10 +32,10 @@ type overviewData struct {
 	HasChannel  bool
 }
 
-func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) overview(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	ctx := r.Context()
-	d := overviewData{base: s.base(r, ws, "overview", "Overview")}
+	d := overviewData{base: s.base(r, a, "overview", "Overview")}
 	views, err := s.views(r.Context(), ws, viewOpts{spark: true})
 	if err != nil {
 		s.fail(w, err)
@@ -90,9 +90,9 @@ type monitorsData struct {
 	Rows []targetView
 }
 
-func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
+func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
+	d := monitorsData{base: s.base(r, a, "monitors", "Monitors")}
 	var err error
 	if d.Rows, err = s.views(r.Context(), ws, viewOpts{}); err != nil {
 		s.fail(w, err)
@@ -167,12 +167,12 @@ func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
 	return t, nil
 }
 
-func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	f := formFromRequest(r, "/targets", "Create monitor")
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(ws, t.URL)
+		err = s.checkDestination(a, t.URL)
 	}
 	if err == nil {
 		t, err = ws.CreateTarget(r.Context(), t, s.now())
@@ -182,7 +182,7 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 			return
 		}
-		d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
+		d := monitorsData{base: s.base(r, a, "monitors", "Monitors")}
 		d.Error = err.Error()
 		d.Rows, _ = s.views(r.Context(), ws, viewOpts{})
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
@@ -202,8 +202,8 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkDestination rejects internal hosts early when private targets are off.
-func (s *Server) checkDestination(ws *store.WS, rawURL string) error {
-	if s.cfg.AllowPrivate(ws.ID() == pinnedWorkspace) {
+func (s *Server) checkDestination(a *authCtx, rawURL string) error {
+	if s.cfg.AllowPrivate(a.IsOperator) {
 		return nil
 	}
 	u, err := url.Parse(rawURL)
@@ -214,15 +214,15 @@ func (s *Server) checkDestination(ws *store.WS, rawURL string) error {
 }
 
 // targetTest probes the URL in the form without saving anything.
-func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetTest(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	f := formFromRequest(r, "", "")
 	if f.Name == "" {
 		f.Name = "test"
 	}
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(ws, t.URL)
+		err = s.checkDestination(a, t.URL)
 	}
 	if err != nil {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
@@ -254,9 +254,10 @@ type targetData struct {
 var ranges = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 var tabs = map[string]bool{"overview": true, "checks": true, "incidents": true, "settings": true}
 
-func (s *Server) targetData(r *http.Request, ws *store.WS, t store.Target, st monitor.State) (targetData, error) {
+func (s *Server) targetData(r *http.Request, a *authCtx, t store.Target, st monitor.State) (targetData, error) {
 	ctx := r.Context()
-	d := targetData{base: s.base(r, ws, "monitors", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
+	ws := a.WS
+	d := targetData{base: s.base(r, a, "monitors", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
 	d.Tab = r.URL.Query().Get("tab")
 	if !tabs[d.Tab] {
 		d.Tab = "overview"
@@ -318,13 +319,13 @@ func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request, ws *store.WS
 	return t, st, true
 }
 
-func (s *Server) targetPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, st, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
-	d, err := s.targetData(r, ws, t, st)
+	d, err := s.targetData(r, a, t, st)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -332,8 +333,8 @@ func (s *Server) targetPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "target", d)
 }
 
-func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, st, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
@@ -342,7 +343,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 	f.ShowFlags = true
 	nt, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(ws, nt.URL)
+		err = s.checkDestination(a, nt.URL)
 	}
 	if err == nil {
 		nt.ID, nt.Paused, nt.CreatedAt = t.ID, t.Paused, t.CreatedAt
@@ -352,7 +353,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		q.Set("tab", "settings")
 		r.URL.RawQuery = q.Encode()
-		d, derr := s.targetData(r, ws, t, st)
+		d, derr := s.targetData(r, a, t, st)
 		if derr != nil {
 			s.fail(w, derr)
 			return
@@ -369,8 +370,8 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, fmt.Sprintf("/targets/%d?tab=settings", t.ID), "Monitor saved.")
 }
 
-func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
@@ -384,8 +385,8 @@ func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/targets", "Deleted "+t.Name+".")
 }
 
-func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetPause(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
@@ -407,8 +408,8 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
 }
 
-func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetMute(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
@@ -430,8 +431,8 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
 }
 
-func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return

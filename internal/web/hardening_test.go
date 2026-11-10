@@ -18,7 +18,7 @@ import (
 )
 
 func TestSecurityHeaders(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	for _, path := range []string{"/s/default", "/login", "/healthz"} {
 		resp, _ := e.get(t, c, path)
@@ -39,8 +39,7 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 	// The admin view of /status has the settings form and must not be framed.
-	admin := e.client(t)
-	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
+	admin := e.op
 	if resp, body := e.get(t, admin, "/s/default"); !strings.Contains(body, "Status page settings") ||
 		!strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("admin /status must refuse framing: %v", resp.Header)
@@ -56,7 +55,7 @@ func TestSecurityHeaders(t *testing.T) {
 
 func TestForwardedProtoNeedsTrustProxy(t *testing.T) {
 	login := func(e *env) *http.Cookie {
-		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("password=pw"))
+		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("email="+opEmail+"&password="+url.QueryEscape(testSecret)))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-Proto", "https")
 		resp, err := e.client(t).Do(req)
@@ -64,18 +63,18 @@ func TestForwardedProtoNeedsTrustProxy(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range resp.Cookies() {
-			if c.Name == sessionCookie {
+			if c.Name == sessionCookie || c.Name == hostSessionCookie {
 				return c
 			}
 		}
 		t.Fatal("no session cookie")
 		return nil
 	}
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	if login(e).Secure {
 		t.Fatal("X-Forwarded-Proto must be ignored unless trust_proxy is set")
 	}
-	e = newEnv(t, "pw")
+	e = newEnv(t)
 	e.cfg.TrustProxy = true
 	if !login(e).Secure {
 		t.Fatal("behind a trusted proxy, https should give a Secure cookie")
@@ -83,8 +82,8 @@ func TestForwardedProtoNeedsTrustProxy(t *testing.T) {
 }
 
 func TestAlertSecretsNotEchoed(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	form := url.Values{"tg_token": {"SECRET-TG"}, "tg_chat": {"42"}, "tg_enabled": {"1"},
 		"slack_url": {"https://hooks.example/SECRET-SLACK"}, "slack_enabled": {"1"},
 		"smtp_host": {"h"}, "smtp_from": {"a@b"}, "smtp_to": {"x@y"}, "smtp_pass": {"SECRET-SMTP"}, "email_enabled": {"1"}}
@@ -121,7 +120,7 @@ func TestAlertSecretsNotEchoed(t *testing.T) {
 }
 
 func TestStatusPageCachedForVisitors(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	anon := e.client(t)
 	ctx := context.Background()
 	e.st.Workspace(1).SetSetting(ctx, "status_title", "First title")
@@ -133,8 +132,7 @@ func TestStatusPageCachedForVisitors(t *testing.T) {
 		t.Fatal("anonymous visitors should get the cached page within the TTL")
 	}
 	// Admins always see live data, and saving settings clears the cache.
-	admin := e.client(t)
-	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
+	admin := e.op
 	if _, body := e.get(t, admin, "/s/default"); !strings.Contains(body, "Second title") {
 		t.Fatal("admins should bypass the cache")
 	}
@@ -145,7 +143,7 @@ func TestStatusPageCachedForVisitors(t *testing.T) {
 }
 
 func TestStatusCacheNotBypassedByPartialHeader(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	ctx := context.Background()
 	e.st.Workspace(1).SetSetting(ctx, "status_title", "Old title")
 	get := func() string {
@@ -297,7 +295,7 @@ func (w *stalledWriter) Write(b []byte) (int, error) {
 }
 
 func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon, Logger: slog.Default(), Now: func() time.Time { return e.clock }})
 	if err != nil {
 		t.Fatal(err)
@@ -328,8 +326,8 @@ func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestFlashMustBeSigned(t *testing.T) {
-	e := newEnv(t, "") // no password: every visitor is an admin
-	c := e.client(t)
+	e := newEnv(t) // no password: every visitor is an admin
+	c := e.op
 	if _, body := e.get(t, c, "/?msg=Session+expired,+log+in+at+evil.example"); strings.Contains(body, "evil.example") {
 		t.Fatal("an unsigned ?msg= must not be displayed")
 	}
@@ -347,7 +345,7 @@ func TestFlashMustBeSigned(t *testing.T) {
 }
 
 func TestHealthzChecksDatabase(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	if resp, body := e.get(t, c, "/healthz"); resp.StatusCode != 200 || strings.TrimSpace(body) != "ok" {
 		t.Fatalf("healthz: %d %q", resp.StatusCode, body)
@@ -359,7 +357,7 @@ func TestHealthzChecksDatabase(t *testing.T) {
 }
 
 func TestRequestBodyLimit(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	big := url.Values{"password": {strings.Repeat("x", maxBodyBytes+10)}}
 	if resp, _ := e.post(t, e.client(t), "/login", big); resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body should be 413, got %d", resp.StatusCode)
@@ -367,7 +365,7 @@ func TestRequestBodyLimit(t *testing.T) {
 }
 
 func TestThirtyDayUptimeUsesRollups(t *testing.T) {
-	e := newEnv(t, "")
+	e := newEnv(t)
 	ctx := context.Background()
 	tg, _ := e.st.Workspace(1).CreateTarget(ctx, store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
 	// 20 days of checks, half failing, then raw checks pruned to the 7-day retention.
@@ -396,8 +394,8 @@ func TestPasswordEqual(t *testing.T) {
 }
 
 func TestAssetsAreVersioned(t *testing.T) {
-	e := newEnv(t, "")
-	c := e.client(t)
+	e := newEnv(t)
+	c := e.op
 	for _, page := range []string{"/", "/s/default"} {
 		_, body := e.get(t, c, page)
 		for _, name := range []string{"app.js", "app.css"} {
@@ -418,7 +416,7 @@ func TestAssetsAreVersioned(t *testing.T) {
 }
 
 func TestStatusSlugRouting(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	resp, _ := e.get(t, c, "/status")
 	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/s/default" {
@@ -511,7 +509,7 @@ func TestStatusRebuildCap(t *testing.T) {
 }
 
 func TestStatusRateLimited(t *testing.T) {
-	e := newEnv(t, "pw")
+	e := newEnv(t)
 	c := e.client(t)
 	for i := 1; i <= 120; i++ {
 		if resp, _ := e.get(t, c, "/s/default"); resp.StatusCode != 200 {
@@ -522,8 +520,7 @@ func TestStatusRateLimited(t *testing.T) {
 	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" || body != "too many requests" {
 		t.Fatalf("121st: %d %q %q", resp.StatusCode, resp.Header.Get("Retry-After"), body)
 	}
-	admin := e.client(t)
-	e.post(t, admin, "/login", url.Values{"password": {"pw"}})
+	admin := e.op
 	if resp, _ := e.get(t, admin, "/s/default"); resp.StatusCode != 200 {
 		t.Fatalf("admin must not be limited: %d", resp.StatusCode)
 	}

@@ -1,89 +1,114 @@
 package web
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
+
+	"uptimemon/internal/store"
 )
 
 const (
-	sessionCookie = "uptime_session"
-	sessionTTL    = 30 * 24 * time.Hour
+	sessionCookie     = "uptime_session"
+	hostSessionCookie = "__Host-uptime_session"
 )
 
-// sessions is an in-memory session store. Sessions do not survive a restart,
-// which is acceptable for a single-admin tool and means logout truly revokes.
-type sessions struct {
-	mu   sync.Mutex
-	live map[string]time.Time // id -> expiry
-	now  func() time.Time
+// authCtx is the identity a signed-in request runs as.
+type authCtx struct {
+	User        store.User
+	WS          *store.WS
+	Workspace   store.Workspace
+	IsOperator  bool
+	sessionHash string
 }
 
-func newSessions(now func() time.Time) *sessions {
-	return &sessions{live: map[string]time.Time{}, now: now}
+type authKey struct{}
+
+// authResult is filled at most once per request, so one request costs one
+// session lookup, including a negative one.
+type authResult struct {
+	once sync.Once
+	a    *authCtx
+	ok   bool
 }
 
-func (s *sessions) create() string {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
+// cookieName is the session cookie name for this request. The __Host- prefix
+// pins the cookie to this exact host over HTTPS.
+func (s *Server) cookieName(r *http.Request) string {
+	if s.isHTTPS(r) || s.cfg.HTTPSBase() {
+		return hostSessionCookie
 	}
-	id := hex.EncodeToString(b[:])
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	for k, exp := range s.live {
-		if !exp.After(now) {
-			delete(s.live, k)
+	return sessionCookie
+}
+
+// sessionToken returns the raw session token the request carries, under
+// either cookie name.
+func sessionToken(r *http.Request) string {
+	for _, name := range []string{hostSessionCookie, sessionCookie} {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			return c.Value
 		}
 	}
-	s.live[id] = now.Add(sessionTTL)
-	return id
+	return ""
 }
 
-func (s *sessions) valid(id string) bool {
-	if len(id) != 64 {
-		return false
+// currentAuth resolves the request's session, caching the result in the
+// request context (installed by withAuthCache).
+func (s *Server) currentAuth(r *http.Request) (*authCtx, bool) {
+	if res, ok := r.Context().Value(authKey{}).(*authResult); ok {
+		res.once.Do(func() { res.a, res.ok = s.lookupAuth(r) })
+		return res.a, res.ok
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.live[id]
-	return ok && exp.After(s.now())
+	return s.lookupAuth(r)
 }
 
-func (s *sessions) revoke(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.live, id)
-}
-
-// isAdmin reports whether the request carries a valid session, or auth is off.
-func (s *Server) isAdmin(r *http.Request) bool {
-	if !s.authEnabled() {
-		return true
+func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
+	raw := sessionToken(r)
+	if raw == "" {
+		return nil, false
 	}
-	c, err := r.Cookie(sessionCookie)
+	au, err := s.sys.SessionAuth(r.Context(), raw, s.now())
 	if err != nil {
-		return false
+		return nil, false
 	}
-	return s.sessions.valid(c.Value)
+	return &authCtx{User: au.User, WS: au.WS, Workspace: au.Workspace,
+		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash}, true
 }
 
-func (s *Server) authEnabled() bool { return s.cfg.AdminPassword != "" }
+// withAuthCache installs the per-request cache that currentAuth fills.
+func withAuthCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authKey{}, &authResult{})))
+	})
+}
 
-// requireAdmin redirects anonymous users to the login page.
-func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, raw string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: s.cookieName(r), Value: raw, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Secure: s.cookieName(r) == hostSessionCookie,
+		MaxAge: int(store.SessionTTL.Seconds()),
+	})
+}
+
+// clearSessionCookie expires the session cookie under both names.
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	for _, name := range []string{hostSessionCookie, sessionCookie} {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", HttpOnly: true,
+			SameSite: http.SameSiteLaxMode, Secure: name == hostSessionCookie, MaxAge: -1})
+	}
+}
+
+// requireUser runs h for signed-in requests. Programmatic callers get a 401
+// they can act on instead of a redirect that fetch() would follow into the
+// login page.
+func (s *Server) requireUser(h func(http.ResponseWriter, *http.Request, *authCtx)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.isAdmin(r) {
-			next(w, r)
+		if a, ok := s.currentAuth(r); ok {
+			h(w, r, a)
 			return
 		}
-		// Programmatic callers get a 401 they can act on instead of a redirect
-		// that fetch() would follow into the login page.
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.Header.Get("X-Partial") == "1" || wantsJSON(r) ||
 			strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -97,19 +122,27 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) setSession(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: s.sessions.create(), Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, Secure: s.isHTTPS(r), MaxAge: int(sessionTTL.Seconds()),
+// setupGate confines the app to the setup flow until the first account
+// exists.
+func (s *Server) setupGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.setupMode.Load() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		p, get := r.URL.Path, r.Method == http.MethodGet || r.Method == http.MethodHead
+		switch {
+		case get && (p == "/healthz" || p == "/status" || strings.HasPrefix(p, "/static/") || strings.HasPrefix(p, "/s/")):
+		case p == "/setup" && (get || r.Method == http.MethodPost):
+		case strings.HasPrefix(p, "/api/") || p == "/events":
+			http.Error(w, "setup required", http.StatusServiceUnavailable)
+			return
+		default:
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
-}
-
-func (s *Server) clearSession(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		s.sessions.revoke(c.Value)
-	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, Secure: s.isHTTPS(r), MaxAge: -1})
 }
 
 // isHTTPS reports whether the client connected over TLS. X-Forwarded-Proto

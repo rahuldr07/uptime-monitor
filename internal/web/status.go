@@ -258,9 +258,18 @@ func (s *Server) statusLimited(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// statusRedirect sends /status to the status page of the pinned workspace.
+// statusRedirect sends /status to the signed-in user's status page, or to
+// the operator's (workspace 1) for everyone else.
 func (s *Server) statusRedirect(w http.ResponseWriter, r *http.Request) {
-	info, err := s.ws(r).Info(r.Context())
+	ws := s.sys.Workspace(operatorWorkspaceID)
+	if a, ok := s.currentAuth(r); ok {
+		ws = a.WS
+	}
+	info, err := ws.Info(r.Context())
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -289,7 +298,8 @@ func (s *Server) resetStatus(ctx context.Context, ws *store.WS) {
 
 func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	// Anonymous visitors are rate limited before any lookup.
-	if !s.isAdmin(r) && s.statusLimited(w, r) {
+	a, signedIn := s.currentAuth(r)
+	if !signedIn && s.statusLimited(w, r) {
 		return
 	}
 	info, err := s.sys.WorkspaceBySlug(r.Context(), r.PathValue("slug"))
@@ -305,9 +315,9 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	// The owner sees live data and the settings form; everyone else shares a
 	// briefly cached copy per theme and render mode. Anonymous visitors never
 	// bypass the cache, whatever headers they send.
-	if s.isAdmin(r) {
-		if info.ID == s.ws(r).ID() {
-			s.statusOwner(w, r, ws, info)
+	if signedIn {
+		if info.ID == a.Workspace.ID {
+			s.statusOwner(w, r, a, info)
 			return
 		}
 		if s.statusLimited(w, r) {
@@ -339,7 +349,8 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // statusOwner renders the live page with the settings form.
-func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, ws *store.WS, info store.Workspace) {
+func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, a *authCtx, info store.Workspace) {
+	ws := a.WS
 	// The owner view carries the settings form, so unlike the public page
 	// it must not be framed, not even by a same-site origin that would
 	// receive the SameSite=Lax session cookie.
@@ -350,7 +361,7 @@ func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, ws *store.W
 		s.fail(w, err)
 		return
 	}
-	d.base = s.base(r, ws, "status", d.StatusTitle)
+	d.base = s.base(r, a, "status", d.StatusTitle)
 	scheme := "http"
 	if s.isHTTPS(r) {
 		scheme = "https"
@@ -408,8 +419,8 @@ func (s *Server) statusMeta(ctx context.Context, ws *store.WS) (title, desc stri
 	return title, desc
 }
 
-func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	title := strings.TrimSpace(r.FormValue("title"))
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if len(title) > 80 || len(desc) > 200 {
@@ -427,3 +438,7 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
 	s.resetStatus(r.Context(), ws)
 	redirect(w, r, s.statusURL(r.Context(), ws), "Status page saved.")
 }
+
+// operatorWorkspaceID is the workspace of the instance operator, created
+// first; /status points anonymous visitors at it.
+const operatorWorkspaceID int64 = 1

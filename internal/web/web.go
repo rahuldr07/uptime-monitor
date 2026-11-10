@@ -15,10 +15,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"uptimemon/internal/config"
 	"uptimemon/internal/monitor"
+	"uptimemon/internal/password"
 	"uptimemon/internal/ratelimit"
 	"uptimemon/internal/store"
 )
@@ -36,7 +38,10 @@ type Server struct {
 	mon           *monitor.Monitor
 	logger        *slog.Logger
 	now           func() time.Time
-	sessions      *sessions
+	hasher        *password.Hasher
+	setupMode     atomic.Bool
+	upgraded      bool
+	afterSetup    func(ctx context.Context) error
 	limiter       *ratelimit.Limiter
 	statusLimiter *ratelimit.Limiter
 	pages         map[string]*template.Template
@@ -52,6 +57,11 @@ type Options struct {
 	Monitor *monitor.Monitor
 	Logger  *slog.Logger     // nil means slog.Default(), as in monitor.New
 	Now     func() time.Time // nil means time.Now
+
+	Hasher     *password.Hasher // nil means password.Default()
+	SetupMode  bool             // no account exists yet; only the setup flow is served
+	Upgraded   bool             // the database predates accounts
+	AfterSetup func(ctx context.Context) error
 }
 
 // New builds a Server. Config, Store and Monitor are required.
@@ -67,7 +77,12 @@ func New(o Options) (*Server, error) {
 		now = time.Now
 	}
 	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now,
-		sessions: newSessions(now), pages: map[string]*template.Template{}}
+		hasher: o.Hasher, upgraded: o.Upgraded, afterSetup: o.AfterSetup,
+		pages: map[string]*template.Template{}}
+	if s.hasher == nil {
+		s.hasher = password.Default()
+	}
+	s.setupMode.Store(o.SetupMode)
 	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
 	s.limiter.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
@@ -139,7 +154,7 @@ func New(o Options) (*Server, error) {
 }
 
 // Handler returns the root handler.
-func (s *Server) Handler() http.Handler { return s.securityHeaders(s.mux) }
+func (s *Server) Handler() http.Handler { return s.setupGate(s.securityHeaders(withAuthCache(s.mux))) }
 
 // healthz reports ok only when the database answers, so an orchestrator
 // restarts the process if storage is wedged.
@@ -191,36 +206,42 @@ func cacheControl(h http.Handler) http.Handler {
 // ---- view models ----
 
 type base struct {
-	Title       string
-	Page        string
-	Admin       bool
-	AuthEnabled bool
-	Flash       string
-	Error       string
-	Now         time.Time
-	Theme       string
-	Unacked     int
-	DownCount   int
-	NewForm     targetForm
-	Groups      []string
-	Maint       []store.Maintenance // windows active right now
-	StatusURL   string              // /s/<slug> of this workspace
+	Title     string
+	Page      string
+	Admin     bool
+	UserEmail string
+	Flash     string
+	Error     string
+	Now       time.Time
+	Theme     string
+	Unacked   int
+	DownCount int
+	NewForm   targetForm
+	Groups    []string
+	Maint     []store.Maintenance // windows active right now
+	StatusURL string              // /s/<slug> of this workspace
 }
 
-func (s *Server) base(r *http.Request, ws *store.WS, page, title string) base {
-	b := s.baseFor(r.Context(), ws, page, title, themeFrom(r), s.isAdmin(r))
-	if b.Admin {
-		// Only admin flows redirect with a flash; never echo ?msg= to anonymous
-		// visitors, and only show messages the server itself signed.
-		b.Flash = flashFrom(r)
-	}
+// base builds the view model of a signed-in workspace page.
+func (s *Server) base(r *http.Request, a *authCtx, page, title string) base {
+	b := s.baseFor(r.Context(), a.WS, page, title, themeFrom(r), true)
+	b.UserEmail = a.User.Email
+	// Only signed-in flows redirect with a flash; never echo ?msg= to anonymous
+	// visitors, and only show messages the server itself signed.
+	b.Flash = flashFrom(r)
 	return b
+}
+
+// page builds the view model of a page that has no workspace (sign-in,
+// setup, reset).
+func (s *Server) page(r *http.Request, title string) base {
+	return base{Title: title, Now: s.now(), Theme: themeFrom(r)}
 }
 
 // baseFor is base without a request, so the anonymous status page can be
 // built (and cached) from nothing but the workspace.
 func (s *Server) baseFor(ctx context.Context, ws *store.WS, page, title, theme string, admin bool) base {
-	b := base{Title: title, Page: page, Admin: admin, AuthEnabled: s.authEnabled(), Now: s.now(), Theme: theme}
+	b := base{Title: title, Page: page, Admin: admin, Now: s.now(), Theme: theme}
 	b.StatusURL = s.statusURL(ctx, ws)
 	b.NewForm = targetForm{Action: "/targets", Submit: "Create monitor", ShowTest: true,
 		Interval: shortDur(s.cfg.Interval.Duration), Timeout: shortDur(s.cfg.Timeout.Duration)}

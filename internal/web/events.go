@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+func (s *Server) events(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -20,7 +20,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
 		s.logger.Warn("sse: cannot clear write deadline", "err", err)
 	}
-	wsID := s.ws(r).ID()
+	wsID := a.WS.ID()
 	ch, unsub := s.mon.Events.Subscribe()
 	defer unsub()
 	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {

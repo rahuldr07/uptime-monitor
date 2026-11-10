@@ -3,15 +3,27 @@ package web
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"uptimemon/internal/password"
+	"uptimemon/internal/store"
+)
+
+const (
+	msgBadLogin = "Email or password is incorrect."
+	msgDisabled = "This account is disabled."
+	msgBusy     = "The server is busy, please try again."
+	msgTooMany  = "Too many attempts. Wait a minute and try again."
 )
 
 // safeNext only allows plain local paths as post-login redirect targets.
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
-		strings.HasPrefix(next, "/login") || strings.ContainsAny(next, "\\\r\n\t ") {
+		strings.HasPrefix(next, "/login") || strings.HasPrefix(next, "/setup") ||
+		strings.HasPrefix(next, "/reset") || strings.ContainsAny(next, "\\\r\n\t ") {
 		return "/"
 	}
 	for _, c := range next {
@@ -26,10 +38,10 @@ func safeNext(next string) string {
 	return next
 }
 
-// loginMaxFailures is how many failed logins a client may make per minute.
-// Successful logins are not counted, so the admin is never locked out by
-// their own use; attackers sharing the admin's IP (or proxy, when
-// trust_proxy is off) still get throttled.
+// loginMaxFailures is how many failed sign-ins a client may make per minute.
+// Successful sign-ins are not counted, so users are never locked out by
+// their own use; attackers sharing a user's IP (or proxy, when trust_proxy is
+// off) still get throttled.
 const loginMaxFailures = 5
 
 // passwordEqual compares in constant time. Hashing first gives both sides
@@ -42,42 +54,88 @@ func passwordEqual(a, b string) bool {
 
 type loginData struct {
 	base
-	Next string
+	Next  string
+	Email string
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	if !s.authEnabled() || s.isAdmin(r) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-	s.render(w, r, "login", loginData{base: s.base(r, ws, "login", "Log in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
+	s.render(w, r, "login", loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	if !s.authEnabled() {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
+	d := loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email"))}
+	fail := func(code int, msg string) {
+		d.Error = msg
+		s.renderStatus(w, r, code, "login", d)
 	}
-	d := loginData{base: s.base(r, ws, "login", "Log in · Uptime"), Next: safeNext(r.FormValue("next"))}
 	key := clientKey(r, s.cfg.ProxyHops())
 	if ok, _ := s.limiter.Allow(key); !ok {
-		d.Error = "Too many failed attempts. Wait a minute and try again."
-		s.renderStatus(w, r, http.StatusTooManyRequests, "login", d)
+		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
-	if passwordEqual(r.FormValue("password"), s.cfg.AdminPassword) {
-		s.setSession(w, r)
-		http.Redirect(w, r, d.Next, http.StatusSeeOther)
+	ctx := r.Context()
+	// An invalid address follows the same path as an unknown one, so the
+	// response and its timing do not reveal which addresses have accounts.
+	var u store.User
+	var phc string
+	email, err := store.NormalizeEmail(d.Email)
+	if err == nil {
+		u, phc, err = s.sys.UserByEmail(ctx, email)
+	}
+	known := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrInvalidEmail) {
+		s.fail(w, err)
 		return
 	}
-	s.limiter.Hit(key)
-	d.Error = "Wrong password."
-	s.renderStatus(w, r, http.StatusUnauthorized, "login", d)
+	var ok bool
+	if known {
+		ok, err = s.hasher.Verify(ctx, phc, r.FormValue("password"))
+	} else {
+		err = s.hasher.VerifyDummy(ctx)
+	}
+	if errors.Is(err, password.ErrBusy) {
+		fail(http.StatusServiceUnavailable, msgBusy)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if !known || !ok {
+		s.limiter.Hit(key)
+		fail(http.StatusUnauthorized, msgBadLogin)
+		return
+	}
+	if u.DisabledAt != nil || u.VerifiedAt == nil {
+		s.limiter.Hit(key)
+		if u.DisabledAt != nil {
+			fail(http.StatusForbidden, msgDisabled)
+		} else {
+			fail(http.StatusUnauthorized, msgBadLogin)
+		}
+		return
+	}
+	// A new session replaces whichever one the browser presented.
+	if old := sessionToken(r); old != "" {
+		if err := s.sys.DeleteSession(ctx, old); err != nil {
+			s.logger.Warn("sign-in: cannot delete previous session", "err", err)
+		}
+	}
+	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.setSessionCookie(w, r, raw)
+	http.Redirect(w, r, d.Next, http.StatusSeeOther)
 }
 
-func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	s.clearSession(w, r)
-	http.Redirect(w, r, "/status", http.StatusSeeOther)
+func (s *Server) logout(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	if raw := sessionToken(r); raw != "" {
+		if err := s.sys.DeleteSession(r.Context(), raw); err != nil {
+			s.logger.Warn("sign-out: cannot delete session", "err", err)
+		}
+	}
+	s.clearSessionCookie(w, r)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

@@ -9,15 +9,19 @@ import (
 type routeClass int
 
 const (
-	classPublic routeClass = iota + 1 // no auth; the zero value is invalid on purpose
-	classAdmin                        // requireAdmin; M1d replaces it with user/workspace/operator
+	classPublic    routeClass = iota + 1 // no auth; the zero value is invalid on purpose
+	classSetup                           // only exists while no account does
+	classGuest                           // signed-in users are sent to /
+	classUser                            // any signed-in user
+	classWorkspace                       // a signed-in user acting on their own workspace
 )
 
 type route struct {
 	method  string // "GET" or "POST"
 	pattern string // ServeMux pattern without the method, e.g. "/targets/{id}"
 	class   routeClass
-	handler http.HandlerFunc
+	handler http.HandlerFunc                                   // public, setup and guest routes
+	authed  func(http.ResponseWriter, *http.Request, *authCtx) // user and workspace routes
 }
 
 // routeTable is the single source of truth for every HTTP route.
@@ -25,40 +29,40 @@ func (s *Server) routeTable() []route {
 	static, _ := fs.Sub(staticFS, "static")
 	files := http.StripPrefix("/static/", cacheControl(http.FileServer(http.FS(static))))
 	return []route{
-		{"GET", "/static/", classPublic, files.ServeHTTP},
-		{"GET", "/healthz", classPublic, s.healthz},
-		{"GET", "/status", classPublic, s.statusRedirect},
-		{"GET", "/s/{slug}", classPublic, s.statusPage},
-		{"GET", "/login", classPublic, s.loginPage},
-		{"POST", "/login", classPublic, s.loginPost},
-		{"POST", "/logout", classPublic, s.logout},
+		{"GET", "/static/", classPublic, files.ServeHTTP, nil},
+		{"GET", "/healthz", classPublic, s.healthz, nil},
+		{"GET", "/status", classPublic, s.statusRedirect, nil},
+		{"GET", "/s/{slug}", classPublic, s.statusPage, nil},
+		{"GET", "/login", classGuest, s.loginPage, nil},
+		{"POST", "/login", classGuest, s.loginPost, nil},
+		{"POST", "/logout", classUser, nil, s.logout},
 
-		{"GET", "/{$}", classAdmin, s.overview},
-		{"GET", "/events", classAdmin, s.events},
-		{"GET", "/targets", classAdmin, s.monitorsPage},
-		{"POST", "/targets", classAdmin, s.targetCreate},
-		{"POST", "/targets/test", classAdmin, s.targetTest},
-		{"GET", "/targets/{id}", classAdmin, s.targetPage},
-		{"POST", "/targets/{id}", classAdmin, s.targetUpdate},
-		{"POST", "/targets/{id}/delete", classAdmin, s.targetDelete},
-		{"POST", "/targets/{id}/pause", classAdmin, s.targetPause},
-		{"POST", "/targets/{id}/mute", classAdmin, s.targetMute},
-		{"POST", "/targets/{id}/check", classAdmin, s.targetCheck},
-		{"GET", "/incidents", classAdmin, s.incidentsPage},
-		{"POST", "/incidents/{id}/ack", classAdmin, s.incidentAck},
-		{"POST", "/incidents/{id}/note", classAdmin, s.incidentNote},
-		{"GET", "/alerts", classAdmin, s.alertsPage},
-		{"POST", "/alerts", classAdmin, s.alertsSave},
-		{"POST", "/alerts/test", classAdmin, s.alertsTest},
-		{"POST", "/status/settings", classAdmin, s.statusSettings},
-		{"GET", "/maintenance", classAdmin, s.maintenancePage},
-		{"POST", "/maintenance", classAdmin, s.maintenanceCreate},
-		{"POST", "/maintenance/{id}/end", classAdmin, s.maintenanceEnd},
-		{"POST", "/maintenance/{id}/delete", classAdmin, s.maintenanceDelete},
-		{"GET", "/api/maintenance", classAdmin, s.apiMaintenance},
-		{"GET", "/api/status", classAdmin, s.apiStatus},
-		{"GET", "/api/targets/{id}/checks", classAdmin, s.apiChecks},
-		{"GET", "/api/incidents", classAdmin, s.apiIncidents},
+		{"GET", "/{$}", classWorkspace, nil, s.overview},
+		{"GET", "/events", classWorkspace, nil, s.events},
+		{"GET", "/targets", classWorkspace, nil, s.monitorsPage},
+		{"POST", "/targets", classWorkspace, nil, s.targetCreate},
+		{"POST", "/targets/test", classWorkspace, nil, s.targetTest},
+		{"GET", "/targets/{id}", classWorkspace, nil, s.targetPage},
+		{"POST", "/targets/{id}", classWorkspace, nil, s.targetUpdate},
+		{"POST", "/targets/{id}/delete", classWorkspace, nil, s.targetDelete},
+		{"POST", "/targets/{id}/pause", classWorkspace, nil, s.targetPause},
+		{"POST", "/targets/{id}/mute", classWorkspace, nil, s.targetMute},
+		{"POST", "/targets/{id}/check", classWorkspace, nil, s.targetCheck},
+		{"GET", "/incidents", classWorkspace, nil, s.incidentsPage},
+		{"POST", "/incidents/{id}/ack", classWorkspace, nil, s.incidentAck},
+		{"POST", "/incidents/{id}/note", classWorkspace, nil, s.incidentNote},
+		{"GET", "/alerts", classWorkspace, nil, s.alertsPage},
+		{"POST", "/alerts", classWorkspace, nil, s.alertsSave},
+		{"POST", "/alerts/test", classWorkspace, nil, s.alertsTest},
+		{"POST", "/status/settings", classWorkspace, nil, s.statusSettings},
+		{"GET", "/maintenance", classWorkspace, nil, s.maintenancePage},
+		{"POST", "/maintenance", classWorkspace, nil, s.maintenanceCreate},
+		{"POST", "/maintenance/{id}/end", classWorkspace, nil, s.maintenanceEnd},
+		{"POST", "/maintenance/{id}/delete", classWorkspace, nil, s.maintenanceDelete},
+		{"GET", "/api/maintenance", classWorkspace, nil, s.apiMaintenance},
+		{"GET", "/api/status", classWorkspace, nil, s.apiStatus},
+		{"GET", "/api/targets/{id}/checks", classWorkspace, nil, s.apiChecks},
+		{"GET", "/api/incidents", classWorkspace, nil, s.apiIncidents},
 	}
 }
 
@@ -69,10 +73,34 @@ func (s *Server) routes() {
 		h := r.handler
 		switch r.class {
 		case classPublic:
-		case classAdmin:
-			h = s.requireAdmin(h)
+		case classSetup:
+			inner := h
+			h = func(w http.ResponseWriter, req *http.Request) {
+				if !s.setupMode.Load() {
+					http.NotFound(w, req)
+					return
+				}
+				inner(w, req)
+			}
+		case classGuest:
+			inner := h
+			h = func(w http.ResponseWriter, req *http.Request) {
+				if _, ok := s.currentAuth(req); ok {
+					http.Redirect(w, req, "/", http.StatusSeeOther)
+					return
+				}
+				inner(w, req)
+			}
+		case classUser, classWorkspace:
+			if r.authed == nil {
+				panic(fmt.Sprintf("web: route %s %s has no authed handler", r.method, r.pattern))
+			}
+			h = s.requireUser(r.authed)
 		default:
 			panic(fmt.Sprintf("web: route %s %s has no class", r.method, r.pattern))
+		}
+		if h == nil {
+			panic(fmt.Sprintf("web: route %s %s has no handler", r.method, r.pattern))
 		}
 		if r.method == "POST" {
 			h = sameOrigin(h)

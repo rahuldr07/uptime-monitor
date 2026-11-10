@@ -30,8 +30,9 @@ type maintenanceData struct {
 	Past     []store.Maintenance
 }
 
-func (s *Server) maintenanceData(r *http.Request, ws *store.WS, f maintForm) (maintenanceData, error) {
-	d := maintenanceData{base: s.base(r, ws, "maintenance", "Maintenance"), Form: f}
+func (s *Server) maintenanceData(r *http.Request, a *authCtx, f maintForm) (maintenanceData, error) {
+	ws := a.WS
+	d := maintenanceData{base: s.base(r, a, "maintenance", "Maintenance"), Form: f}
 	if d.Form.Duration == "" {
 		d.Form.Duration = "1h"
 	}
@@ -59,9 +60,8 @@ func (s *Server) maintenanceData(r *http.Request, ws *store.WS, f maintForm) (ma
 	return d, nil
 }
 
-func (s *Server) maintenancePage(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
-	d, err := s.maintenanceData(r, ws, maintForm{})
+func (s *Server) maintenancePage(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	d, err := s.maintenanceData(r, a, maintForm{})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -112,14 +112,14 @@ func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenanc
 	return f, m, nil
 }
 
-func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	f, m, err := parseMaintForm(r, s.now())
 	if err == nil {
 		m, err = ws.CreateMaintenance(r.Context(), m, s.now())
 	}
 	if err != nil {
-		d, derr := s.maintenanceData(r, ws, f)
+		d, derr := s.maintenanceData(r, a, f)
 		if derr != nil {
 			s.fail(w, derr)
 			return
@@ -138,8 +138,8 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // maintenanceEnd closes an active window now so alerting resumes at once.
-func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	m, ok := loadByID(s, w, r, ws.GetMaintenance)
 	if !ok {
 		return
@@ -153,8 +153,8 @@ func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, backTo(r, "/maintenance"), "Ended "+m.Title+". Alerts are live again.")
 }
 
-func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	m, ok := loadByID(s, w, r, ws.GetMaintenance)
 	if !ok {
 		return
@@ -177,8 +177,8 @@ type apiMaint struct {
 	Active   bool      `json:"active"`
 }
 
-func (s *Server) apiMaintenance(w http.ResponseWriter, r *http.Request) {
-	ws := s.ws(r)
+func (s *Server) apiMaintenance(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	ws := a.WS
 	now := s.now()
 	list, err := ws.ListMaintenance(r.Context(), now, 0)
 	if err != nil {

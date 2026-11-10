@@ -93,8 +93,8 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := cfg.CheckAuth(); err != nil {
-		return err
+	if cfg.InsecureNoAuth {
+		logger.Warn("insecure_no_auth has no effect; sign-in is always required")
 	}
 	logger.Info("starting", "version", version, "config", cfgPath, "listen", cfg.Listen, "db", cfg.DB)
 	st, err := store.Open(cfg.DB)
@@ -106,12 +106,31 @@ func run(cfgPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	ws1 := st.Workspace(1)
-	if err := seedTargets(ctx, ws1, cfg, logger); err != nil {
+	nUsers, err := st.CountUsers(ctx)
+	if err != nil {
 		return err
 	}
-	if err := seedNotify(ctx, ws1, cfg); err != nil {
+	setup := nUsers == 0
+	upgraded, err := st.IsUpgradedInstall(ctx)
+	if err != nil {
 		return err
+	}
+	if !setup && cfg.AdminPassword != "" {
+		logger.Warn("admin_password is ignored once an account exists")
+	}
+	// seedOperator puts the config file's targets and alert settings into the
+	// operator's workspace (workspace 1).
+	seedOperator := func() error {
+		ws1 := st.Workspace(1)
+		if err := seedTargets(ctx, ws1, cfg, logger); err != nil {
+			return err
+		}
+		return seedNotify(ctx, ws1, cfg)
+	}
+	if !setup {
+		if err := seedOperator(); err != nil {
+			return err
+		}
 	}
 
 	mon := monitor.New(monitor.Options{Store: st, Logger: logger, FailureThreshold: cfg.FailureThreshold,
@@ -126,15 +145,25 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if err := mon.Start(ctx); err != nil {
 		return err
 	}
-	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger})
+	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger,
+		SetupMode: setup, Upgraded: upgraded,
+		AfterSetup: func(ctx context.Context) error {
+			if err := seedOperator(); err != nil {
+				return err
+			}
+			ts, err := st.Workspace(1).ListTargets(ctx)
+			if err != nil {
+				return err
+			}
+			for _, t := range ts {
+				if err := mon.Reload(ctx, t.ID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}})
 	if err != nil {
 		return err
-	}
-	switch {
-	case cfg.AdminPassword == "":
-		logger.Warn("admin_password is empty: the dashboard is open to anyone who can reach it")
-	case len(cfg.AdminPassword) < 12:
-		logger.Warn("admin_password is short; use at least 12 characters")
 	}
 
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(),
@@ -232,6 +261,12 @@ func pruneLoop(ctx context.Context, st *store.Store, retention time.Duration, lo
 		}
 		if _, err := st.PruneRollups(ctx, time.Now().Add(-rollupRetention)); err != nil && ctx.Err() == nil {
 			logger.Error("prune rollups", "err", err)
+		}
+		if _, err := st.PruneSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			logger.Error("prune sessions", "err", err)
+		}
+		if _, err := st.PruneTokens(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			logger.Error("prune tokens", "err", err)
 		}
 	}
 	prune()

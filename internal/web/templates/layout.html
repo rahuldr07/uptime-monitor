@@ -20,7 +20,8 @@
   <a class="nav" href="{{.StatusURL}}" target="_blank" rel="noopener">{{template "i-ext"}}<span class="t">Status page</span></a>
   <div class="foot">
     <button type="button" class="ghost sm" data-action="theme" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
-    {{if .AuthEnabled}}<form method="post" action="/logout"><button type="submit" class="ghost sm">{{template "i-logout"}}<span class="t">Log out</span></button></form>{{end}}
+    <a class="small muted" href="/account">{{.UserEmail}}</a>
+    <form method="post" action="/logout"><button type="submit" class="ghost sm">{{template "i-logout"}}<span class="t">Sign out</span></button></form>
   </div>
 </aside>
 <main class="main">
