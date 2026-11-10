@@ -21,6 +21,8 @@ var (
 	ErrInvalidSlug = errors.New("The address must be 3-40 characters: lowercase letters, digits and hyphens, not starting or ending with a hyphen.")
 	// ErrSlugTaken is returned when another workspace already has the slug.
 	ErrSlugTaken = errors.New("That address is already taken.")
+	// ErrSlugUnavailable is returned when DeriveSlug finds no free slug.
+	ErrSlugUnavailable = errors.New("store: no free slug")
 )
 
 // ValidSlug reports whether s is 3-40 characters of [a-z0-9-] with no leading
@@ -65,21 +67,29 @@ func DeriveSlug(ctx context.Context, q querier, name string) (string, error) {
 	if len(base) < 3 {
 		base = "ws-" + randomBase32(6)
 	}
-	for n := 1; n <= 1000; n++ {
+	free := func(cand string) (bool, error) {
+		var taken bool
+		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = ?)`, cand).Scan(&taken)
+		return !taken, err
+	}
+	for n := 1; n <= 20; n++ {
 		cand := base
 		if n > 1 {
 			suffix := "-" + strconv.Itoa(n)
 			cand = strings.TrimRight(truncate(base, 40-len(suffix)), "-") + suffix
 		}
-		var taken bool
-		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = ?)`, cand).Scan(&taken); err != nil {
-			return "", err
-		}
-		if !taken {
-			return cand, nil
+		if ok, err := free(cand); err != nil || ok {
+			return cand, err
 		}
 	}
-	return "", errors.New("store: no free slug")
+	for range 5 {
+		suffix := "-" + randomBase32(4)
+		cand := strings.TrimRight(truncate(base, 40-len(suffix)), "-") + suffix
+		if ok, err := free(cand); err != nil || ok {
+			return cand, err
+		}
+	}
+	return "", ErrSlugUnavailable
 }
 
 func truncate(s string, n int) string {
@@ -217,6 +227,9 @@ func (s *Store) WorkspaceBySlug(ctx context.Context, slug string) (Workspace, er
 func createWorkspace(ctx context.Context, q querier, name, slug string, now time.Time) (Workspace, error) {
 	res, err := q.ExecContext(ctx,
 		`INSERT INTO workspaces (name, slug, created_at) VALUES (?, ?, ?)`, name, slug, now.UnixMilli())
+	if isSlugTaken(err) {
+		return Workspace{}, ErrSlugTaken
+	}
 	if err != nil {
 		return Workspace{}, err
 	}

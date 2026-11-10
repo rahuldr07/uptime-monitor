@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -880,7 +881,8 @@ func TestCreateAccountWithInvite(t *testing.T) {
 	if _, err := s.PeekToken(ctx, TokenInvite, inv3, now); err != nil {
 		t.Fatalf("invite consumed by mismatch: %v", err)
 	}
-	// A matching email (case-insensitive) works.
+	// The bound email matches case-insensitively, so the mismatch check
+	// passes and the already-registered address is what fails.
 	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "A@X.co", PasswordHash: "x", WorkspaceName: "A3", Slug: "a3", InviteToken: inv3, Now: now}); !errors.Is(err, ErrEmailTaken) {
 		t.Fatalf("matching email on taken address: %v", err)
 	}
@@ -1106,6 +1108,9 @@ func TestDeleteAccount(t *testing.T) {
 	}
 	_ = uc
 
+	seedWS(t, s, wsC, "csite", now)
+	opBefore, cBefore := countsOf(t, opWS, now), countsOf(t, wsC, now)
+
 	deleted, err := s.DeleteAccount(ctx, ub.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -1148,14 +1153,102 @@ func TestDeleteAccount(t *testing.T) {
 	}
 
 	// The only operator cannot be deleted and nothing changes.
-	before := countsOf(t, opWS, now)
 	if _, err := s.DeleteAccount(ctx, op.ID); !errors.Is(err, ErrLastOperator) {
 		t.Fatalf("operator: %v", err)
 	}
-	if after := countsOf(t, opWS, now); after != before {
-		t.Fatalf("operator data changed: %+v -> %+v", before, after)
+	if after := countsOf(t, opWS, now); after != opBefore {
+		t.Fatalf("operator data changed: %+v -> %+v", opBefore, after)
+	}
+	if after := countsOf(t, wsC, now); after != cBefore {
+		t.Fatalf("other workspace changed: %+v -> %+v", cBefore, after)
 	}
 	if n := count(`SELECT COUNT(*) FROM users WHERE id = ?`, op.ID); n != 1 {
 		t.Fatal("operator deleted")
+	}
+}
+
+func TestDeleteAccountOperatorGuards(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	raw, _ := s.CreateToken(ctx, TokenSetup, 0, time.Hour, now)
+	op1, err := s.CompleteSetup(ctx, SetupInput{Email: "op1@x.co", PasswordHash: "x", WorkspaceName: "Op", SetupToken: raw, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opWS := s.Workspace(OperatorWorkspaceID)
+	seedWS(t, s, opWS, "opsite", now)
+	op2, _, err := s.CreateAccount(ctx, AccountInput{Email: "op2@x.co", PasswordHash: "x", WorkspaceName: "Op2", Slug: "op2", Operator: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// op2 becomes the sole owner of workspace 1.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM memberships WHERE user_id = ?`, op1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, 1, 'owner', ?)`, op2.ID, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	// A disabled second operator does not count.
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, now.UnixMilli(), op1.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := countsOf(t, opWS, now)
+	if _, err := s.DeleteAccount(ctx, op2.ID); !errors.Is(err, ErrLastOperator) {
+		t.Fatalf("only active operator: %v", err)
+	}
+	// With op1 active again, op2 can go, but workspace 1 stays.
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = NULL WHERE id = ?`, op1.ID); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := s.DeleteAccount(ctx, op2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range deleted {
+		if id == OperatorWorkspaceID {
+			t.Fatal("operator workspace reported deleted")
+		}
+	}
+	if _, err := opWS.Info(ctx); err != nil {
+		t.Fatalf("workspace 1: %v", err)
+	}
+	if after := countsOf(t, opWS, now); after != before {
+		t.Fatalf("workspace 1 data changed: %+v -> %+v", before, after)
+	}
+}
+
+func TestExplicitSlugCollision(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	_, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "default", Now: now})
+	if !errors.Is(err, ErrSlugTaken) {
+		t.Fatalf("err = %v", err)
+	}
+	if n, _ := s.CountUsers(ctx); n != 0 {
+		t.Fatalf("users = %d", n)
+	}
+}
+
+func TestDeriveSlugFallbackAfterManyCollisions(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	slugs := []string{"xyz"}
+	for i := 2; i <= 21; i++ {
+		slugs = append(slugs, "xyz-"+strconv.Itoa(i))
+	}
+	for _, sl := range slugs {
+		if _, err := createWorkspace(ctx, s.db, "X", sl, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := DeriveSlug(ctx, s.db, "xyz")
+	if err != nil || !ValidSlug(got) || !strings.HasPrefix(got, "xyz-") || len(got) != 8 {
+		t.Fatalf("got %q %v", got, err)
+	}
+	if _, err := s.WorkspaceBySlug(ctx, got); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("not unique: %v", err)
 	}
 }
