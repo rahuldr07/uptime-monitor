@@ -23,11 +23,14 @@ const (
 	isoStatus = "A-status-zz"
 	isoSecret = "A-secret"
 	isoHook   = "hooks.example"
+	isoDesc   = "A-desc-zz"
+	isoAlert  = "A-slackerr-zz"
+	isoChat   = "A-chat-zz"
 	// isoURL fails fast and offline.
 	isoURL = "http://127.0.0.1:1"
 )
 
-var isoMarkers = []string{isoTarget, isoMaint, isoStatus, isoSecret, isoHook}
+var isoMarkers = []string{isoTarget, isoMaint, isoStatus, isoSecret, isoHook, isoDesc, isoAlert, isoChat}
 
 func leaks(s string) []string {
 	var out []string
@@ -93,13 +96,18 @@ func seedA(t *testing.T, e *env) isoA {
 	a := seedWorkspace(t, e, e.opWS, isoTarget, isoMaint)
 	ctx := context.Background()
 	for k, v := range map[string]string{
-		"notify":       `{"slack":{"webhook_url":"https://hooks.example/A-secret"}}`,
+		"notify":       `{"slack":{"webhook_url":"https://hooks.example/A-secret"},"telegram":{"bot_token":"A-secret-tg","chat_id":"A-chat-zz"}}`,
 		"status_title": isoStatus,
-		"status_desc":  "A-desc-zz",
+		"status_desc":  isoDesc,
 	} {
 		if err := e.opWS.SetSetting(ctx, k, v); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// A failed Slack delivery: shows on /alerts as the channel's last status.
+	if err := e.st.InsertAlert(ctx, store.Alert{IncidentID: a.incident, TargetID: a.target, SentAt: e.clock,
+		Channel: "slack", Event: "down", OK: false, Error: isoAlert}); err != nil {
+		t.Fatal(err)
 	}
 	return a
 }
@@ -146,6 +154,8 @@ type isoCase struct {
 	form  url.Values // POST body
 	sse   bool       // the route streams; checked against published events
 	also  int        // one status above 499 that is the correct answer here
+	want  string     // B's own answer, which the body must contain
+	deny  string     // the body must not contain this (B has no such state)
 }
 
 var attackForm = url.Values{
@@ -169,9 +179,9 @@ var isoCases = map[string]isoCase{
 	"GET /incidents":                {query: "?target=%T"},
 	"POST /incidents/{id}/ack":      {form: attackForm},
 	"POST /incidents/{id}/note":     {form: attackForm},
-	"GET /alerts":                   {query: "?target=%T"},
+	"GET /alerts":                   {query: "?target=%T", deny: "leave blank to keep"}, // B stored no channel
 	"POST /alerts":                  {form: attackForm},
-	"POST /alerts/test":             {form: attackForm, also: http.StatusBadGateway}, // B has no Slack channel
+	"POST /alerts/test":             {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
 	"POST /status/settings":         {form: attackForm},
 	"GET /maintenance":              {query: "?target=%T"},
 	"POST /maintenance":             {form: attackForm},
@@ -234,10 +244,29 @@ func quiet(t *testing.T, ch <-chan string, d time.Duration) {
 	t.Helper()
 	select {
 	case l, ok := <-ch:
-		if ok {
-			t.Fatalf("B received an event for A's workspace: %s", l)
+		if !ok {
+			t.Fatal("B's stream closed; the quiet check proves nothing")
 		}
+		t.Fatalf("B received an event for A's workspace: %s", l)
 	case <-time.After(d):
+	}
+}
+
+// delivered publishes an event for B's workspace and requires it on B's
+// stream, so a silent stream is known to be a working one.
+func (e *env) delivered(t *testing.T, ch <-chan string, wsID int64) {
+	t.Helper()
+	e.mon.Events.Publish(monitor.Event{WorkspaceID: wsID, Kind: "check"})
+	select {
+	case l, ok := <-ch:
+		if !ok {
+			t.Fatal("B's stream closed")
+		}
+		if !strings.Contains(l, `"kind":"check"`) {
+			t.Fatalf("unexpected event on B's stream: %s", l)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("B's own event never arrived; the stream is not delivering")
 	}
 }
 
@@ -262,7 +291,7 @@ func TestIsolationSuite(t *testing.T) {
 // attackRoutes sends B's request for every workspace route at A's objects.
 func attackRoutes(t *testing.T) {
 	e := newEnv(t)
-	bob, _ := e.account(t, "b@example.com")
+	bob, bws := e.account(t, "b@example.com")
 	a := seedA(t, e)
 	before := snapshotWS(t, e.opWS, a)
 	if len(before.Targets) != 1 || len(before.Incidents) == 0 || len(before.Maint) != 1 || len(before.Checks) == 0 ||
@@ -288,6 +317,7 @@ func attackRoutes(t *testing.T) {
 			ch := e.openStreamAs(t, bob)
 			e.mon.Events.Publish(monitor.Event{WorkspaceID: e.opWS.ID(), Kind: "check"})
 			quiet(t, ch, 200*time.Millisecond)
+			e.delivered(t, ch, bws.ID())
 			recordCovered(key)
 			continue
 		}
@@ -305,6 +335,12 @@ func attackRoutes(t *testing.T) {
 		if hasID && resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s %s: status %d, want 404", r.method, path, resp.StatusCode)
 		}
+		if c.want != "" && !strings.Contains(body, c.want) {
+			t.Errorf("%s: body lacks %q, so B's own state was not used", key, c.want)
+		}
+		if c.deny != "" && strings.Contains(body, c.deny) {
+			t.Errorf("%s: body contains %q: A's state reached B", key, c.deny)
+		}
 		if l := leaks(body + resp.Header.Get("Location")); len(l) > 0 {
 			t.Errorf("%s %s (%d) leaked %v", r.method, path, resp.StatusCode, l)
 		}
@@ -318,7 +354,7 @@ func testIsolationAggregates(t *testing.T) {
 	e := newEnv(t)
 	bob, bws := e.account(t, "b@example.com")
 	seedWorkspace(t, e, bws, "B-target-zz", "B-maint-zz")
-	paths := []string{"/api/status", "/api/incidents", "/api/maintenance", "/", "/incidents", "/maintenance", "/targets"}
+	paths := []string{"/api/status", "/api/incidents", "/api/maintenance", "/", "/alerts", "/incidents", "/maintenance", "/targets"}
 	capture := func() map[string]string {
 		out := map[string]string{}
 		for _, p := range paths {
@@ -338,7 +374,7 @@ func testIsolationAggregates(t *testing.T) {
 	after := capture()
 	for _, p := range paths {
 		if before[p] != after[p] {
-			t.Errorf("GET %s changed after A got data:\nbefore %s\nafter  %s", p, before[p], after[p])
+			t.Errorf("GET %s changed after A got data; first difference:\n%s", p, firstDiff(before[p], after[p]))
 		}
 		if l := leaks(after[p]); len(l) > 0 {
 			t.Errorf("GET %s leaked %v", p, l)
@@ -348,7 +384,7 @@ func testIsolationAggregates(t *testing.T) {
 
 func testIsolationLive(t *testing.T) {
 	e := newEnv(t)
-	bob, _ := e.account(t, "b@example.com")
+	bob, bws := e.account(t, "b@example.com")
 	a := seedA(t, e)
 	control := e.openStreamAs(t, e.op) // A's own stream proves events do flow
 	b := e.openStreamAs(t, bob)
@@ -364,6 +400,7 @@ func testIsolationLive(t *testing.T) {
 	// Let the check finish publishing before judging B's stream.
 	time.Sleep(300 * time.Millisecond)
 	quiet(t, b, 300*time.Millisecond)
+	e.delivered(t, b, bws.ID())
 }
 
 func testIsolationStatus(t *testing.T) {
@@ -392,8 +429,10 @@ func testIsolationStatus(t *testing.T) {
 		t.Fatalf("anonymous /s/default: %d", resp.StatusCode)
 	}
 	for name, body := range map[string]string{"B's view": warm, "anonymous": anon} {
-		if !strings.Contains(body, isoTarget) {
-			t.Errorf("%s: A's page should list A's monitor", name)
+		for _, want := range []string{isoTarget, isoStatus, isoDesc} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: A's page should contain %q", name, want)
+			}
 		}
 		if strings.Contains(body, "B-target-zz") || strings.Contains(body, "B-maint-zz") {
 			t.Errorf("%s: A's status page shows B's data", name)
@@ -401,8 +440,8 @@ func testIsolationStatus(t *testing.T) {
 	}
 	// And the other way round: B's page holds only B's data.
 	resp, bpage := e.get(t, e.client(t), "/s/b")
-	if resp.StatusCode != http.StatusOK || !strings.Contains(bpage, "B-target-zz") {
-		t.Fatalf("B's own status page: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(bpage, "B-target-zz") || !strings.Contains(bpage, "B-maint-zz") {
+		t.Fatalf("B's own status page should show its monitor and active maintenance: %d", resp.StatusCode)
 	}
 	if l := leaks(bpage); len(l) > 0 {
 		t.Errorf("B's status page leaked %v", l)
@@ -435,4 +474,15 @@ func TestEveryWorkspaceRouteHasIsolationCase(t *testing.T) {
 			t.Errorf("isolation case %q matches no workspace route", key)
 		}
 	}
+}
+
+// firstDiff shows the first line where two bodies differ.
+func firstDiff(a, b string) string {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(al) && i < len(bl); i++ {
+		if al[i] != bl[i] {
+			return "before: " + al[i] + "\nafter:  " + bl[i]
+		}
+	}
+	return "lengths differ: " + strconv.Itoa(len(al)) + " vs " + strconv.Itoa(len(bl)) + " lines"
 }

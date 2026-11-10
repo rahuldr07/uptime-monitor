@@ -10,17 +10,39 @@ import (
 	"testing"
 )
 
-// sysAllowed lists the non-test files that may use the unscoped store (s.sys).
-// Everything else must reach workspace data through the signed-in user's *store.WS.
-var sysAllowed = map[string]string{
-	"session.go": "resolves a session cookie to a user",
-	"setup.go":   "first-run setup",
-	"login.go":   "sign-in",
-	"account.go": "password and session management for the signed-in user",
-	"reset.go":   "password reset",
-	"web.go":     "healthz Ping",
-	"status.go":  "public status page slug resolver",
-	"events.go":  "session re-check for open streams",
+// sysAllowed lists, per file and enclosing function, the methods of the
+// unscoped store (s.sys) that may be called. Everything else, including the
+// workspace handlers that live in the same files, must reach data through the
+// signed-in user's *store.WS.
+var sysAllowed = map[string][]string{
+	"session.go|(*Server).lookupAuth":        {"SessionAuth"},            // session cookie -> user
+	"setup.go|(*Server).setupPage":           {"Workspace", "PeekToken"}, // first-run setup
+	"setup.go|(*Server).setupPost":           {"PeekToken", "CompleteSetup", "CreateSession"},
+	"login.go|(*Server).loginPost":           {"UserByEmail", "DeleteSession", "CreateSession"},
+	"login.go|(*Server).logout":              {"DeleteSession"},
+	"account.go|(*Server).accountPassword":   {"PasswordHash", "SetPassword"},
+	"account.go|(*Server).accountSignOutAll": {"DeleteUserSessions"},
+	"reset.go|(*Server).resetPage":           {"PeekToken"},
+	"reset.go|(*Server).resetPost":           {"PeekToken", "ResetPassword", "CreateSession"},
+	"web.go|(*Server).healthz":               {"Ping"},
+	"status.go|(*Server).statusRedirect":     {"Workspace"},                    // operator's page for anonymous visitors
+	"status.go|(*Server).statusPage":         {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
+	"events.go|(*Server).events":             {"SessionAuth"},                  // session re-check only
+}
+
+func funcName(fd *ast.FuncDecl) string {
+	if fd.Recv == nil || len(fd.Recv.List) == 0 {
+		return fd.Name.Name
+	}
+	switch rt := fd.Recv.List[0].Type.(type) {
+	case *ast.StarExpr:
+		if id, ok := rt.X.(*ast.Ident); ok {
+			return "(*" + id.Name + ")." + fd.Name.Name
+		}
+	case *ast.Ident:
+		return rt.Name + "." + fd.Name.Name
+	}
+	return fd.Name.Name
 }
 
 func TestSysAllowList(t *testing.T) {
@@ -29,7 +51,7 @@ func TestSysAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	used := 0
+	used := map[string]bool{} // "file|func|Method" seen
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -42,18 +64,49 @@ func TestSysAllowList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "sys" {
-				used++
-				if _, ok := sysAllowed[f]; !ok {
-					t.Errorf("%s: %s uses the unscoped store (.sys); use the request's workspace", f, fset.Position(sel.Pos()))
-				}
+		for _, d := range file.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				// Package-level declarations (vars, closures) have no function to allow.
+				ast.Inspect(d, func(n ast.Node) bool {
+					if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "sys" {
+						t.Errorf("%s: %s uses the unscoped store (.sys) outside a function", f, fset.Position(sel.Pos()))
+					}
+					return true
+				})
+				continue
 			}
-			return true
-		})
+			key := f + "|" + funcName(fd)
+			allowed := map[string]bool{}
+			for _, m := range sysAllowed[key] {
+				allowed[m] = true
+			}
+			covered := map[token.Pos]bool{}
+			ast.Inspect(fd, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "sys" {
+					covered[inner.Pos()] = true
+					used[key+"|"+sel.Sel.Name] = true
+					if !allowed[sel.Sel.Name] {
+						t.Errorf("%s: %s calls .sys.%s in %s; use the request's workspace", f, fset.Position(sel.Pos()), sel.Sel.Name, funcName(fd))
+					}
+				} else if sel.Sel.Name == "sys" && !covered[sel.Pos()] {
+					t.Errorf("%s: %s uses the unscoped store (.sys) other than by calling a method on it", f, fset.Position(sel.Pos()))
+				}
+				return true
+			})
+		}
 	}
-	if used == 0 {
-		t.Fatal("found no .sys uses at all; the check is not looking at the right files")
+	// Stale entries would let a future use slip in unnoticed.
+	for key, methods := range sysAllowed {
+		for _, m := range methods {
+			if !used[key+"|"+m] {
+				t.Errorf("allow-list entry %s .sys.%s is unused; remove it", key, m)
+			}
+		}
 	}
 }
 
