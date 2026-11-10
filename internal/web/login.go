@@ -115,7 +115,9 @@ type loginData struct {
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "login", loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
+	d := loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))}
+	d.Flash = flashFrom(r)
+	s.render(w, r, "login", d)
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,9 @@ type authCtx struct {
 	WS         *store.WS
 	Workspace  store.Workspace
 	IsOperator bool
+	// sessionHash identifies the current session, so a password change can
+	// keep it while revoking the rest.
+	sessionHash string
 }
 
 type authKey struct{}
@@ -72,7 +75,7 @@ func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
 		return nil, false
 	}
 	return &authCtx{User: au.User, WS: au.WS, Workspace: au.Workspace,
-		IsOperator: au.User.IsOperator}, true
+		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash}, true
 }
 
 // withAuthCache installs the per-request cache that currentAuth fills.

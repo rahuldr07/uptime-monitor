@@ -1,0 +1,20 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Account</h1><div class="sub">{{.UserEmail}}</div></div>
+</div>
+<div class="card block">
+  <h2>Change password</h2>
+  <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
+    <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
+    <div class="field"><label>New password</label><input name="new" type="password" required minlength="10" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm new password</label><input name="confirm" type="password" required minlength="10" autocomplete="new-password"></div>
+    <div style="margin-top:14px"><button type="submit" class="primary">Change password</button></div>
+    <p class="muted small" style="margin-top:8px">Your other sessions are signed out.</p>
+  </form>
+</div>
+<div class="card block">
+  <h2>Sessions</h2>
+  <p class="muted small" style="margin:6px 0 12px">Sign out on every device, including this one.</p>
+  <form method="post" action="/account/signout-all" data-confirm="Sign out everywhere? You will need to sign in again."><button type="submit">Sign out everywhere</button></form>
+</div>
+{{end}}

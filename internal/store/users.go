@@ -272,15 +272,10 @@ func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, 
 	return u, s.Workspace(ws.ID), nil
 }
 
-// SetPassword replaces a user's password hash, deletes all their sessions
+// setPassword replaces a user's password hash, deletes all their sessions
 // except keepSessionHash (empty deletes all), and deletes their unused reset
-// tokens.
-func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepSessionHash string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+// tokens, inside tx.
+func setPassword(ctx context.Context, tx querier, userID int64, phc, keepSessionHash string) error {
 	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, phc, userID)
 	if err != nil {
 		return err
@@ -291,10 +286,53 @@ func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepS
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepSessionHash); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind = 'reset' AND used_at IS NULL`, userID); err != nil {
+	_, err = tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind = 'reset' AND used_at IS NULL`, userID)
+	return err
+}
+
+// SetPassword replaces a user's password hash, deletes all their sessions
+// except keepSessionHash (empty deletes all), and deletes their unused reset
+// tokens.
+func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepSessionHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setPassword(ctx, tx, userID, phc, keepSessionHash); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ResetPassword consumes a reset token and, in the same transaction, sets the
+// user's password, deletes all their sessions and unused reset tokens, and
+// marks the address verified (receiving the link proves ownership). A token
+// that is unknown, used, expired or belongs to a disabled user is ErrNotFound.
+func (s *Store) ResetPassword(ctx context.Context, raw, phc string, now time.Time) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	t, err := consumeToken(ctx, tx, TokenReset, raw, now)
+	if err != nil {
+		return User{}, err
+	}
+	if err := setPassword(ctx, tx, t.UserID, phc, ""); err != nil {
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET verified_at = ? WHERE id = ? AND verified_at IS NULL`, now.UnixMilli(), t.UserID); err != nil {
+		return User{}, err
+	}
+	u, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, t.UserID))
+	if err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 // MarkVerified sets verified_at if it is not already set.

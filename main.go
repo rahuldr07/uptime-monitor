@@ -56,6 +56,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	backupPath := flag.String("backup", "", "write a consistent copy of the database to this path and exit")
 	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
+	resetEmail := flag.String("reset-password", "", "print a one-time password reset link for this email and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -73,6 +74,15 @@ func main() {
 	}
 	if *setupLink {
 		link, err := newSetupLink(cfgPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(link)
+		return
+	}
+	if *resetEmail != "" {
+		link, err := newResetLink(cfgPath, *resetEmail)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -247,6 +257,36 @@ func newSetupLink(cfgPath string) (string, error) {
 		return "", err
 	}
 	return cfg.LinkBase() + "/setup?token=" + raw, nil
+}
+
+// resetTokenTTL is how long a reset link from -reset-password works.
+const resetTokenTTL = time.Hour
+
+// newResetLink creates a reset token for the user with this email and returns
+// the link that uses it.
+func newResetLink(cfgPath, email string) (string, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return "", err
+	}
+	st, err := store.Open(cfg.DB)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	u, _, err := st.UserByEmail(ctx, email)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", errors.New("no such user")
+	}
+	if err != nil {
+		return "", err
+	}
+	raw, err := st.CreateToken(ctx, store.TokenReset, u.ID, resetTokenTTL, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return cfg.LinkBase() + "/reset?token=" + raw, nil
 }
 
 // backup copies the configured database to dest and returns the absolute

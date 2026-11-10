@@ -685,3 +685,46 @@ func TestCompleteSetupConcurrentTokenAndPassword(t *testing.T) {
 		t.Fatalf("users = %d, successes = %d, errs = %v", n, ok, errs)
 	}
 }
+
+func TestResetPassword(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "old", WorkspaceName: "A", Slug: "a", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateToken(ctx, TokenReset, u.ID, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResetPassword(ctx, "bogus", "x", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bogus token: %v", err)
+	}
+	if _, _, err := s.UserByEmail(ctx, "a@b.co"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ResetPassword(ctx, raw, "new", now)
+	if err != nil || got.ID != u.ID || got.VerifiedAt == nil {
+		t.Fatalf("ResetPassword = %+v, %v", got, err)
+	}
+	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "new" {
+		t.Errorf("phc = %q", phc)
+	}
+	if _, err := s.SessionAuth(ctx, sess, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("session survived: %v", err)
+	}
+	if _, err := s.ResetPassword(ctx, raw, "again", now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("token reuse: %v", err)
+	}
+	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "new" {
+		t.Errorf("reused token changed password: %q", phc)
+	}
+}
