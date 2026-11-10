@@ -77,18 +77,19 @@ type Notify struct {
 
 // Config is the full application configuration.
 type Config struct {
-	Listen           string   `json:"listen"`
-	DB               string   `json:"db"`
-	AdminPassword    string   `json:"admin_password"`    // empty disables login (local use only)
-	InsecureNoAuth   bool     `json:"insecure_no_auth"`  // allow an empty password on a non-loopback address
-	TrustProxy       bool     `json:"trust_proxy"`       // trust X-Forwarded-For/-Proto from a reverse proxy
-	TrustedProxies   int      `json:"trusted_proxies"`   // proxies in front of the server (default 1 with trust_proxy)
-	FailureThreshold int      `json:"failure_threshold"` // consecutive failures before "down"
-	Interval         Duration `json:"interval"`
-	Timeout          Duration `json:"timeout"`
-	Retention        Duration `json:"retention"`
-	Targets          []Target `json:"targets"`
-	Notify           Notify   `json:"notify"`
+	Listen              string   `json:"listen"`
+	DB                  string   `json:"db"`
+	AdminPassword       string   `json:"admin_password"`        // empty disables login (local use only)
+	InsecureNoAuth      bool     `json:"insecure_no_auth"`      // allow an empty password on a non-loopback address
+	TrustProxy          bool     `json:"trust_proxy"`           // trust X-Forwarded-For/-Proto from a reverse proxy
+	TrustedProxies      int      `json:"trusted_proxies"`       // proxies in front of the server (default 1 with trust_proxy)
+	AllowPrivateTargets string   `json:"allow_private_targets"` // none, operator or all: who may reach internal addresses (default operator)
+	FailureThreshold    int      `json:"failure_threshold"`     // consecutive failures before "down"
+	Interval            Duration `json:"interval"`
+	Timeout             Duration `json:"timeout"`
+	Retention           Duration `json:"retention"`
+	Targets             []Target `json:"targets"`
+	Notify              Notify   `json:"notify"`
 }
 
 // Load reads a JSON config file. Environment variables in the form $VAR or
@@ -135,6 +136,18 @@ func (c *Config) ProxyHops() int {
 		return c.TrustedProxies
 	}
 	return 1
+}
+
+// AllowPrivate reports whether a client may reach loopback, private and other
+// internal addresses. operator says whether the client belongs to the operator.
+func (c *Config) AllowPrivate(operator bool) bool {
+	switch c.AllowPrivateTargets {
+	case "none":
+		return false
+	case "all":
+		return true
+	}
+	return operator
 }
 
 func isLoopback(listen string) bool {
@@ -199,6 +212,13 @@ func (c *Config) applyDefaults() error {
 	// The 24h uptime figures, latency percentiles and hourly bars read raw checks.
 	if c.Retention.Duration < 24*time.Hour {
 		return fmt.Errorf("config: retention %s is too short; use at least 24h", c.Retention.Duration)
+	}
+	switch c.AllowPrivateTargets {
+	case "":
+		c.AllowPrivateTargets = "operator"
+	case "none", "operator", "all":
+	default:
+		return errors.New(`config: allow_private_targets must be "none", "operator" or "all"`)
 	}
 	if c.FailureThreshold <= 0 {
 		c.FailureThreshold = 2

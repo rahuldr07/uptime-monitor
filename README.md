@@ -107,6 +107,7 @@ From a release before the production hardening:
 | `insecure_no_auth` | `false` | allow an empty password on a non-loopback address (not recommended) |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
+| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until accounts exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |

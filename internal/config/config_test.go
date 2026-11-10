@@ -103,3 +103,33 @@ func TestNoTargetsIsAllowed(t *testing.T) {
 		t.Fatalf("empty config should be valid (targets can be added in the UI): %v", err)
 	}
 }
+
+func TestAllowPrivateTargets(t *testing.T) {
+	c, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AllowPrivateTargets != "operator" {
+		t.Fatalf("default = %q, want operator", c.AllowPrivateTargets)
+	}
+	if !c.AllowPrivate(true) || c.AllowPrivate(false) {
+		t.Fatal("operator mode should allow only the operator")
+	}
+	c, err = Parse([]byte(`{"allow_private_targets":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AllowPrivate(true) {
+		t.Fatal("none should block the operator too")
+	}
+	c, err = Parse([]byte(`{"allow_private_targets":"all"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AllowPrivate(false) {
+		t.Fatal("all should allow everyone")
+	}
+	if _, err = Parse([]byte(`{"allow_private_targets":"some"}`)); err == nil || !strings.Contains(err.Error(), "allow_private_targets must be") {
+		t.Fatalf("err = %v, want allow_private_targets must be", err)
+	}
+}
