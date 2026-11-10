@@ -1054,6 +1054,11 @@ func TestClientKeyIPv6Grouping(t *testing.T) {
 	if c := key("2001:db8:0:1::1"); c == a {
 		t.Errorf("different /64 must differ: %q", c)
 	}
+	r := httptest.NewRequest(http.MethodPost, "/login", nil)
+	r.RemoteAddr = "[fe80::1%eth0]:4444"
+	if z := clientKey(r, 0); z != "fe80::/64" {
+		t.Errorf("zoned address should group to its /64, got %q", z)
+	}
 	if got := key("203.0.113.9"); got != "203.0.113.9" {
 		t.Errorf("IPv4 unchanged, got %q", got)
 	}

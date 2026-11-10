@@ -135,6 +135,25 @@ func (l *Limiter) record(key string, now time.Time) {
 	}
 }
 
+// Undo removes the most recent event recorded for key, if any. It lets a
+// caller refund a Take when the guarded work did not happen.
+func (l *Limiter) Undo(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	el, found := l.keys[key]
+	if !found {
+		return
+	}
+	e := el.Value.(*entry)
+	l.prune(e, l.now())
+	if len(e.times) > 0 {
+		e.times = e.times[:len(e.times)-1]
+	}
+	if len(e.times) == 0 {
+		l.remove(el)
+	}
+}
+
 // Reset forgets key.
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()

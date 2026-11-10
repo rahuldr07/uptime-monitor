@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -355,8 +357,10 @@ func TestLoginPerPairLimit(t *testing.T) {
 	e := newEnv(t)
 	e.cfg.TrustProxy = true
 	const pairEmail = "a@x.example"
-	// Two failures per minute from each address keep the per-address limit
-	// out of the way; advance the clock between batches.
+	// One address makes all 10 failures. Batches of 4 stay under the
+	// per-address limit of 5 per minute, and the clock moves 2 minutes between
+	// batches so that limit resets while the 15-minute pair window still
+	// holds every failure.
 	for i := 0; i < 10; i++ {
 		if i%4 == 0 && i > 0 {
 			e.clock = e.clock.Add(2 * time.Minute)
@@ -430,33 +434,38 @@ func TestLoginNoEnumeration(t *testing.T) {
 	e.cfg.TrustProxy = true
 	const n = 30
 	var known, unknown []time.Duration
-	var knownBody, unknownBody string
+	type result struct {
+		status  int
+		body    string
+		cookies string
+		d       time.Duration
+	}
+	try := func(email, addr string) result {
+		start := time.Now()
+		resp, body := e.loginFrom(t, addr, email, "wrong password!")
+		d := time.Since(start)
+		return result{resp.StatusCode, strings.ReplaceAll(body, email, "EMAIL"),
+			strings.Join(resp.Header.Values("Set-Cookie"), "\n"), d}
+	}
 	for i := 0; i < n+1; i++ {
 		// A fresh address per request; the clock moves past every window.
 		e.clock = e.clock.Add(time.Hour)
-		for _, c := range []struct {
-			email string
-			out   *[]time.Duration
-			body  *string
-		}{{opEmail, &known, &knownBody}, {"nobody" + strconv.Itoa(i) + "@example.com", &unknown, &unknownBody}} {
-			addr := "192.0.2." + strconv.Itoa(2*i+1)
-			if c.out == &unknown {
-				addr = "192.0.2." + strconv.Itoa(2*i+2)
-			}
-			start := time.Now()
-			resp, body := e.loginFrom(t, addr, c.email, "wrong password!")
-			d := time.Since(start)
-			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("%s: %d", c.email, resp.StatusCode)
-			}
-			if i == 0 {
-				*c.body = strings.ReplaceAll(body, c.email, "")
-				continue // warm-up
-			}
-			*c.out = append(*c.out, d)
+		kAddr, uAddr := "192.0.2."+strconv.Itoa(2*i+1), "192.0.2."+strconv.Itoa(2*i+2)
+		uEmail := "nobody" + strconv.Itoa(i) + "@example.com"
+		var k, u result
+		if i%2 == 0 { // alternate which path goes first
+			k = try(opEmail, kAddr)
+			u = try(uEmail, uAddr)
+		} else {
+			u = try(uEmail, uAddr)
+			k = try(opEmail, kAddr)
 		}
-		if i == 0 && knownBody != strings.ReplaceAll(unknownBody, "nobody0@example.com", "") {
-			t.Fatalf("bodies differ:\n%s\n---\n%s", knownBody, unknownBody)
+		if k.status != http.StatusUnauthorized || k.status != u.status || k.body != u.body || k.cookies != u.cookies {
+			t.Fatalf("round %d: responses differ: %d vs %d, cookies %q vs %q, bodies equal=%v",
+				i, k.status, u.status, k.cookies, u.cookies, k.body == u.body)
+		}
+		if i > 0 { // round 0 is warm-up
+			known, unknown = append(known, k.d), append(unknown, u.d)
 		}
 	}
 	med := func(ds []time.Duration) time.Duration {
@@ -469,8 +478,10 @@ func TestLoginNoEnumeration(t *testing.T) {
 	if diff < 0 {
 		diff = -diff
 	}
-	if diff >= 50*time.Millisecond {
-		t.Fatalf("medians differ by %v (known %v, unknown %v)", diff, mk, mu)
+	big := max(mk, mu)
+	// Relative bounds: a missing dummy hash makes unknown emails far faster.
+	if diff >= big/4 || mu < mk/2 {
+		t.Fatalf("timing differs: known %v, unknown %v", mk, mu)
 	}
 }
 
@@ -501,5 +512,157 @@ func TestHashBusyGives503(t *testing.T) {
 	resp, body := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {testSecret}})
 	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, msgBusy) {
 		t.Fatalf("busy hasher: %d", resp.StatusCode)
+	}
+}
+
+func TestLoginBurstIsBoundedByReservation(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	codes := map[int]int{}
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, _ := e.loginFrom(t, "203.0.113.77", opEmail, "wrong")
+			mu.Lock()
+			codes[resp.StatusCode]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if codes[http.StatusUnauthorized] != 5 || codes[http.StatusTooManyRequests] != 25 {
+		t.Fatalf("burst of 30 from one address: %v", codes)
+	}
+
+	// A fresh window: a success is not counted, so five failures still fit.
+	e.clock = e.clock.Add(2 * time.Minute)
+	if resp, _ := e.loginFrom(t, "203.0.113.77", opEmail, testSecret); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("success: %d", resp.StatusCode)
+	}
+	for i := 0; i < 5; i++ {
+		if resp, _ := e.loginFrom(t, "203.0.113.77", opEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("failure %d after a success: %d", i+1, resp.StatusCode)
+		}
+	}
+	if resp, _ := e.loginFrom(t, "203.0.113.77", opEmail, "wrong"); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("6th failure: %d", resp.StatusCode)
+	}
+
+	// Successes never limit anyone.
+	for i := 0; i < 12; i++ {
+		if resp, _ := e.loginFrom(t, "203.0.113.78", opEmail, testSecret); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("success %d: %d", i+1, resp.StatusCode)
+		}
+	}
+}
+
+func TestLoginRefundsWhenNoGuessHappened(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	good := e.srv.hasher
+	e.srv.hasher = &password.Hasher{} // every hash gives ErrBusy
+	for i := 0; i < 8; i++ {
+		if resp, _ := e.loginFrom(t, "203.0.113.90", opEmail, "wrong"); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("busy %d: %d", i+1, resp.StatusCode)
+		}
+	}
+	e.srv.hasher = good
+	if resp, _ := e.loginFrom(t, "203.0.113.90", opEmail, "wrong"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("busy refusals must not use up the limit: %d", resp.StatusCode)
+	}
+}
+
+func TestDeviceCookieHostPrefixOverHTTPS(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader(url.Values{"email": {opEmail}, "password": {testSecret}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	dev := cookieNamed(resp, hostDeviceCookie)
+	if resp.StatusCode != http.StatusSeeOther || dev == nil || !dev.Secure || dev.Path != "/" || cookieNamed(resp, deviceCookie) != nil {
+		t.Fatalf("status %d, device cookie %+v", resp.StatusCode, dev)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestLoginLogEvents(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	var buf syncBuf
+	e.srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	const unknownEmail, badPW = "ghost@example.com", "not-the-password-xyz"
+
+	e.loginFrom(t, "203.0.113.10", unknownEmail, badPW)
+	e.loginFrom(t, "203.0.113.11", opEmail, badPW)
+	for i := 0; i < 5; i++ { // fill the address limit, then get throttled
+		e.loginFrom(t, "203.0.113.12", opEmail, badPW)
+	}
+	e.loginFrom(t, "203.0.113.12", opEmail, badPW)
+	resp, _ := e.loginFrom(t, "203.0.113.13", opEmail, testSecret)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign-in: %d", resp.StatusCode)
+	}
+
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		events = append(events, m)
+	}
+	find := func(event, ip string) map[string]any {
+		for _, m := range events {
+			if m["event"] == event && m["ip"] == ip {
+				return m
+			}
+		}
+		t.Fatalf("no %s event for %s in %s", event, ip, buf.String())
+		return nil
+	}
+	if m := find("login_failed", "203.0.113.10"); m["email_hash"] == nil || m["user_id"] != nil {
+		t.Errorf("unknown email: %v", m)
+	}
+	if m := find("login_failed", "203.0.113.11"); m["user_id"] != float64(1) || m["email_hash"] != nil {
+		t.Errorf("known email: %v", m)
+	}
+	find("login_throttled", "203.0.113.12")
+	if m := find("login_ok", "203.0.113.13"); m["user_id"] != float64(1) {
+		t.Errorf("login_ok: %v", m)
+	}
+
+	out := buf.String()
+	secrets := []string{unknownEmail, opEmail, badPW, testSecret}
+	for _, c := range resp.Cookies() {
+		secrets = append(secrets, c.Value)
+	}
+	for _, sec := range secrets {
+		if strings.Contains(out, sec) {
+			t.Errorf("log contains %q", sec)
+		}
 	}
 }

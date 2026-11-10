@@ -165,3 +165,51 @@ func TestTakeConcurrent(t *testing.T) {
 		t.Fatalf("%d takes succeeded, want 5", n)
 	}
 }
+
+func TestUndo(t *testing.T) {
+	l, now := newTest(time.Minute, 2, 0)
+	l.Undo("missing") // no-op
+	l.Take("a")
+	l.Take("a")
+	if ok, _ := l.Take("a"); ok {
+		t.Fatal("third take must be denied")
+	}
+	l.Undo("a")
+	if ok, _ := l.Take("a"); !ok {
+		t.Fatal("take after undo must succeed")
+	}
+	if ok, _ := l.Take("a"); ok {
+		t.Fatal("undo must remove only one event")
+	}
+	l.Undo("a")
+	l.Undo("a")
+	l.Undo("a") // more undos than events is harmless
+	if ok, _ := l.Allow("a"); !ok || len(l.keys) != 0 {
+		t.Fatalf("emptied key must be dropped, keys=%d", len(l.keys))
+	}
+	l.Take("b")
+	*now = time.Unix(61, 0)
+	l.Undo("b") // the event already left the window
+	if len(l.keys) != 0 {
+		t.Fatal("expired key must be dropped")
+	}
+}
+
+func TestUndoConcurrent(t *testing.T) {
+	l := New(time.Minute, 1000, 0)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				l.Take("k")
+				l.Undo("k")
+			}
+		}()
+	}
+	wg.Wait()
+	if len(l.keys) != 0 {
+		t.Fatalf("balanced take/undo must leave nothing, keys=%d", len(l.keys))
+	}
+}

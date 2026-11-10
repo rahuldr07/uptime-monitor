@@ -56,8 +56,9 @@ const (
 	loginSlowWindow  = 5 * time.Second
 	loginSlowMax     = 1
 
-	deviceCookie = "uptime_device"
-	deviceMaxAge = 90 * 24 * time.Hour
+	deviceCookie     = "uptime_device"
+	hostDeviceCookie = "__Host-uptime_device"
+	deviceMaxAge     = 90 * 24 * time.Hour
 )
 
 // deviceMAC is the HMAC proving a browser has signed in as userID before.
@@ -70,18 +71,27 @@ func (s *Server) deviceMAC(userID int64) string {
 // deviceKnown reports whether the request carries a valid device cookie for
 // userID. It only ever relaxes the per-email slowdown.
 func (s *Server) deviceKnown(r *http.Request, userID int64) bool {
-	c, err := r.Cookie(deviceCookie)
+	c, err := r.Cookie(s.deviceCookieName(r))
 	if err != nil {
 		return false
 	}
 	return hmac.Equal([]byte(c.Value), []byte(strconv.FormatInt(userID, 10)+"."+s.deviceMAC(userID)))
 }
 
+// deviceCookieName follows the session cookie rule: over HTTPS only the
+// __Host- name is read or written.
+func (s *Server) deviceCookieName(r *http.Request) string {
+	if s.cookieName(r) == hostSessionCookie {
+		return hostDeviceCookie
+	}
+	return deviceCookie
+}
+
 func (s *Server) setDeviceCookie(w http.ResponseWriter, r *http.Request, userID int64) {
 	http.SetCookie(w, &http.Cookie{
-		Name: deviceCookie, Value: strconv.FormatInt(userID, 10) + "." + s.deviceMAC(userID),
+		Name: s.deviceCookieName(r), Value: strconv.FormatInt(userID, 10) + "." + s.deviceMAC(userID),
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Secure: s.cookieName(r) == hostSessionCookie, MaxAge: int(deviceMaxAge.Seconds()),
+		Secure: s.deviceCookieName(r) == hostDeviceCookie, MaxAge: int(deviceMaxAge.Seconds()),
 	})
 }
 
@@ -130,11 +140,12 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("sign-in throttled", "event", "login_throttled", "ip", addr)
 		fail(http.StatusTooManyRequests, msgTooMany)
 	}
-	// failed records a failure against all three limits and logs it. userID is
-	// 0 when the account is not known.
+	// failed keeps the address and pair reservations (they are the hit),
+	// records the failure against the email and logs it. userID is 0 when the
+	// account is not known.
+	refund := true
 	failed := func(userID int64) {
-		s.loginByAddr.Hit(addr)
-		s.loginByPair.Hit(pairKey)
+		refund = false
 		s.loginByEmail.Hit(emailKey)
 		if userID != 0 {
 			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "user_id", userID)
@@ -142,15 +153,24 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "email_hash", emailHash(emailKey))
 		}
 	}
-	// Every refusal happens before any hash.
-	if ok, _ := s.loginByAddr.Allow(addr); !ok {
+	// Every refusal happens before any hash. The address and pair slots are
+	// reserved atomically, so a burst cannot out-run the limit while its
+	// hashes are still running. They are refunded unless a guess was made.
+	if ok, _ := s.loginByAddr.Take(addr); !ok {
 		throttled()
 		return
 	}
-	if ok, _ := s.loginByPair.Allow(pairKey); !ok {
+	if ok, _ := s.loginByPair.Take(pairKey); !ok {
+		s.loginByAddr.Undo(addr)
 		throttled()
 		return
 	}
+	defer func() {
+		if refund {
+			s.loginByAddr.Undo(addr)
+			s.loginByPair.Undo(pairKey)
+		}
+	}()
 	// Over-long passwords fail like any other wrong one, before any lookup,
 	// so they cannot tell known addresses from unknown ones.
 	if len(r.FormValue("password")) > 256 {

@@ -42,10 +42,10 @@ func clientKey(r *http.Request, proxyHops int) string {
 // usually controls a whole /64. Anything else is returned unchanged.
 func groupAddr(s string) string {
 	a, err := netip.ParseAddr(s)
-	if err != nil || a.Zone() != "" {
+	if err != nil {
 		return s
 	}
-	if a = a.Unmap(); a.Is6() {
+	if a = a.WithZone("").Unmap(); a.Is6() {
 		return netip.PrefixFrom(a, 64).Masked().String()
 	}
 	return a.String()
