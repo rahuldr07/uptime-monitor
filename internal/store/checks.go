@@ -142,8 +142,9 @@ func (w *WS) Stats(ctx context.Context, targetID int64, since time.Time) (Stats,
 	return st, nil
 }
 
-// DailyUptime is the workspace-scoped form of the store method; a targetID of
-// 0 sums all of the workspace's targets per day.
+// DailyUptime returns per-day (UTC) stats for the last days days, oldest
+// first, from the rollups. Days with no checks have Total 0. A targetID of 0
+// sums all of the workspace's targets per day.
 func (w *WS) DailyUptime(ctx context.Context, targetID int64, now time.Time, days int) ([]Stats, error) {
 	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
 	cond, args := w.scope(targetID)
@@ -176,7 +177,11 @@ func (w *WS) DailyUptime(ctx context.Context, targetID int64, now time.Time, day
 	return out, nil
 }
 
-// RollupStats is the workspace-scoped form of the store method.
+// RollupStats aggregates the workspace's daily rollups of whole UTC days from
+// the one containing since up to now. It covers periods longer than the raw
+// check retention; the first day is counted in full, so the window can be up
+// to a day longer than asked. A targetID of 0 aggregates across all of the
+// workspace's targets.
 func (w *WS) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
 	cond, args := w.scope(targetID)
 	var st Stats
@@ -193,7 +198,8 @@ func (w *WS) RollupStats(ctx context.Context, targetID int64, since time.Time) (
 	return st, nil
 }
 
-// Latencies is the workspace-scoped form of the store method.
+// Latencies returns the latencies of the workspace's successful checks since
+// the given time, sorted ascending. A targetID of 0 covers all of its targets.
 func (w *WS) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
 	cond, args := w.scope(targetID)
 	rows, err := w.db.QueryContext(ctx,
@@ -229,7 +235,8 @@ func Percentile(sorted []int64, p float64) int64 {
 	return sorted[idx]
 }
 
-// HourlyUptime is the workspace-scoped form of the store method.
+// HourlyUptime returns per-hour stats for the last hours hours ending at
+// now, oldest first. A targetID of 0 sums all of the workspace's targets.
 func (w *WS) HourlyUptime(ctx context.Context, targetID int64, now time.Time, hours int) ([]Stats, error) {
 	start := now.UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
 	cond, args := w.scope(targetID)

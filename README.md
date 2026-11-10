@@ -60,6 +60,16 @@ proxy on the same host fronts it, publish the port as `127.0.0.1:8080:8080`
 
 ## Upgrading
 
+From a release before workspaces:
+
+- **Backup file.** When the database already has data, the first start writes
+  `<db>.pre-accounts-<timestamp>.bak` (mode `0600`) before migrating. Keep it
+  until you have checked the upgrade, then delete it, because it holds alert
+  secrets.
+- **Status page.** `/status` now redirects to `/s/default`. Existing links
+  keep working.
+- **Alert settings** saved in the browser now belong to the workspace.
+
 From a release before the production hardening:
 
 - **Empty password.** The server now refuses to start with an empty
@@ -112,7 +122,7 @@ From a release before the production hardening:
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
 | `targets[]` | | `name`, `url`, optional `interval`, `timeout`, `expect_status`, `keyword`, `group` |
-| `notify` | | copied into workspace 1 once, when it has no saved channels; after that, channels saved in the browser belong to the workspace and this key is ignored. `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
+| `notify` | | copied into workspace 1 once, if no alert settings have been saved yet. `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
 
 Uptime is also rolled up per day and kept for 400 days, independent of
 `retention`, so the 30-day uptime figures and the 90-day status page history
@@ -132,13 +142,13 @@ Command-line flags:
 Targets in the config file are added to the database on first start. After
 that the browser is the source of truth: edits and additions made in the UI
 are kept across restarts and config targets are only inserted when a target
-with that name does not already exist. Alert settings work the same way.
+with that name does not already exist. Config targets and alert settings are added to workspace 1; see `notify` above.
 
 ## API
 
 All endpoints need the admin session cookie when a password is set.
 
-- `GET /s/{slug}` the public status page (`/status` redirects to `/s/default`)
+- `GET /s/{slug}` (public) the public status page (`/status` redirects to `/s/default`)
 - `GET /api/status` current state and uptime for every target
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
@@ -185,11 +195,6 @@ deploy/               hardened systemd unit
    The command prints the absolute path of the database it copied and fails
    if that database does not exist, so a wrong path cannot produce an empty
    backup. Backups are created with mode `0600`.
-
-   Upgrading from a version before accounts writes
-   `<db>.pre-accounts-<timestamp>.bak` (mode `0600`) before migrating. Keep it
-   until you have checked the upgrade, then delete it: it contains alert
-   secrets.
 
 4. Point your orchestrator or external monitor at `/healthz`.
 5. For systemd: create the user (`useradd --system uptime`), install the binary to
