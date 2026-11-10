@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -216,7 +217,7 @@ func TestNewEndpoints(t *testing.T) {
 	if !strings.Contains(string(b), `"ok": true`) || !strings.Contains(string(b), `"status_code": 200`) {
 		t.Fatalf("test probe: %s", b)
 	}
-	if rows, _ := e.st.ListTargets(context.Background()); len(rows) != 0 {
+	if rows, _ := e.st.Workspace(1).ListTargets(context.Background()); len(rows) != 0 {
 		t.Fatal("test must not save a target")
 	}
 
@@ -230,7 +231,7 @@ func TestNewEndpoints(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(b), `"redirect": "/targets/`) {
 		t.Fatalf("json create: %d %s", resp.StatusCode, b)
 	}
-	tg, _ := e.st.GetTargetByName(context.Background(), "Ex")
+	tg, _ := e.st.Workspace(1).GetTargetByName(context.Background(), "Ex")
 	if tg.URL != "https://example.org/x" || tg.Group != "Core" {
 		t.Fatalf("scheme should be defaulted and group saved: %+v", tg)
 	}
@@ -558,11 +559,11 @@ func TestReviewRegressions(t *testing.T) {
 func TestNoteLengthByRunes(t *testing.T) {
 	e := newEnv(t, "")
 	c := e.client(t)
-	tg, _ := e.st.CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	tg, _ := e.st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
 	id, _ := e.st.OpenIncident(context.Background(), tg.ID, e.clock, "x")
 	ok := strings.Repeat("é", 500) // 1000 bytes, 500 chars: allowed
 	e.post(t, c, "/incidents/"+strconv.FormatInt(id, 10)+"/note", url.Values{"note": {ok}})
-	in, _ := e.st.GetIncident(context.Background(), id)
+	in, _ := e.st.Workspace(1).GetIncident(context.Background(), id)
 	if in.Note != ok {
 		t.Fatalf("500-rune note should be stored intact (got %d bytes)", len(in.Note))
 	}
@@ -624,7 +625,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "scheduled") {
 		t.Fatalf("schedule: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	list, _ := e.st.ListMaintenance(context.Background(), e.clock, 0)
+	list, _ := e.st.Workspace(1).ListMaintenance(context.Background(), e.clock, 0)
 	if len(list) != 2 || !list[1].StartsAt.Equal(time.Date(2026, 11, 8, 3, 30, 0, 0, time.UTC)) {
 		t.Fatalf("scheduled start should be 03:30 UTC: %+v", list)
 	}
@@ -716,12 +717,56 @@ func TestPrivateTargetsBlockedWhenNone(t *testing.T) {
 		t.Fatalf("operator create: %d %s", resp.StatusCode, body)
 	}
 	e.cfg.AllowPrivateTargets = "none"
-	tgs, err := e.st.ListTargets(context.Background())
+	tgs, err := e.st.Workspace(1).ListTargets(context.Background())
 	if err != nil || len(tgs) == 0 {
 		t.Fatalf("list targets: %v (n=%d)", err, len(tgs))
 	}
 	resp, body = e.post(t, c, "/targets/"+strconv.FormatInt(tgs[0].ID, 10), url.Values{"name": {"y"}, "url": {"http://127.0.0.1:9/"}})
 	if resp.StatusCode != 422 || !strings.Contains(body, msg) {
 		t.Fatalf("update: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestEventsFilteredByWorkspace(t *testing.T) {
+	e := newEnv(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.ts.URL+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// The handler has subscribed once it has written the retry line.
+	sc := bufio.NewScanner(resp.Body)
+	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "retry:") {
+		t.Fatalf("no stream preamble: %q", sc.Text())
+	}
+	e.mon.Events.Publish(monitor.Event{WorkspaceID: 2, Kind: "check"})
+	e.mon.Events.Publish(monitor.Event{WorkspaceID: 0, Kind: "check"})
+	e.mon.Events.Publish(monitor.Event{WorkspaceID: 1, Kind: "marker"})
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		if !strings.Contains(line, `"kind":"marker"`) {
+			t.Fatalf("first event should be the workspace 1 marker, got %q", line)
+		}
+		return
+	}
+	t.Fatalf("no event received: %v", sc.Err())
+}
+
+func TestAlertsNoConfigFallback(t *testing.T) {
+	e := newEnv(t, "")
+	e.cfg.Notify = config.Notify{Slack: &config.Slack{WebhookURL: "https://hooks.example/x"}}
+	_, body := e.get(t, e.client(t), "/alerts")
+	if strings.Contains(body, "hooks.example") {
+		t.Fatal("config webhook leaked into the alerts page")
+	}
+	// A stored channel shows "leave blank to keep"; an unconfigured one shows the placeholder.
+	if strings.Contains(body, "leave blank to keep") || !strings.Contains(body, "https://hooks.slack.com/services/") {
+		t.Fatal("slack should show as not configured when nothing is stored")
 	}
 }

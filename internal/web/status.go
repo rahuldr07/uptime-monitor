@@ -128,6 +128,7 @@ func (c *pageCache) rebuild(p *cachedPage, gen uint64, f *flight, build func() (
 }
 
 func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	// Admins see live data and the settings form; everyone else shares a
 	// briefly cached copy per theme and render mode. Anonymous visitors never
 	// bypass the cache, whatever headers they send.
@@ -137,7 +138,7 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		// receive the SameSite=Lax session cookie.
 		w.Header().Set("Content-Security-Policy", cspBase+"frame-ancestors 'none'")
 		w.Header().Set("X-Frame-Options", "DENY")
-		d, err := s.statusData(r)
+		d, err := s.statusData(r, ws)
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -151,7 +152,7 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		key += "|partial"
 	}
 	body, err := s.statusCache.get(r.Context(), key, func() ([]byte, error) {
-		d, err := s.statusData(r)
+		d, err := s.statusData(r, ws)
 		if err != nil {
 			return nil, err
 		}
@@ -166,21 +167,21 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	writeHTML(w, http.StatusOK, body)
 }
 
-func (s *Server) statusData(r *http.Request) (statusData, error) {
-	d := statusData{base: s.base(r, "status", "Status")}
-	d.StatusTitle, d.StatusDesc = s.statusMeta(r.Context())
+func (s *Server) statusData(r *http.Request, ws *store.WS) (statusData, error) {
+	d := statusData{base: s.base(r, ws, "status", "Status")}
+	d.StatusTitle, d.StatusDesc = s.statusMeta(r.Context(), ws)
 	d.Title = d.StatusTitle
 	scheme := "http"
 	if s.isHTTPS(r) {
 		scheme = "https"
 	}
 	d.ShareURL = scheme + "://" + r.Host + "/status"
-	views, err := s.views(r, viewOpts{days: true})
+	views, err := s.views(r, ws, viewOpts{days: true})
 	if err != nil {
 		return d, err
 	}
 	d.Total = len(views)
-	sched, err := s.store.ListMaintenance(r.Context(), d.Now, 20)
+	sched, err := ws.ListMaintenance(r.Context(), d.Now, 20)
 	if err != nil {
 		return d, err
 	}
@@ -209,9 +210,9 @@ func (s *Server) statusData(r *http.Request) (statusData, error) {
 	return d, nil
 }
 
-func (s *Server) statusMeta(ctx context.Context) (title, desc string) {
-	title, _ = s.store.GetSetting(ctx, "status_title")
-	desc, _ = s.store.GetSetting(ctx, "status_desc")
+func (s *Server) statusMeta(ctx context.Context, ws *store.WS) (title, desc string) {
+	title, _ = ws.GetSetting(ctx, "status_title")
+	desc, _ = ws.GetSetting(ctx, "status_desc")
 	if title == "" {
 		title = "Service status"
 	}
@@ -219,17 +220,18 @@ func (s *Server) statusMeta(ctx context.Context) (title, desc string) {
 }
 
 func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	title := strings.TrimSpace(r.FormValue("title"))
 	desc := strings.TrimSpace(r.FormValue("description"))
 	if len(title) > 80 || len(desc) > 200 {
 		redirect(w, r, "/status", "Title or description too long.")
 		return
 	}
-	if err := s.store.SetSetting(r.Context(), "status_title", title); err != nil {
+	if err := ws.SetSetting(r.Context(), "status_title", title); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if err := s.store.SetSetting(r.Context(), "status_desc", desc); err != nil {
+	if err := ws.SetSetting(r.Context(), "status_desc", desc); err != nil {
 		s.fail(w, err)
 		return
 	}

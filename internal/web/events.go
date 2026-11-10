@@ -20,6 +20,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
 		s.logger.Warn("sse: cannot clear write deadline", "err", err)
 	}
+	wsID := s.ws(r).ID()
 	ch, unsub := s.mon.Events.Subscribe()
 	defer unsub()
 	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
@@ -33,6 +34,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case ev := <-ch:
+			if ev.WorkspaceID != wsID {
+				continue
+			}
 			b, _ := json.Marshal(ev)
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
 				return

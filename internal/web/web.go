@@ -32,7 +32,7 @@ var staticFS embed.FS
 // Server holds the HTTP handlers.
 type Server struct {
 	cfg      *config.Config
-	store    *store.Store
+	sys      *store.Store
 	mon      *monitor.Monitor
 	logger   *slog.Logger
 	now      func() time.Time
@@ -65,7 +65,7 @@ func New(o Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Server{cfg: cfg, store: st, mon: mon, logger: logger, now: now,
+	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now,
 		sessions: newSessions(now), pages: map[string]*template.Template{}}
 	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
 	s.limiter.Now = now
@@ -142,7 +142,7 @@ func (s *Server) Handler() http.Handler { return s.securityHeaders(s.mux) }
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.store.Ping(ctx); err != nil {
+	if err := s.sys.Ping(ctx); err != nil {
 		s.logger.Error("health check", "err", err)
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
@@ -202,7 +202,7 @@ type base struct {
 	Maint       []store.Maintenance // windows active right now
 }
 
-func (s *Server) base(r *http.Request, page, title string) base {
+func (s *Server) base(r *http.Request, ws *store.WS, page, title string) base {
 	b := base{Title: title, Page: page, Admin: s.isAdmin(r), AuthEnabled: s.authEnabled(), Now: s.now(), Theme: themeFrom(r)}
 	if b.Admin {
 		// Only admin flows redirect with a flash; never echo ?msg= to anonymous
@@ -212,10 +212,10 @@ func (s *Server) base(r *http.Request, page, title string) base {
 	b.NewForm = targetForm{Action: "/targets", Submit: "Create monitor", ShowTest: true,
 		Interval: shortDur(s.cfg.Interval.Duration), Timeout: shortDur(s.cfg.Timeout.Duration)}
 	if b.Admin {
-		b.Unacked, _ = s.store.CountUnacknowledged(r.Context())
+		b.Unacked, _ = ws.CountUnacknowledged(r.Context())
 	}
-	b.Maint, _ = s.store.ActiveMaintenance(r.Context(), b.Now)
-	for _, st := range s.mon.Snapshot(s.ws(r).ID()) {
+	b.Maint, _ = ws.ActiveMaintenance(r.Context(), b.Now)
+	for _, st := range s.mon.Snapshot(ws.ID()) {
 		if st.Status == monitor.Down {
 			b.DownCount++
 		}
@@ -264,7 +264,7 @@ type viewOpts struct {
 	spark bool
 }
 
-func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (targetView, error) {
+func (s *Server) view(ctx context.Context, ws *store.WS, st monitor.State, o viewOpts) (targetView, error) {
 	now := s.now()
 	label := st.Status.String()
 	v := targetView{State: st, Class: label, Label: strings.ToUpper(label[:1]) + label[1:]}
@@ -275,7 +275,7 @@ func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (target
 	case monitor.Unknown:
 		v.Label = "Pending"
 	}
-	if m, in, err := s.store.InMaintenance(ctx, st.Target.Group, now); err != nil {
+	if m, in, err := ws.InMaintenance(ctx, st.Target.Group, now); err != nil {
 		return v, err
 	} else if in {
 		v.Maint = &m
@@ -286,24 +286,24 @@ func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (target
 		}
 	}
 	var err error
-	if v.Up24, err = s.uptime(ctx, st.Target.ID, now, 1); err != nil {
+	if v.Up24, err = s.uptime(ctx, ws, st.Target.ID, now, 1); err != nil {
 		return v, err
 	}
-	if v.Up7, err = s.uptime(ctx, st.Target.ID, now, 7); err != nil {
+	if v.Up7, err = s.uptime(ctx, ws, st.Target.ID, now, 7); err != nil {
 		return v, err
 	}
-	if v.Up30, err = s.uptime(ctx, st.Target.ID, now, 30); err != nil {
+	if v.Up30, err = s.uptime(ctx, ws, st.Target.ID, now, 30); err != nil {
 		return v, err
 	}
 	if o.spark {
-		checks, err := s.store.ChecksSince(ctx, st.Target.ID, now.Add(-30*time.Minute))
+		checks, err := ws.ChecksSince(ctx, st.Target.ID, now.Add(-30*time.Minute))
 		if err != nil {
 			return v, err
 		}
 		v.Spark = sparkSVG(checks, now.Add(-30*time.Minute), now)
 	}
 	if o.days {
-		days, err := s.store.DailyUptime(ctx, st.Target.ID, now, 90)
+		days, err := ws.DailyUptime(ctx, st.Target.ID, now, 90)
 		if err != nil {
 			return v, err
 		}
@@ -318,12 +318,12 @@ func (s *Server) view(ctx context.Context, st monitor.State, o viewOpts) (target
 // uptime returns stats for the last days days. Raw checks are exact but only
 // kept for the retention period; longer windows use the daily rollups,
 // covering this day and the days-1 before it in UTC.
-func (s *Server) uptime(ctx context.Context, targetID int64, now time.Time, days int) (store.Stats, error) {
+func (s *Server) uptime(ctx context.Context, ws *store.WS, targetID int64, now time.Time, days int) (store.Stats, error) {
 	span := time.Duration(days) * 24 * time.Hour
 	if span <= s.cfg.Retention.Duration {
-		return s.store.Stats(ctx, targetID, now.Add(-span))
+		return ws.Stats(ctx, targetID, now.Add(-span))
 	}
-	return s.store.RollupStats(ctx, targetID, now.UTC().AddDate(0, 0, -(days-1)))
+	return ws.RollupStats(ctx, targetID, now.UTC().AddDate(0, 0, -(days-1)))
 }
 
 func uptimeCell(d store.Stats, label string) cell {
@@ -339,12 +339,12 @@ func uptimeCell(d store.Stats, label string) cell {
 	}
 }
 
-func (s *Server) views(r *http.Request, o viewOpts) ([]targetView, error) {
+func (s *Server) views(r *http.Request, ws *store.WS, o viewOpts) ([]targetView, error) {
 	ctx := r.Context()
-	states := s.mon.Snapshot(s.ws(r).ID())
+	states := s.mon.Snapshot(ws.ID())
 	out := make([]targetView, 0, len(states))
 	for _, st := range states {
-		v, err := s.view(ctx, st, o)
+		v, err := s.view(ctx, ws, st, o)
 		if err != nil {
 			return nil, err
 		}

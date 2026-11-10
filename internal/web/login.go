@@ -46,19 +46,21 @@ type loginData struct {
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	if !s.authEnabled() || s.isAdmin(r) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, r, "login", loginData{base: s.base(r, "login", "Log in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
+	s.render(w, r, "login", loginData{base: s.base(r, ws, "login", "Log in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))})
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	if !s.authEnabled() {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	d := loginData{base: s.base(r, "login", "Log in · Uptime"), Next: safeNext(r.FormValue("next"))}
+	d := loginData{base: s.base(r, ws, "login", "Log in · Uptime"), Next: safeNext(r.FormValue("next"))}
 	key := clientKey(r, s.cfg.ProxyHops())
 	if ok, _ := s.limiter.Allow(key); !ok {
 		d.Error = "Too many failed attempts. Wait a minute and try again."

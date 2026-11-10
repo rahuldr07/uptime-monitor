@@ -20,15 +20,16 @@ type incidentsData struct {
 }
 
 func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
-	d := incidentsData{base: s.base(r, "incidents", "Incidents")}
+	ws := s.ws(r)
+	d := incidentsData{base: s.base(r, ws, "incidents", "Incidents")}
 	d.Filter.TargetID, _ = strconv.ParseInt(r.URL.Query().Get("target"), 10, 64)
 	d.Filter.OngoingOnly = r.URL.Query().Get("ongoing") == "1"
 	var err error
-	if d.Targets, err = s.store.ListTargets(r.Context()); err != nil {
+	if d.Targets, err = ws.ListTargets(r.Context()); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if d.Incidents, err = s.store.ListIncidents(r.Context(), d.Filter); err != nil {
+	if d.Incidents, err = ws.ListIncidents(r.Context(), d.Filter); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -36,11 +37,12 @@ func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
-	in, ok := loadByID(s, w, r, s.store.GetIncident)
+	ws := s.ws(r)
+	in, ok := loadByID(s, w, r, ws.GetIncident)
 	if !ok {
 		return
 	}
-	if err := s.store.AcknowledgeIncident(r.Context(), in.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := ws.AcknowledgeIncident(r.Context(), in.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)
 		return
 	}
@@ -52,7 +54,8 @@ func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request) {
-	in, ok := loadByID(s, w, r, s.store.GetIncident)
+	ws := s.ws(r)
+	in, ok := loadByID(s, w, r, ws.GetIncident)
 	if !ok {
 		return
 	}
@@ -61,7 +64,7 @@ func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, backTo(r, "/incidents"), "Note must be 500 characters or fewer.")
 		return
 	}
-	if err := s.store.SetIncidentNote(r.Context(), in.ID, note); err != nil {
+	if err := ws.SetIncidentNote(r.Context(), in.ID, note); err != nil {
 		s.fail(w, err)
 		return
 	}

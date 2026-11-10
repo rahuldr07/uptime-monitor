@@ -33,9 +33,10 @@ type overviewData struct {
 }
 
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	ctx := r.Context()
-	d := overviewData{base: s.base(r, "overview", "Overview")}
-	views, err := s.views(r, viewOpts{spark: true})
+	d := overviewData{base: s.base(r, ws, "overview", "Overview")}
+	views, err := s.views(r, ws, viewOpts{spark: true})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -58,25 +59,25 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := s.now()
-	if d.Overall24, err = s.store.Stats(ctx, 0, now.Add(-24*time.Hour)); err != nil {
+	if d.Overall24, err = ws.Stats(ctx, 0, now.Add(-24*time.Hour)); err != nil {
 		s.fail(w, err)
 		return
 	}
-	lat, err := s.store.Latencies(ctx, 0, now.Add(-24*time.Hour))
+	lat, err := ws.Latencies(ctx, 0, now.Add(-24*time.Hour))
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	d.P95 = store.Percentile(lat, 95)
-	if d.Incidents7, err = s.store.CountIncidents(ctx, now.Add(-7*24*time.Hour)); err != nil {
+	if d.Incidents7, err = ws.CountIncidents(ctx, now.Add(-7*24*time.Hour)); err != nil {
 		s.fail(w, err)
 		return
 	}
-	if d.Alerts7, err = s.store.CountAlerts(ctx, now.Add(-7*24*time.Hour)); err != nil {
+	if d.Alerts7, err = ws.CountAlerts(ctx, now.Add(-7*24*time.Hour)); err != nil {
 		s.fail(w, err)
 		return
 	}
-	for _, n := range s.mon.Notifiers(r.Context(), s.ws(r).ID()) {
+	for _, n := range s.mon.Notifiers(r.Context(), ws.ID()) {
 		if n.Name != "log" {
 			d.HasChannel = true
 		}
@@ -90,9 +91,10 @@ type monitorsData struct {
 }
 
 func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request) {
-	d := monitorsData{base: s.base(r, "monitors", "Monitors")}
+	ws := s.ws(r)
+	d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
 	var err error
-	if d.Rows, err = s.views(r, viewOpts{}); err != nil {
+	if d.Rows, err = s.views(r, ws, viewOpts{}); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -166,22 +168,23 @@ func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
 }
 
 func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	f := formFromRequest(r, "/targets", "Create monitor")
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(t.URL)
+		err = s.checkDestination(ws, t.URL)
 	}
 	if err == nil {
-		t, err = s.store.CreateTarget(r.Context(), t, s.now())
+		t, err = ws.CreateTarget(r.Context(), t, s.now())
 	}
 	if err != nil {
 		if wantsJSON(r) {
 			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 			return
 		}
-		d := monitorsData{base: s.base(r, "monitors", "Monitors")}
+		d := monitorsData{base: s.base(r, ws, "monitors", "Monitors")}
 		d.Error = err.Error()
-		d.Rows, _ = s.views(r, viewOpts{})
+		d.Rows, _ = s.views(r, ws, viewOpts{})
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
 		return
 	}
@@ -199,8 +202,8 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkDestination rejects internal hosts early when private targets are off.
-func (s *Server) checkDestination(rawURL string) error {
-	if s.cfg.AllowPrivate(true) {
+func (s *Server) checkDestination(ws *store.WS, rawURL string) error {
+	if s.cfg.AllowPrivate(ws.ID() == pinnedWorkspace) {
 		return nil
 	}
 	u, err := url.Parse(rawURL)
@@ -212,13 +215,14 @@ func (s *Server) checkDestination(rawURL string) error {
 
 // targetTest probes the URL in the form without saving anything.
 func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	f := formFromRequest(r, "", "")
 	if f.Name == "" {
 		f.Name = "test"
 	}
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(t.URL)
+		err = s.checkDestination(ws, t.URL)
 	}
 	if err != nil {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
@@ -227,7 +231,7 @@ func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
 	if t.Timeout > 25*time.Second {
 		t.Timeout = 25 * time.Second
 	}
-	c := s.mon.Test(r.Context(), s.ws(r).ID(), t)
+	c := s.mon.Test(r.Context(), ws.ID(), t)
 	writeJSON(w, map[string]any{"ok": c.OK, "status_code": c.StatusCode, "latency_ms": c.LatencyMS, "error": c.Error})
 }
 
@@ -250,9 +254,9 @@ type targetData struct {
 var ranges = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 var tabs = map[string]bool{"overview": true, "checks": true, "incidents": true, "settings": true}
 
-func (s *Server) targetData(r *http.Request, t store.Target, st monitor.State) (targetData, error) {
+func (s *Server) targetData(r *http.Request, ws *store.WS, t store.Target, st monitor.State) (targetData, error) {
 	ctx := r.Context()
-	d := targetData{base: s.base(r, "monitors", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
+	d := targetData{base: s.base(r, ws, "monitors", t.Name), Form: formFromTarget(t), Ranges: []string{"24h", "7d", "30d"}}
 	d.Tab = r.URL.Query().Get("tab")
 	if !tabs[d.Tab] {
 		d.Tab = "overview"
@@ -263,21 +267,21 @@ func (s *Server) targetData(r *http.Request, t store.Target, st monitor.State) (
 		d.Range, span = "24h", 24*time.Hour
 	}
 	var err error
-	if d.View, err = s.view(ctx, st, viewOpts{}); err != nil {
+	if d.View, err = s.view(ctx, ws, st, viewOpts{}); err != nil {
 		return d, err
 	}
 	now := s.now()
-	if d.Incidents, err = s.store.ListIncidents(ctx, store.IncidentFilter{TargetID: t.ID, Limit: 100}); err != nil {
+	if d.Incidents, err = ws.ListIncidents(ctx, store.IncidentFilter{TargetID: t.ID, Limit: 100}); err != nil {
 		return d, err
 	}
 	switch d.Tab {
 	case "overview":
-		checks, err := s.store.ChecksSince(ctx, t.ID, now.Add(-span))
+		checks, err := ws.ChecksSince(ctx, t.ID, now.Add(-span))
 		if err != nil {
 			return d, err
 		}
 		d.Chart = latencySVG(checks, d.Incidents, now.Add(-span), now)
-		hours, err := s.store.HourlyUptime(ctx, t.ID, now, 24)
+		hours, err := ws.HourlyUptime(ctx, t.ID, now, 24)
 		if err != nil {
 			return d, err
 		}
@@ -285,29 +289,29 @@ func (s *Server) targetData(r *http.Request, t store.Target, st monitor.State) (
 		for i, h := range hours {
 			d.Hours = append(d.Hours, uptimeCell(h, start.Add(time.Duration(i)*time.Hour).Local().Format("Jan 2 15:00")))
 		}
-		lat, err := s.store.Latencies(ctx, t.ID, now.Add(-24*time.Hour))
+		lat, err := ws.Latencies(ctx, t.ID, now.Add(-24*time.Hour))
 		if err != nil {
 			return d, err
 		}
 		d.P50, d.P95 = store.Percentile(lat, 50), store.Percentile(lat, 95)
 		// 11 rows so the template can tell whether an "All checks" link is needed.
-		if d.Checks, err = s.store.RecentChecks(ctx, t.ID, 11); err != nil {
+		if d.Checks, err = ws.RecentChecks(ctx, t.ID, 11); err != nil {
 			return d, err
 		}
 	case "checks":
-		if d.Checks, err = s.store.RecentChecks(ctx, t.ID, 200); err != nil {
+		if d.Checks, err = ws.RecentChecks(ctx, t.ID, 200); err != nil {
 			return d, err
 		}
 	}
 	return d, nil
 }
 
-func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request) (store.Target, monitor.State, bool) {
-	t, ok := loadByID(s, w, r, s.store.GetTarget)
+func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request, ws *store.WS) (store.Target, monitor.State, bool) {
+	t, ok := loadByID(s, w, r, ws.GetTarget)
 	if !ok {
 		return store.Target{}, monitor.State{}, false
 	}
-	st, ok := s.mon.Get(s.ws(r).ID(), t.ID)
+	st, ok := s.mon.Get(ws.ID(), t.ID)
 	if !ok {
 		st = monitor.State{Target: t}
 	}
@@ -315,11 +319,12 @@ func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request) (store.Targe
 }
 
 func (s *Server) targetPage(w http.ResponseWriter, r *http.Request) {
-	t, st, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, st, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
-	d, err := s.targetData(r, t, st)
+	d, err := s.targetData(r, ws, t, st)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -328,7 +333,8 @@ func (s *Server) targetPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
-	t, st, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, st, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
@@ -336,17 +342,17 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 	f.ShowFlags = true
 	nt, err := f.toTarget(s.cfg)
 	if err == nil {
-		err = s.checkDestination(nt.URL)
+		err = s.checkDestination(ws, nt.URL)
 	}
 	if err == nil {
 		nt.ID, nt.Paused, nt.CreatedAt = t.ID, t.Paused, t.CreatedAt
-		err = s.store.UpdateTarget(r.Context(), nt)
+		nt, err = ws.UpdateTarget(r.Context(), nt)
 	}
 	if err != nil {
 		q := r.URL.Query()
 		q.Set("tab", "settings")
 		r.URL.RawQuery = q.Encode()
-		d, derr := s.targetData(r, t, st)
+		d, derr := s.targetData(r, ws, t, st)
 		if derr != nil {
 			s.fail(w, derr)
 			return
@@ -364,12 +370,13 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
 	s.mon.Remove(t.ID) // stops the runner and waits for any in-flight probe
-	if err := s.store.DeleteTarget(r.Context(), t.ID); err != nil {
+	if err := ws.DeleteTarget(r.Context(), t.ID); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -378,12 +385,13 @@ func (s *Server) targetDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
 	t.Paused = !t.Paused
-	if err := s.store.SetPaused(r.Context(), t.ID, t.Paused); err != nil {
+	if err := ws.SetPaused(r.Context(), t.ID, t.Paused); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -400,12 +408,13 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
 	t.Muted = !t.Muted
-	if err := s.store.SetMuted(r.Context(), t.ID, t.Muted); err != nil {
+	if err := ws.SetMuted(r.Context(), t.ID, t.Muted); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -421,7 +430,8 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
@@ -433,7 +443,7 @@ func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), t.Name+" is paused.")
 		return
 	}
-	s.mon.CheckAsync(s.ws(r).ID(), t.ID)
+	s.mon.CheckAsync(ws.ID(), t.ID)
 	if wantsJSON(r) {
 		writeJSON(w, map[string]any{"ok": true, "message": "Checking " + t.Name + "…"})
 		return

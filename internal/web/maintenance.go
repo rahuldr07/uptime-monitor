@@ -30,12 +30,12 @@ type maintenanceData struct {
 	Past     []store.Maintenance
 }
 
-func (s *Server) maintenanceData(r *http.Request, f maintForm) (maintenanceData, error) {
-	d := maintenanceData{base: s.base(r, "maintenance", "Maintenance"), Form: f}
+func (s *Server) maintenanceData(r *http.Request, ws *store.WS, f maintForm) (maintenanceData, error) {
+	d := maintenanceData{base: s.base(r, ws, "maintenance", "Maintenance"), Form: f}
 	if d.Form.Duration == "" {
 		d.Form.Duration = "1h"
 	}
-	all, err := s.store.ListMaintenance(r.Context(), time.Time{}, 0)
+	all, err := ws.ListMaintenance(r.Context(), time.Time{}, 0)
 	if err != nil {
 		return d, err
 	}
@@ -60,7 +60,8 @@ func (s *Server) maintenanceData(r *http.Request, f maintForm) (maintenanceData,
 }
 
 func (s *Server) maintenancePage(w http.ResponseWriter, r *http.Request) {
-	d, err := s.maintenanceData(r, maintForm{})
+	ws := s.ws(r)
+	d, err := s.maintenanceData(r, ws, maintForm{})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -112,12 +113,13 @@ func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenanc
 }
 
 func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	f, m, err := parseMaintForm(r, s.now())
 	if err == nil {
-		m, err = s.store.CreateMaintenance(r.Context(), m, s.now())
+		m, err = ws.CreateMaintenance(r.Context(), m, s.now())
 	}
 	if err != nil {
-		d, derr := s.maintenanceData(r, f)
+		d, derr := s.maintenanceData(r, ws, f)
 		if derr != nil {
 			s.fail(w, derr)
 			return
@@ -126,7 +128,7 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "maintenance", d)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	msg := "Maintenance started: alerts are paused until " + formatTS(m.EndsAt) + "."
 	if m.Upcoming(s.now()) {
@@ -137,29 +139,31 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 
 // maintenanceEnd closes an active window now so alerting resumes at once.
 func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
-	m, ok := loadByID(s, w, r, s.store.GetMaintenance)
+	ws := s.ws(r)
+	m, ok := loadByID(s, w, r, ws.GetMaintenance)
 	if !ok {
 		return
 	}
-	if err := s.store.EndMaintenance(r.Context(), m.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := ws.EndMaintenance(r.Context(), m.ID, s.now()); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	redirect(w, r, backTo(r, "/maintenance"), "Ended "+m.Title+". Alerts are live again.")
 }
 
 func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
-	m, ok := loadByID(s, w, r, s.store.GetMaintenance)
+	ws := s.ws(r)
+	m, ok := loadByID(s, w, r, ws.GetMaintenance)
 	if !ok {
 		return
 	}
-	if err := s.store.DeleteMaintenance(r.Context(), m.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := ws.DeleteMaintenance(r.Context(), m.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	redirect(w, r, "/maintenance", "Removed "+m.Title+".")
 }
@@ -174,8 +178,9 @@ type apiMaint struct {
 }
 
 func (s *Server) apiMaintenance(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	now := s.now()
-	list, err := s.store.ListMaintenance(r.Context(), now, 0)
+	list, err := ws.ListMaintenance(r.Context(), now, 0)
 	if err != nil {
 		s.fail(w, err)
 		return

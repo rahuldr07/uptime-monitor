@@ -30,7 +30,8 @@ type apiTarget struct {
 }
 
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	views, err := s.views(r, viewOpts{})
+	ws := s.ws(r)
+	views, err := s.views(r, ws, viewOpts{})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -61,7 +62,8 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := s.loadTarget(w, r)
+	ws := s.ws(r)
+	t, _, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
@@ -69,7 +71,7 @@ func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		span = 24 * time.Hour
 	}
-	checks, err := s.store.ChecksSince(r.Context(), t.ID, s.now().Add(-span))
+	checks, err := ws.ChecksSince(r.Context(), t.ID, s.now().Add(-span))
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -90,10 +92,11 @@ func (s *Server) apiChecks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiIncidents(w http.ResponseWriter, r *http.Request) {
+	ws := s.ws(r)
 	var f store.IncidentFilter
 	f.TargetID, _ = strconv.ParseInt(r.URL.Query().Get("target"), 10, 64)
 	f.OngoingOnly = r.URL.Query().Get("ongoing") == "1"
-	list, err := s.store.ListIncidents(r.Context(), f)
+	list, err := ws.ListIncidents(r.Context(), f)
 	if err != nil {
 		s.fail(w, err)
 		return

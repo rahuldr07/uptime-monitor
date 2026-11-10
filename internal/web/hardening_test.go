@@ -107,7 +107,7 @@ func TestAlertSecretsNotEchoed(t *testing.T) {
 	form.Set("smtp_pass", "")
 	form.Set("tg_chat", "43")
 	e.post(t, c, "/alerts", form)
-	n := (&Server{store: e.st, cfg: e.cfg}).notifyConfig(context.Background())
+	n := (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1))
 	if n.Telegram.BotToken != "SECRET-TG" || n.Telegram.ChatID != "43" || n.Slack.WebhookURL != "https://hooks.example/SECRET-SLACK" || n.Email.Password != "SECRET-SMTP" {
 		t.Fatalf("blank secret fields should keep saved values: %+v %+v %+v", n.Telegram, n.Slack, n.Email)
 	}
@@ -115,7 +115,7 @@ func TestAlertSecretsNotEchoed(t *testing.T) {
 	// The remove box drops a channel even though its secret field is blank.
 	form.Set("slack_clear", "1")
 	e.post(t, c, "/alerts", form)
-	if n := (&Server{store: e.st, cfg: e.cfg}).notifyConfig(context.Background()); n.Slack != nil || n.Telegram == nil {
+	if n := (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1)); n.Slack != nil || n.Telegram == nil {
 		t.Fatalf("slack should be removed, telegram kept: %+v", n)
 	}
 }
@@ -124,11 +124,11 @@ func TestStatusPageCachedForVisitors(t *testing.T) {
 	e := newEnv(t, "pw")
 	anon := e.client(t)
 	ctx := context.Background()
-	e.st.SetSetting(ctx, "status_title", "First title")
+	e.st.Workspace(1).SetSetting(ctx, "status_title", "First title")
 	if _, body := e.get(t, anon, "/status"); !strings.Contains(body, "First title") {
 		t.Fatal("status page title")
 	}
-	e.st.SetSetting(ctx, "status_title", "Second title")
+	e.st.Workspace(1).SetSetting(ctx, "status_title", "Second title")
 	if _, body := e.get(t, anon, "/status"); !strings.Contains(body, "First title") {
 		t.Fatal("anonymous visitors should get the cached page within the TTL")
 	}
@@ -147,7 +147,7 @@ func TestStatusPageCachedForVisitors(t *testing.T) {
 func TestStatusCacheNotBypassedByPartialHeader(t *testing.T) {
 	e := newEnv(t, "pw")
 	ctx := context.Background()
-	e.st.SetSetting(ctx, "status_title", "Old title")
+	e.st.Workspace(1).SetSetting(ctx, "status_title", "Old title")
 	get := func() string {
 		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/status", nil)
 		req.Header.Set("X-Partial", "1")
@@ -160,7 +160,7 @@ func TestStatusCacheNotBypassedByPartialHeader(t *testing.T) {
 		return string(b)
 	}
 	get()
-	e.st.SetSetting(ctx, "status_title", "New title")
+	e.st.Workspace(1).SetSetting(ctx, "status_title", "New title")
 	if body := get(); !strings.Contains(body, "Old title") {
 		t.Fatal("anonymous X-Partial requests must be served from the cache")
 	}
@@ -369,19 +369,19 @@ func TestRequestBodyLimit(t *testing.T) {
 func TestThirtyDayUptimeUsesRollups(t *testing.T) {
 	e := newEnv(t, "")
 	ctx := context.Background()
-	tg, _ := e.st.CreateTarget(ctx, store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
+	tg, _ := e.st.Workspace(1).CreateTarget(ctx, store.Target{Name: "A", URL: "https://a", Interval: time.Hour, Timeout: time.Second}, e.clock)
 	// 20 days of checks, half failing, then raw checks pruned to the 7-day retention.
 	for d := 0; d < 20; d++ {
 		at := e.clock.AddDate(0, 0, -d)
 		e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: at, OK: d%2 == 0, LatencyMS: 10})
 	}
 	e.st.Prune(ctx, e.clock.Add(-e.cfg.Retention.Duration))
-	s := &Server{store: e.st, cfg: e.cfg}
-	up30, err := s.uptime(ctx, tg.ID, e.clock, 30)
+	s := &Server{sys: e.st, cfg: e.cfg}
+	up30, err := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.clock, 30)
 	if err != nil || up30.Total != 20 || up30.OKCount != 10 {
 		t.Fatalf("30d uptime should cover all 20 days from rollups: %v %+v", err, up30)
 	}
-	up7, _ := s.uptime(ctx, tg.ID, e.clock, 7)
+	up7, _ := s.uptime(ctx, e.st.Workspace(1), tg.ID, e.clock, 7)
 	// Days 0..7 ago inclusive: the check exactly 7 days old is inside the window.
 	if up7.Total != 8 {
 		t.Fatalf("7d uptime from raw checks: %+v", up7)
