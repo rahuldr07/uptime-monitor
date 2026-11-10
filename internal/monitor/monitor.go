@@ -145,6 +145,7 @@ func New(o Options) *Monitor {
 		tr.MaxIdleConnsPerHost = 2
 		tr.IdleConnTimeout = 90 * time.Second
 		tr.DisableKeepAlives = true
+		tr.ForceAttemptHTTP2 = false // probes stay on HTTP/1.1 as before
 		o.Client = c
 	}
 	if o.Now == nil {
@@ -437,12 +438,12 @@ func (m *Monitor) CheckAsync(id int64) {
 	}()
 }
 
-// Probe performs one HTTP check of a target.
 // Test probes an unsaved target with the monitor's own client.
 func (m *Monitor) Test(ctx context.Context, t store.Target) store.Check {
 	return Probe(ctx, m.client, t, m.now)
 }
 
+// Probe performs one HTTP check of a target.
 func Probe(ctx context.Context, client *http.Client, t store.Target, now func() time.Time) store.Check {
 	c := store.Check{TargetID: t.ID, CheckedAt: now().UTC()}
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
