@@ -55,6 +55,8 @@ type Server struct {
 	streamsMu     sync.Mutex
 	streams       map[int64]int // open /events streams per user
 	setupLimiter  *ratelimit.Limiter
+	signupByAddr  *ratelimit.Limiter // sign-ups per client address
+	signupGlobal  *ratelimit.Limiter // sign-ups across the instance, key "all"
 	passwordCheck *ratelimit.Limiter // current-password checks, per user
 	pages         map[string]*template.Template
 	mux           *http.ServeMux
@@ -108,6 +110,10 @@ func New(o Options) (*Server, error) {
 	}
 	s.setupLimiter = ratelimit.New(setupWindow, setupMaxAttempts, 0)
 	s.setupLimiter.Now = now
+	s.signupByAddr = ratelimit.New(time.Hour, signupPerAddrHour, 0)
+	s.signupByAddr.Now = now
+	s.signupGlobal = ratelimit.New(time.Hour, *cfg.Limits.SignupsPerHour, 0)
+	s.signupGlobal.Now = now
 	s.passwordCheck = ratelimit.New(passwordCheckWindow, passwordCheckMax, 0)
 	s.passwordCheck.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
@@ -167,7 +173,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "login", "setup", "reset"} {
+	for _, page := range []string{"status", "login", "setup", "reset", "signup"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)

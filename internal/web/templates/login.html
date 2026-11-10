@@ -9,6 +9,7 @@
       <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
       <div style="margin-top:14px"><button type="submit" class="primary">Sign in</button></div>
     </form>
+    {{if eq .SignupMode "invite"}}<p class="muted small" style="margin:14px 0 0">Have an invitation link? Open it to sign up.</p>{{end}}
   </div>
 </div>
 {{end}}

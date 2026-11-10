@@ -56,6 +56,8 @@ func (s *Server) routeTable() []route {
 		{"POST", "/setup", classSetup, s.setupPost, nil},
 		{"GET", "/login", classGuest, s.loginPage, nil},
 		{"POST", "/login", classGuest, s.loginPost, nil},
+		{"GET", "/signup", classGuest, s.signupPage, nil},
+		{"POST", "/signup", classGuest, s.signupPost, nil},
 		{"GET", "/reset", classGuest, s.resetPage, nil},
 		{"POST", "/reset", classGuest, s.resetPost, nil},
 		{"POST", "/logout", classUser, nil, s.logout},

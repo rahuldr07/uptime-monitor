@@ -57,6 +57,7 @@ func main() {
 	backupPath := flag.String("backup", "", "write a consistent copy of the database to this path and exit")
 	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
 	resetEmail := flag.String("reset-password", "", "print a one-time password reset link for this email and exit")
+	invite := flag.Bool("invite", false, "print a one-time sign-up link and exit; follow with an email address to bind the invitation to it")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -74,6 +75,15 @@ func main() {
 	}
 	if *setupLink {
 		link, err := newSetupLink(cfgPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(link)
+		return
+	}
+	if *invite {
+		link, err := newInviteLink(cfgPath, flag.Arg(0))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -296,6 +306,37 @@ func newResetLink(cfgPath, email string) (string, error) {
 		return "", err
 	}
 	return cfg.LinkBase() + "/reset?token=" + raw, nil
+}
+
+// inviteTTL is how long a link from -invite works.
+const inviteTTL = 7 * 24 * time.Hour
+
+// newInviteLink creates an invitation, optionally bound to email, and returns
+// the sign-up link that uses it. It works in every sign-up mode, but not
+// before the first account exists.
+func newInviteLink(cfgPath, email string) (string, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return "", err
+	}
+	st, err := store.Open(cfg.DB)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	n, err := st.CountUsers(ctx)
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return "", errors.New("finish setup first")
+	}
+	raw, err := st.CreateInvite(ctx, email, inviteTTL, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return cfg.LinkBase() + "/signup?invite=" + raw, nil
 }
 
 // backup copies the configured database to dest and returns the absolute

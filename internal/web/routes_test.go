@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 40 {
-		t.Errorf("len = %d, want 40", len(routes))
+	if len(routes) != 42 {
+		t.Errorf("len = %d, want 42", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -48,7 +48,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 	for class, want := range map[routeClass][]string{
 		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}"},
 		classSetup:  {"GET /setup", "POST /setup"},
-		classGuest:  {"GET /login", "POST /login", "GET /reset", "POST /reset"},
+		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /reset", "POST /reset"},
 		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all"},
 	} {
 		if len(byClass[class]) != len(want) {
@@ -93,7 +93,7 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 			}
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("POST %s cross-site: status %d, want 403", path, resp.StatusCode)
+				t.Errorf("POST %s cross-site: status %d, want 423", path, resp.StatusCode)
 			}
 		}
 	}

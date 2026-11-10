@@ -27,7 +27,7 @@ const (
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
 		strings.HasPrefix(next, "/login") || strings.HasPrefix(next, "/setup") ||
-		strings.HasPrefix(next, "/reset") || strings.ContainsAny(next, "\\\r\n\t ") {
+		strings.HasPrefix(next, "/reset") || strings.HasPrefix(next, "/signup") || strings.ContainsAny(next, "\\\r\n\t ") {
 		return "/"
 	}
 	for _, c := range next {
@@ -110,18 +110,19 @@ func passwordEqual(a, b string) bool {
 
 type loginData struct {
 	base
-	Next  string
-	Email string
+	Next       string
+	Email      string
+	SignupMode string
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next"))}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next")), SignupMode: s.cfg.Signup}
 	d.Flash = flashFrom(r)
 	s.render(w, r, "login", d)
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email"))}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email")), SignupMode: s.cfg.Signup}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "login", d)

@@ -48,13 +48,22 @@ func newEnv(t *testing.T) *env {
 // newEnvWith is newEnv with a caller-supplied hasher.
 func newEnvWith(t *testing.T, hasher *password.Hasher) *env {
 	t.Helper()
+	return newEnvConfig(t, hasher, `{}`)
+}
+
+// newEnvConfig is newEnvWith with a JSON config.
+func newEnvConfig(t *testing.T, hasher *password.Hasher, cfgJSON string) *env {
+	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	cfg, _ := config.Parse([]byte(`{}`))
+	cfg, err := config.Parse([]byte(cfgJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
 	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
 		hash: hasher, dbPath: dbPath}
 	now := func() time.Time { return e.clock }
@@ -119,17 +128,9 @@ func (e *env) account(t *testing.T, email string) (*http.Client, *store.WS) {
 		t.Fatal(err)
 	}
 	local := strings.SplitN(email, "@", 2)[0]
-	u, ws, err := e.st.CreateAccount(context.Background(), store.AccountInput{Email: email, PasswordHash: phc,
-		WorkspaceName: local, Slug: local, Now: e.clock})
+	_, ws, err := e.st.CreateAccount(context.Background(), store.AccountInput{Email: email, PasswordHash: phc,
+		WorkspaceName: local, Slug: local, Verified: true, Now: e.clock})
 	if err != nil {
-		t.Fatal(err)
-	}
-	// A reset link proves ownership of the address, which verifies it.
-	tok, err := e.st.CreateToken(context.Background(), store.TokenReset, u.ID, time.Hour, e.clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.ResetPassword(context.Background(), tok, phc, e.clock); err != nil {
 		t.Fatal(err)
 	}
 	return e.signIn(t, email, testSecret), ws

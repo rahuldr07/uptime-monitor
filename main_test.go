@@ -100,3 +100,53 @@ func TestNewResetLink(t *testing.T) {
 		t.Fatalf("disabled: %v", err)
 	}
 }
+
+func TestInviteCLI(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "t.db")
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"db":"`+dbPath+`","base_url":"https://up.example.com"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if _, err := newInviteLink(cfgPath, ""); err == nil || err.Error() != "finish setup first" {
+		t.Fatalf("before setup: %v", err)
+	}
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, _, err := st.CreateAccount(ctx, store.AccountInput{Email: "op@b.co", PasswordHash: "x", WorkspaceName: "Op", Slug: "op", Operator: true, Verified: true, Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	link, err := newInviteLink(cfgPath, "")
+	if err != nil || !strings.HasPrefix(link, "https://up.example.com/signup?invite=") {
+		t.Fatalf("open invite: %q %v", link, err)
+	}
+	raw := strings.TrimPrefix(link, "https://up.example.com/signup?invite=")
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if tk, err := st.PeekToken(ctx, store.TokenInvite, raw, time.Now()); err != nil || tk.Email != "" {
+		t.Fatalf("open invite token: %+v %v", tk, err)
+	}
+	link, err = newInviteLink(cfgPath, " New@B.co ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = link[strings.Index(link, "=")+1:]
+	if tk, err := st.PeekToken(ctx, store.TokenInvite, raw, time.Now()); err != nil || tk.Email != "new@b.co" {
+		t.Fatalf("bound invite token: %+v %v", tk, err)
+	}
+	if _, err := newInviteLink(cfgPath, "not-an-email"); err == nil {
+		t.Fatal("invalid email should fail")
+	}
+}
