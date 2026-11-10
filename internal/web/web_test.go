@@ -40,8 +40,10 @@ func newEnv(t *testing.T, password string) *env {
 	cfg.AdminPassword = password
 	e := &env{st: st, cfg: cfg, clock: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)}
 	now := func() time.Time { return e.clock }
-	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}},
-		FailureThreshold: 1, Now: now, AllowPrivate: true})
+	e.mon = monitor.New(monitor.Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
+		return notify.Multi{{Name: "log", Notifier: notify.Log{Logger: slog.Default()}}}, nil
+	},
+		FailureThreshold: 1, Now: now, PrivateAllowed: func(int64) bool { return true }})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := e.mon.Start(ctx); err != nil {
@@ -300,7 +302,7 @@ func TestNewEndpoints(t *testing.T) {
 	if resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("content type %s", resp.Header.Get("Content-Type"))
 	}
-	e.mon.CheckAsync(tg.ID)
+	e.mon.CheckAsync(1, tg.ID)
 	buf := make([]byte, 4096)
 	var got string
 	for !strings.Contains(got, "data:") {
@@ -331,7 +333,7 @@ func TestAlertsSettings(t *testing.T) {
 		t.Fatalf("save: %d", resp.StatusCode)
 	}
 	names := []string{}
-	for _, n := range e.mon.Notifiers() {
+	for _, n := range e.mon.Notifiers(context.Background(), 1) {
 		names = append(names, n.Name)
 	}
 	if strings.Join(names, ",") != "telegram,email" {

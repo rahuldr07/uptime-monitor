@@ -175,7 +175,7 @@ func (s *Server) statusData(r *http.Request) (statusData, error) {
 		scheme = "https"
 	}
 	d.ShareURL = scheme + "://" + r.Host + "/status"
-	views, err := s.views(r.Context(), viewOpts{days: true})
+	views, err := s.views(r, viewOpts{days: true})
 	if err != nil {
 		return d, err
 	}

@@ -60,20 +60,26 @@ type state struct {
 
 // Options configure a Monitor.
 type Options struct {
-	Store            *store.Store
-	Notifiers        notify.Multi
+	Store *store.Store
+	// Notifiers loads one workspace's alert channels. It is called on first
+	// use of a workspace and again after a failure; it must not be called
+	// while the monitor lock is held (the monitor never does).
+	Notifiers        func(ctx context.Context, workspaceID int64) (notify.Multi, error)
 	Logger           *slog.Logger
 	FailureThreshold int
-	Client           *http.Client
-	AllowPrivate     bool // when Client is nil, allow probes to internal addresses
-	Now              func() time.Time
-	RetryBase        time.Duration // backoff base for alert retries
+	Client           *http.Client // tests: used for every workspace
+	// PrivateAllowed reports whether a workspace may probe internal
+	// addresses. Nil guards every workspace (fails closed).
+	PrivateAllowed func(workspaceID int64) bool
+	Now            func() time.Time
+	RetryBase      time.Duration // backoff base for alert retries
 }
 
 // Event is published whenever a target's state or latest check changes.
 type Event struct {
-	TargetID int64  `json:"target_id"`
-	Kind     string `json:"kind"` // "check", "down", "up", "reload", "removed", "maintenance"
+	TargetID    int64  `json:"target_id"`
+	WorkspaceID int64  `json:"-"`
+	Kind        string `json:"kind"` // "check", "down", "up", "reload", "removed", "maintenance"
 }
 
 // Bus fans Events out to subscribers without blocking the publisher.
@@ -117,20 +123,25 @@ func (b *Bus) publish(ev Event) {
 type Monitor struct {
 	Events Bus
 
-	store     *store.Store
-	logger    *slog.Logger
-	client    *http.Client
-	threshold int
-	now       func() time.Time
-	retryBase time.Duration
+	store      *store.Store
+	logger     *slog.Logger
+	client     *http.Client // guarded: refuses internal addresses
+	openClient *http.Client // unguarded, for workspaces where PrivateAllowed is true
+	private    func(int64) bool
+	loadNotif  func(context.Context, int64) (notify.Multi, error)
+	threshold  int
+	now        func() time.Time
+	retryBase  time.Duration
 
-	mu        sync.Mutex
-	notifiers notify.Multi
-	states    map[int64]*state
-	cancels   map[int64]context.CancelFunc
-	ctx       context.Context
-	wg        sync.WaitGroup
-	alertWG   sync.WaitGroup
+	notifMu   sync.Mutex // guards notifiers; never held with mu or around loadNotif
+	notifiers map[int64]notify.Multi
+
+	mu      sync.Mutex
+	states  map[int64]*state
+	cancels map[int64]context.CancelFunc
+	ctx     context.Context
+	wg      sync.WaitGroup
+	alertWG sync.WaitGroup
 }
 
 // New creates a Monitor. Call Start to begin checking.
@@ -138,21 +149,9 @@ func New(o Options) *Monitor {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	guarded, open := o.Client, o.Client
 	if o.Client == nil {
-		c := netguard.Client(o.AllowPrivate, 0)
-		tr := c.Transport.(*http.Transport)
-		tr.TLSHandshakeTimeout = 10 * time.Second
-		tr.MaxIdleConnsPerHost = 2
-		tr.IdleConnTimeout = 90 * time.Second
-		tr.DisableKeepAlives = true
-		// Probes stay on HTTP/1.1: ForceAttemptHTTP2=false alone still leaves
-		// "h2" in the cloned TLS config's ALPN, so an h2 server would be
-		// negotiated and then spoken to in HTTP/1.1 (EOF). Clear both.
-		tr.ForceAttemptHTTP2 = false
-		if tr.TLSClientConfig != nil {
-			tr.TLSClientConfig.NextProtos = nil
-		}
-		o.Client = c
+		guarded, open = probeClient(false), probeClient(true)
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -164,16 +163,45 @@ func New(o Options) *Monitor {
 		o.RetryBase = time.Second
 	}
 	return &Monitor{
-		store:     o.Store,
-		logger:    o.Logger,
-		client:    o.Client,
-		threshold: o.FailureThreshold,
-		now:       o.Now,
-		retryBase: o.RetryBase,
-		notifiers: o.Notifiers,
-		states:    map[int64]*state{},
-		cancels:   map[int64]context.CancelFunc{},
+		store:      o.Store,
+		logger:     o.Logger,
+		client:     guarded,
+		openClient: open,
+		private:    o.PrivateAllowed,
+		loadNotif:  o.Notifiers,
+		threshold:  o.FailureThreshold,
+		now:        o.Now,
+		retryBase:  o.RetryBase,
+		notifiers:  map[int64]notify.Multi{},
+		states:     map[int64]*state{},
+		cancels:    map[int64]context.CancelFunc{},
 	}
+}
+
+// probeClient builds a netguard client and keeps probes on HTTP/1.1.
+func probeClient(allowPrivate bool) *http.Client {
+	c := netguard.Client(allowPrivate, 0)
+	tr := c.Transport.(*http.Transport)
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.MaxIdleConnsPerHost = 2
+	tr.IdleConnTimeout = 90 * time.Second
+	tr.DisableKeepAlives = true
+	// Probes stay on HTTP/1.1: ForceAttemptHTTP2=false alone still leaves
+	// "h2" in the cloned TLS config's ALPN, so an h2 server would be
+	// negotiated and then spoken to in HTTP/1.1 (EOF). Clear both.
+	tr.ForceAttemptHTTP2 = false
+	if tr.TLSClientConfig != nil {
+		tr.TLSClientConfig.NextProtos = nil
+	}
+	return c
+}
+
+// clientFor returns the probe client for a workspace.
+func (m *Monitor) clientFor(ws int64) *http.Client {
+	if m.private != nil && m.private(ws) {
+		return m.openClient
+	}
+	return m.client
 }
 
 // Start loads targets from the store, restores their state and starts a
@@ -182,12 +210,12 @@ func (m *Monitor) Start(ctx context.Context) error {
 	m.mu.Lock()
 	m.ctx = ctx
 	m.mu.Unlock()
-	targets, err := m.store.ListTargets(ctx)
+	targets, err := m.store.AllTargets(ctx)
 	if err != nil {
 		return err
 	}
 	for _, t := range targets {
-		if err := m.Reload(ctx, t); err != nil {
+		if err := m.Reload(ctx, t.ID); err != nil {
 			return err
 		}
 	}
@@ -203,23 +231,53 @@ func (m *Monitor) Wait() {
 // WaitAlerts blocks until pending alert deliveries finish. Used by tests.
 func (m *Monitor) WaitAlerts() { m.alertWG.Wait() }
 
-// SetNotifiers replaces the alert channels at runtime.
-func (m *Monitor) SetNotifiers(n notify.Multi) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.notifiers = n
+// SetNotifiers replaces one workspace's alert channels at runtime.
+func (m *Monitor) SetNotifiers(ws int64, n notify.Multi) {
+	m.notifMu.Lock()
+	defer m.notifMu.Unlock()
+	m.notifiers[ws] = n
 }
 
-// Notifiers returns the current alert channels.
-func (m *Monitor) Notifiers() notify.Multi {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.notifiers
+// Notifiers returns a workspace's alert channels, loading them on first use.
+// If loading fails the error is logged and the log channel is returned for
+// this call only, so the next call tries again.
+func (m *Monitor) Notifiers(ctx context.Context, ws int64) notify.Multi {
+	m.notifMu.Lock()
+	n, ok := m.notifiers[ws]
+	m.notifMu.Unlock()
+	if ok {
+		return n
+	}
+	fallback := notify.Multi{{Name: "log", Notifier: notify.Log{Logger: m.logger}}}
+	if m.loadNotif == nil {
+		return fallback
+	}
+	n, err := m.loadNotif(ctx, ws)
+	if err != nil {
+		m.logger.Error("load notifiers", "workspace", ws, "err", err)
+		return fallback
+	}
+	m.notifMu.Lock()
+	defer m.notifMu.Unlock()
+	if cur, ok := m.notifiers[ws]; ok {
+		return cur // SetNotifiers won the race
+	}
+	m.notifiers[ws] = n
+	return n
 }
 
 // Reload (re)starts the runner for a target after it was created or edited.
-// State such as an open incident is restored from the store.
-func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
+// It re-reads the target from the store; a target that no longer exists is
+// removed. State such as an open incident is restored from the store.
+func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
+	t, err := m.store.TargetByID(ctx, targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		m.Remove(targetID)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if cancel, ok := m.cancels[t.ID]; ok {
 		cancel()
@@ -263,7 +321,7 @@ func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
 				return err
 			}
 		}
-		m.Events.publish(Event{TargetID: t.ID, Kind: "reload"})
+		m.Events.publish(Event{TargetID: t.ID, WorkspaceID: t.WorkspaceID, Kind: "reload"})
 		return nil
 	}
 	m.mu.Lock()
@@ -284,7 +342,7 @@ func (m *Monitor) Reload(ctx context.Context, t store.Target) error {
 	m.mu.Unlock()
 	m.wg.Add(1)
 	go m.run(rctx, t.ID)
-	m.Events.publish(Event{TargetID: t.ID, Kind: "reload"})
+	m.Events.publish(Event{TargetID: t.ID, WorkspaceID: t.WorkspaceID, Kind: "reload"})
 	return nil
 }
 
@@ -296,6 +354,10 @@ func (m *Monitor) Remove(id int64) {
 		delete(m.cancels, id)
 	}
 	st := m.states[id]
+	var ws int64
+	if st != nil {
+		ws = st.Target.WorkspaceID
+	}
 	m.mu.Unlock()
 	if st != nil {
 		st.checkMu.Lock() // wait for an in-flight probe so it cannot write after the delete
@@ -304,7 +366,7 @@ func (m *Monitor) Remove(id int64) {
 	m.mu.Lock()
 	delete(m.states, id)
 	m.mu.Unlock()
-	m.Events.publish(Event{TargetID: id, Kind: "removed"})
+	m.Events.publish(Event{TargetID: id, WorkspaceID: ws, Kind: "removed"})
 }
 
 // restore sets initial state from stored history so a restart does not
@@ -336,12 +398,15 @@ func (m *Monitor) restore(ctx context.Context, st *state) error {
 	return nil
 }
 
-// Snapshot returns the current state of every target, sorted by name.
-func (m *Monitor) Snapshot() []State {
+// Snapshot returns the current state of every target in a workspace, sorted by name.
+func (m *Monitor) Snapshot(ws int64) []State {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]State, 0, len(m.states))
 	for _, st := range m.states {
+		if st.Target.WorkspaceID != ws {
+			continue
+		}
 		out = append(out, st.State)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -350,12 +415,12 @@ func (m *Monitor) Snapshot() []State {
 	return out
 }
 
-// Get returns the state of one target.
-func (m *Monitor) Get(id int64) (State, bool) {
+// Get returns the state of one target in a workspace.
+func (m *Monitor) Get(ws, id int64) (State, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st, ok := m.states[id]
-	if !ok {
+	if !ok || st.Target.WorkspaceID != ws {
 		return State{}, false
 	}
 	return st.State, true
@@ -410,7 +475,7 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	if !still || cur != st || t.Paused {
 		return // removed, replaced or paused while we waited
 	}
-	c := Probe(ctx, m.client, t, m.now)
+	c := Probe(ctx, m.clientFor(t.WorkspaceID), t, m.now)
 	if ctx.Err() != nil {
 		return // shutting down; do not record a cancelled probe
 	}
@@ -418,7 +483,7 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	// cancelled from here on, so state and store never disagree.
 	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if _, in, err := m.store.InMaintenance(sctx, t.Group, c.CheckedAt); err != nil {
+	if _, in, err := m.store.Workspace(t.WorkspaceID).InMaintenance(sctx, t.Group, c.CheckedAt); err != nil {
 		m.logger.Error("maintenance lookup", "target", t.Name, "err", err)
 	} else {
 		c.Maintenance = in
@@ -430,10 +495,15 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 }
 
 // CheckAsync runs CheckNow in the background, detached from the caller.
-func (m *Monitor) CheckAsync(id int64) {
+func (m *Monitor) CheckAsync(ws, id int64) {
 	m.mu.Lock()
 	ctx := m.ctx
+	st, ok := m.states[id]
+	mine := ok && st.Target.WorkspaceID == ws
 	m.mu.Unlock()
+	if !mine {
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -444,9 +514,9 @@ func (m *Monitor) CheckAsync(id int64) {
 	}()
 }
 
-// Test probes an unsaved target with the monitor's own client.
-func (m *Monitor) Test(ctx context.Context, t store.Target) store.Check {
-	return Probe(ctx, m.client, t, m.now)
+// Test probes an unsaved target with the workspace's probe client.
+func (m *Monitor) Test(ctx context.Context, ws int64, t store.Target) store.Check {
+	return Probe(ctx, m.clientFor(ws), t, m.now)
 }
 
 // Probe performs one HTTP check of a target.
@@ -556,7 +626,7 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 	m.mu.Unlock()
 
 	if ev == nil {
-		m.Events.publish(Event{TargetID: id, Kind: "check"})
+		m.Events.publish(Event{TargetID: id, WorkspaceID: t.WorkspaceID, Kind: "check"})
 		return
 	}
 	if ev.Up {
@@ -580,20 +650,20 @@ func (m *Monitor) apply(ctx context.Context, id int64, c store.Check) {
 	if ev.Up {
 		kind = "up"
 	}
-	m.Events.publish(Event{TargetID: id, Kind: kind})
+	m.Events.publish(Event{TargetID: id, WorkspaceID: t.WorkspaceID, Kind: kind})
 	if t.Muted {
 		m.logger.Info("alerts muted; not notifying", "target", t.Name)
 		return
 	}
 	m.alertWG.Add(1)
-	go m.alert(incidentID, t.ID, *ev)
+	go m.alert(incidentID, t.ID, t.WorkspaceID, *ev)
 }
 
 // alert delivers an event to every channel with retries and records each
 // outcome. Channels are delivered concurrently so one slow or failing
 // channel does not delay the others. It runs detached from the request
 // context so a shutdown does not drop an alert that is already in flight.
-func (m *Monitor) alert(incidentID, targetID int64, ev notify.Event) {
+func (m *Monitor) alert(incidentID, targetID, ws int64, ev notify.Event) {
 	defer m.alertWG.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -602,7 +672,7 @@ func (m *Monitor) alert(incidentID, targetID int64, ev notify.Event) {
 		event = "up"
 	}
 	var wg sync.WaitGroup
-	for _, n := range m.Notifiers() {
+	for _, n := range m.Notifiers(ctx, ws) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -648,8 +718,8 @@ func (m *Monitor) deliver(ctx context.Context, n notify.Named, ev notify.Event) 
 }
 
 // SendTest sends a synthetic event through one channel by name.
-func (m *Monitor) SendTest(ctx context.Context, channel string) error {
-	for _, n := range m.Notifiers() {
+func (m *Monitor) SendTest(ctx context.Context, ws int64, channel string) error {
+	for _, n := range m.Notifiers(ctx, ws) {
 		if n.Name == channel {
 			return n.Notify(ctx, notify.Event{Target: "test", URL: "https://example.com", Up: true, At: m.now()})
 		}

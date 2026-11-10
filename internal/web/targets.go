@@ -35,7 +35,7 @@ type overviewData struct {
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d := overviewData{base: s.base(r, "overview", "Overview")}
-	views, err := s.views(ctx, viewOpts{spark: true})
+	views, err := s.views(r, viewOpts{spark: true})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -76,7 +76,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	for _, n := range s.mon.Notifiers() {
+	for _, n := range s.mon.Notifiers(r.Context(), s.ws(r).ID()) {
 		if n.Name != "log" {
 			d.HasChannel = true
 		}
@@ -92,7 +92,7 @@ type monitorsData struct {
 func (s *Server) monitorsPage(w http.ResponseWriter, r *http.Request) {
 	d := monitorsData{base: s.base(r, "monitors", "Monitors")}
 	var err error
-	if d.Rows, err = s.views(r.Context(), viewOpts{}); err != nil {
+	if d.Rows, err = s.views(r, viewOpts{}); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -181,11 +181,11 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		d := monitorsData{base: s.base(r, "monitors", "Monitors")}
 		d.Error = err.Error()
-		d.Rows, _ = s.views(r.Context(), viewOpts{})
+		d.Rows, _ = s.views(r, viewOpts{})
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
 		return
 	}
-	if err := s.mon.Reload(r.Context(), t); err != nil {
+	if err := s.mon.Reload(r.Context(), t.ID); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -227,7 +227,7 @@ func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
 	if t.Timeout > 25*time.Second {
 		t.Timeout = 25 * time.Second
 	}
-	c := s.mon.Test(r.Context(), t)
+	c := s.mon.Test(r.Context(), s.ws(r).ID(), t)
 	writeJSON(w, map[string]any{"ok": c.OK, "status_code": c.StatusCode, "latency_ms": c.LatencyMS, "error": c.Error})
 }
 
@@ -307,7 +307,7 @@ func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request) (store.Targe
 	if !ok {
 		return store.Target{}, monitor.State{}, false
 	}
-	st, ok := s.mon.Get(t.ID)
+	st, ok := s.mon.Get(s.ws(r).ID(), t.ID)
 	if !ok {
 		st = monitor.State{Target: t}
 	}
@@ -355,7 +355,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "target", d)
 		return
 	}
-	if err := s.mon.Reload(r.Context(), nt); err != nil {
+	if err := s.mon.Reload(r.Context(), nt.ID); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -387,7 +387,7 @@ func (s *Server) targetPause(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.mon.Reload(r.Context(), t); err != nil {
+	if err := s.mon.Reload(r.Context(), t.ID); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -409,7 +409,7 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.mon.Reload(r.Context(), t); err != nil {
+	if err := s.mon.Reload(r.Context(), t.ID); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -433,7 +433,7 @@ func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), t.Name+" is paused.")
 		return
 	}
-	s.mon.CheckAsync(t.ID)
+	s.mon.CheckAsync(s.ws(r).ID(), t.ID)
 	if wantsJSON(r) {
 		writeJSON(w, map[string]any{"ok": true, "message": "Checking " + t.Name + "…"})
 		return

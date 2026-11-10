@@ -106,15 +106,23 @@ func run(cfgPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := seedTargets(ctx, st, cfg, logger); err != nil {
+	ws1 := st.Workspace(1)
+	if err := seedTargets(ctx, ws1, cfg, logger); err != nil {
 		return err
 	}
-	notifiers, err := loadNotifiers(ctx, st, cfg, logger)
-	if err != nil {
+	if err := seedNotify(ctx, ws1, cfg); err != nil {
 		return err
 	}
 
-	mon := monitor.New(monitor.Options{Store: st, Notifiers: notifiers, Logger: logger, FailureThreshold: cfg.FailureThreshold, AllowPrivate: cfg.AllowPrivate(true)})
+	mon := monitor.New(monitor.Options{Store: st, Logger: logger, FailureThreshold: cfg.FailureThreshold,
+		Notifiers: func(ctx context.Context, ws int64) (notify.Multi, error) {
+			n, err := st.Workspace(ws).Notify(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return notify.FromConfig(n, logger, cfg.AllowPrivate(ws == 1)), nil
+		},
+		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == 1) }})
 	if err := mon.Start(ctx); err != nil {
 		return err
 	}
@@ -183,14 +191,14 @@ func backup(cfgPath, dest string) (string, error) {
 
 // seedTargets inserts config-file targets that do not exist yet. Targets
 // edited or added in the UI are left alone.
-func seedTargets(ctx context.Context, st *store.Store, cfg *config.Config, logger *slog.Logger) error {
+func seedTargets(ctx context.Context, ws *store.WS, cfg *config.Config, logger *slog.Logger) error {
 	for _, t := range cfg.Targets {
-		if _, err := st.GetTargetByName(ctx, t.Name); err == nil {
+		if _, err := ws.GetTargetByName(ctx, t.Name); err == nil {
 			continue
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
-		if _, err := st.CreateTarget(ctx, store.Target{Name: t.Name, URL: t.URL, Interval: t.Interval.Duration,
+		if _, err := ws.CreateTarget(ctx, store.Target{Name: t.Name, URL: t.URL, Interval: t.Interval.Duration,
 			Timeout: t.Timeout.Duration, ExpectStatus: t.ExpectStatus, Keyword: t.Keyword, Group: t.Group}, time.Now()); err != nil {
 			return fmt.Errorf("seed target %q: %w", t.Name, err)
 		}
@@ -199,25 +207,19 @@ func seedTargets(ctx context.Context, st *store.Store, cfg *config.Config, logge
 	return nil
 }
 
-// loadNotifiers prefers settings saved from the UI; otherwise it uses the
-// config file and stores that so the alerts page shows it.
-func loadNotifiers(ctx context.Context, st *store.Store, cfg *config.Config, logger *slog.Logger) (notify.Multi, error) {
-	raw, err := st.GetSetting(ctx, "notify")
-	if err == nil {
-		var n config.Notify
-		if jerr := json.Unmarshal([]byte(raw), &n); jerr == nil {
-			return notify.FromConfig(n, logger, cfg.AllowPrivate(true)), nil
-		}
-		logger.Warn("stored notify settings are invalid; using config file")
+// seedNotify stores the config file's notify settings when the workspace has
+// none, so the alerts page shows them. Settings saved from the UI win.
+func seedNotify(ctx context.Context, ws *store.WS, cfg *config.Config) error {
+	if _, err := ws.GetSetting(ctx, "notify"); err == nil {
+		return nil
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
+		return err
 	}
-	if b, err := json.Marshal(cfg.Notify); err == nil {
-		if err := st.SetSetting(ctx, "notify", string(b)); err != nil {
-			return nil, err
-		}
+	b, err := json.Marshal(cfg.Notify)
+	if err != nil {
+		return nil
 	}
-	return notify.FromConfig(cfg.Notify, logger, cfg.AllowPrivate(true)), nil
+	return ws.SetSetting(ctx, "notify", string(b))
 }
 
 func pruneLoop(ctx context.Context, st *store.Store, retention time.Duration, logger *slog.Logger) {

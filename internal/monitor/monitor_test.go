@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"uptimemon/internal/notify"
 	"uptimemon/internal/store"
@@ -41,6 +44,8 @@ func (r *recorder) list() []notify.Event {
 	defer r.mu.Unlock()
 	return append([]notify.Event(nil), r.events...)
 }
+
+func allowAll(int64) bool { return true }
 
 type fixture struct {
 	st     *store.Store
@@ -70,7 +75,9 @@ func setup(t *testing.T, threshold int) *fixture {
 	f.clock = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	f.target, _ = st.CreateTarget(context.Background(), store.Target{Name: "api", URL: f.srv.URL, Interval: time.Hour, Timeout: 2 * time.Second, Keyword: "hello"}, f.clock)
 	f.rec = &recorder{}
-	f.mon = New(Options{Store: st, Notifiers: notify.Multi{{Name: "rec", Notifier: f.rec}}, Logger: slog.Default(),
+	f.mon = New(Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
+		return notify.Multi{{Name: "rec", Notifier: f.rec}}, nil
+	}, Logger: slog.Default(),
 		FailureThreshold: threshold, Client: f.srv.Client(), Now: func() time.Time { return f.clock }, RetryBase: time.Millisecond})
 	return f
 }
@@ -80,7 +87,7 @@ func (f *fixture) tick(t *testing.T) State {
 	f.clock = f.clock.Add(30 * time.Second)
 	f.mon.CheckNow(context.Background(), f.target.ID)
 	f.mon.WaitAlerts()
-	s, _ := f.mon.Get(f.target.ID)
+	s, _ := f.mon.Get(1, f.target.ID)
 	return s
 }
 
@@ -158,10 +165,10 @@ func TestRestoreFromStore(t *testing.T) {
 	ctx := context.Background()
 	id, _ := f.st.OpenIncident(ctx, f.target.ID, f.clock.Add(-time.Hour), "HTTP 500")
 	f.st.InsertCheck(ctx, store.Check{TargetID: f.target.ID, CheckedAt: f.clock.Add(-time.Minute), OK: false, StatusCode: 500})
-	if err := f.mon.Reload(ctx, f.target); err != nil {
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
-	s, _ := f.mon.Get(f.target.ID)
+	s, _ := f.mon.Get(1, f.target.ID)
 	if s.Status != Down || s.IncidentID != id || !s.Since.Equal(f.clock.Add(-time.Hour)) {
 		t.Fatalf("restore: %+v", s)
 	}
@@ -200,7 +207,7 @@ func TestPauseResumeAndRemove(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if s, _ := f.mon.Get(f.target.ID); s.Status == Up {
+		if s, _ := f.mon.Get(1, f.target.ID); s.Status == Up {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -209,17 +216,19 @@ func TestPauseResumeAndRemove(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	f.target.Paused = true
-	f.mon.Reload(ctx, f.target)
-	if s, _ := f.mon.Get(f.target.ID); s.Status != Paused {
+	f.st.SetPaused(ctx, f.target.ID, true)
+	f.mon.Reload(ctx, f.target.ID)
+	if s, _ := f.mon.Get(1, f.target.ID); s.Status != Paused {
 		t.Fatalf("want paused: %+v", s)
 	}
 	f.target.Paused = false
-	f.mon.Reload(ctx, f.target)
-	if s, _ := f.mon.Get(f.target.ID); s.Status == Paused {
+	f.st.SetPaused(ctx, f.target.ID, false)
+	f.mon.Reload(ctx, f.target.ID)
+	if s, _ := f.mon.Get(1, f.target.ID); s.Status == Paused {
 		t.Fatalf("want resumed: %+v", s)
 	}
 	f.mon.Remove(f.target.ID)
-	if _, ok := f.mon.Get(f.target.ID); ok {
+	if _, ok := f.mon.Get(1, f.target.ID); ok {
 		t.Fatal("removed target still present")
 	}
 	cancel()
@@ -254,15 +263,17 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 		t.Fatalf("incident start %v should equal Since %v", in.StartedAt, s.Since)
 	}
 	f.target.Paused = true
-	if err := f.mon.Reload(ctx, f.target); err != nil {
+	f.st.SetPaused(ctx, f.target.ID, true)
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.st.OngoingIncident(ctx, f.target.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("pausing should close the incident: %v", err)
 	}
 	f.target.Paused = false
-	f.mon.Reload(ctx, f.target)
-	s, _ = f.mon.Get(f.target.ID)
+	f.st.SetPaused(ctx, f.target.ID, false)
+	f.mon.Reload(ctx, f.target.ID)
+	s, _ = f.mon.Get(1, f.target.ID)
 	if s.Status != Unknown || s.IncidentID != 0 || s.Failures != 0 {
 		t.Fatalf("resume should reset state: %+v", s)
 	}
@@ -306,7 +317,7 @@ func TestConcurrentCheckNowIsSerialised(t *testing.T) {
 	wg.Wait()
 	f.mon.WaitAlerts()
 	list, _ := f.st.ListIncidents(context.Background(), store.IncidentFilter{OngoingOnly: true})
-	s, _ := f.mon.Get(f.target.ID)
+	s, _ := f.mon.Get(1, f.target.ID)
 	if (s.Status == Down) != (len(list) == 1) || len(list) > 1 {
 		t.Fatalf("state %v but %d ongoing incidents", s.Status, len(list))
 	}
@@ -329,7 +340,8 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 	go func() { f.mon.CheckNow(ctx, f.target.ID); close(done) }()
 	time.Sleep(50 * time.Millisecond) // probe is in flight
 	f.target.Paused = true
-	if err := f.mon.Reload(ctx, f.target); err != nil {
+	f.st.SetPaused(ctx, f.target.ID, true)
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
 	<-done
@@ -339,7 +351,7 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
 		t.Fatalf("incident left open across pause: %+v", list)
 	}
-	if s, _ := f.mon.Get(f.target.ID); s.Status != Paused || s.IncidentID != 0 {
+	if s, _ := f.mon.Get(1, f.target.ID); s.Status != Paused || s.IncidentID != 0 {
 		t.Fatalf("state after pause: %+v", s)
 	}
 }
@@ -410,7 +422,7 @@ func TestSlowChannelDoesNotDelayOthers(t *testing.T) {
 	f := setup(t, 1)
 	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
 	slow := blocker{release: make(chan struct{})}
-	f.mon.SetNotifiers(notify.Multi{{Name: "slow", Notifier: slow}, {Name: "rec", Notifier: f.rec}})
+	f.mon.SetNotifiers(1, notify.Multi{{Name: "slow", Notifier: slow}, {Name: "rec", Notifier: f.rec}})
 	atomic.StoreInt32(&f.status, 503)
 	f.clock = f.clock.Add(30 * time.Second)
 	f.mon.CheckNow(context.Background(), f.target.ID)
@@ -439,14 +451,14 @@ func TestProbeBlockedHidesAddress(t *testing.T) {
 	}
 	defer st.Close()
 	tg := store.Target{URL: srv.URL, Timeout: 2 * time.Second}
-	c := New(Options{Store: st, AllowPrivate: false}).Test(context.Background(), tg)
+	c := New(Options{Store: st}).Test(context.Background(), 1, tg)
 	if c.OK || c.Error != "blocked: destination is an internal address" {
 		t.Fatalf("want blocked, got %+v", c)
 	}
 	if strings.Contains(c.Error, "127.0.0.1") {
 		t.Fatal("error leaks address")
 	}
-	if c := New(Options{Store: st, AllowPrivate: true}).Test(context.Background(), tg); !c.OK {
+	if c := New(Options{Store: st, PrivateAllowed: allowAll}).Test(context.Background(), 1, tg); !c.OK {
 		t.Fatalf("want ok with AllowPrivate, got %+v", c)
 	}
 }
@@ -463,16 +475,185 @@ func TestProbeStaysOnHTTP1AgainstHTTP2Server(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	m := New(Options{Store: st, AllowPrivate: true})
+	m := New(Options{Store: st, PrivateAllowed: allowAll})
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
-	tr := m.client.Transport.(*http.Transport)
+	tr := m.openClient.Transport.(*http.Transport)
 	if tr.TLSClientConfig == nil {
 		tr.TLSClientConfig = &tls.Config{}
 	}
 	tr.TLSClientConfig.RootCAs = pool
-	c := m.Test(context.Background(), store.Target{URL: srv.URL, Timeout: 5 * time.Second, Keyword: "HTTP/1.1"})
+	c := m.Test(context.Background(), 1, store.Target{URL: srv.URL, Timeout: 5 * time.Second, Keyword: "HTTP/1.1"})
 	if !c.OK {
 		t.Fatalf("want ok over HTTP/1.1, got %+v", c)
+	}
+}
+
+// twoWorkspaces opens a store with workspace 1 and a second workspace, and
+// creates one target in each pointing at url.
+func twoWorkspaces(t *testing.T, url string) (*store.Store, store.Target, store.Target) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ws.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`INSERT INTO workspaces (name, slug, created_at) VALUES ('B','b',0)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	mk := func(ws int64, name string) store.Target {
+		tg, err := st.Workspace(ws).CreateTarget(ctx, store.Target{Name: name, URL: url, Interval: time.Hour, Timeout: 2 * time.Second}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tg
+	}
+	return st, mk(1, "one"), mk(2, "two")
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for " + what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestMonitorScopedByWorkspace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	st, t1, t2 := twoWorkspaces(t, srv.URL)
+	m := New(Options{Store: st, Client: srv.Client(), Logger: slog.Default()})
+	evs, unsub := m.Events.Subscribe()
+	defer unsub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "both checked", func() bool {
+		a, _ := m.Get(1, t1.ID)
+		b, _ := m.Get(2, t2.ID)
+		return a.Last != nil && b.Last != nil
+	})
+	if s := m.Snapshot(1); len(s) != 1 || s[0].Target.ID != t1.ID {
+		t.Fatalf("Snapshot(1): %+v", s)
+	}
+	if s := m.Snapshot(2); len(s) != 1 || s[0].Target.ID != t2.ID {
+		t.Fatalf("Snapshot(2): %+v", s)
+	}
+	if _, ok := m.Get(2, t1.ID); ok {
+		t.Fatal("Get(2, ws1 target) should be false")
+	}
+	count := func(id int64) int {
+		ws := int64(1)
+		if id == t2.ID {
+			ws = 2
+		}
+		cs, err := st.Workspace(ws).RecentChecks(ctx, id, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(cs)
+	}
+	before, before2 := count(t1.ID), count(t2.ID)
+	m.CheckAsync(2, t1.ID)
+	m.CheckAsync(1, t2.ID)
+	m.CheckAsync(2, t2.ID) // legitimate check, to know the others had time to run
+	waitFor(t, "ws2 check", func() bool { return count(t2.ID) > before2 })
+	if after := count(t1.ID); after != before {
+		t.Fatalf("cross-workspace CheckAsync recorded checks: %d -> %d", before, after)
+	}
+	want := map[int64]int64{t1.ID: 1, t2.ID: 2}
+	for {
+		select {
+		case ev := <-evs:
+			if w, ok := want[ev.TargetID]; ok && ev.WorkspaceID != w {
+				t.Fatalf("event %+v has wrong workspace, want %d", ev, w)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	cancel()
+	m.Wait()
+}
+
+func TestNotifiersPerWorkspace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
+	defer srv.Close()
+	st, _, _ := twoWorkspaces(t, srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	recs := map[int64]*recorder{1: {}, 2: {}}
+	var calls3 int32
+	m := New(Options{Store: st, Client: srv.Client(), Logger: slog.Default(), RetryBase: time.Millisecond,
+		FailureThreshold: 1,
+		Notifiers: func(_ context.Context, ws int64) (notify.Multi, error) {
+			if ws == 3 {
+				atomic.AddInt32(&calls3, 1)
+				return nil, errors.New("boom")
+			}
+			return notify.Multi{{Name: "ws" + string(rune('0'+ws)), Notifier: recs[ws]}}, nil
+		}})
+	t3 := store.Target{ID: 99, WorkspaceID: 3, Name: "three", URL: srv.URL, Timeout: time.Second}
+	m.states[t3.ID] = &state{State: State{Target: t3}}
+	// Targets 1 and 2 go down (server returns 500).
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); m.Wait() }()
+	waitFor(t, "alerts", func() bool { m.WaitAlerts(); return len(recs[2].list()) == 1 && len(recs[1].list()) == 1 })
+	if got := m.Notifiers(ctx, 2); len(got) != 1 || got[0].Name != "ws2" {
+		t.Fatalf("ws2 notifiers: %+v", got)
+	}
+	other := &recorder{}
+	m.SetNotifiers(2, notify.Multi{{Name: "other", Notifier: other}})
+	if got := m.Notifiers(ctx, 2); got[0].Name != "other" {
+		t.Fatalf("SetNotifiers did not replace: %+v", got)
+	}
+	if got := m.Notifiers(ctx, 1); got[0].Name != "ws1" {
+		t.Fatalf("SetNotifiers(2) changed ws1: %+v", got)
+	}
+	// A failing loader falls back to the log channel and is retried next time.
+	m.CheckNow(ctx, t3.ID)
+	m.WaitAlerts()
+	if n := atomic.LoadInt32(&calls3); n != 1 {
+		t.Fatalf("loader calls after first alert: %d", n)
+	}
+	if got := m.Notifiers(ctx, 3); len(got) != 1 || got[0].Name != "log" {
+		t.Fatalf("fallback: %+v", got)
+	}
+	if n := atomic.LoadInt32(&calls3); n != 2 {
+		t.Fatalf("loader should be retried, calls: %d", n)
+	}
+}
+
+func TestPrivateAllowedPerWorkspace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := New(Options{Store: st, PrivateAllowed: func(ws int64) bool { return ws == 1 }})
+	tg := store.Target{URL: srv.URL, Timeout: 2 * time.Second}
+	if c := m.Test(context.Background(), 1, tg); !c.OK {
+		t.Fatalf("ws1 should be allowed: %+v", c)
+	}
+	if c := m.Test(context.Background(), 2, tg); c.Error != "blocked: destination is an internal address" {
+		t.Fatalf("ws2 should be blocked: %+v", c)
 	}
 }

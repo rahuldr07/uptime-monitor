@@ -73,7 +73,7 @@ func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, code int, 
 	tg.BotToken, sl.WebhookURL, em.Password = "", "", ""
 	d.N = config.Notify{Telegram: &tg, Slack: &sl, Email: &em}
 	d.To = strings.Join(em.To, ", ")
-	for _, nn := range s.mon.Notifiers() {
+	for _, nn := range s.mon.Notifiers(r.Context(), s.ws(r).ID()) {
 		d.Has[nn.Name] = true
 	}
 	d.Last, _ = s.store.LastAlerts(r.Context())
@@ -140,7 +140,8 @@ func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request) (config.Noti
 		s.fail(w, err)
 		return n, false
 	}
-	s.mon.SetNotifiers(notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(true)))
+	ws := s.ws(r)
+	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(ws.ID() == pinnedWorkspace)))
 	return n, true
 }
 
@@ -160,7 +161,7 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	ch := r.FormValue("channel")
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := s.mon.SendTest(ctx, ch); err != nil {
+	if err := s.mon.SendTest(ctx, s.ws(r).ID(), ch); err != nil {
 		s.logger.Warn("test alert failed", "channel", ch, "err", err)
 		s.renderAlerts(w, r, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
 		return

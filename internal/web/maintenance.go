@@ -126,7 +126,7 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "maintenance", d)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	msg := "Maintenance started: alerts are paused until " + formatTS(m.EndsAt) + "."
 	if m.Upcoming(s.now()) {
@@ -145,7 +145,7 @@ func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	redirect(w, r, backTo(r, "/maintenance"), "Ended "+m.Title+". Alerts are live again.")
 }
@@ -159,7 +159,7 @@ func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
+	s.mon.Events.Publish(monitor.Event{WorkspaceID: s.ws(r).ID(), Kind: "maintenance"})
 	s.statusCache.reset()
 	redirect(w, r, "/maintenance", "Removed "+m.Title+".")
 }

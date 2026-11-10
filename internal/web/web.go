@@ -215,7 +215,7 @@ func (s *Server) base(r *http.Request, page, title string) base {
 		b.Unacked, _ = s.store.CountUnacknowledged(r.Context())
 	}
 	b.Maint, _ = s.store.ActiveMaintenance(r.Context(), b.Now)
-	for _, st := range s.mon.Snapshot() {
+	for _, st := range s.mon.Snapshot(s.ws(r).ID()) {
 		if st.Status == monitor.Down {
 			b.DownCount++
 		}
@@ -339,8 +339,9 @@ func uptimeCell(d store.Stats, label string) cell {
 	}
 }
 
-func (s *Server) views(ctx context.Context, o viewOpts) ([]targetView, error) {
-	states := s.mon.Snapshot()
+func (s *Server) views(r *http.Request, o viewOpts) ([]targetView, error) {
+	ctx := r.Context()
+	states := s.mon.Snapshot(s.ws(r).ID())
 	out := make([]targetView, 0, len(states))
 	for _, st := range states {
 		v, err := s.view(ctx, st, o)
