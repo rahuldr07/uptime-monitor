@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +50,10 @@ type Server struct {
 	loginSlow     *ratelimit.Limiter
 	deviceKey     []byte // HMAC key for device cookies, fresh per process
 	statusLimiter *ratelimit.Limiter
+	apiLimiter    *ratelimit.Limiter // JSON API, per session
+
+	streamsMu     sync.Mutex
+	streams       map[int64]int // open /events streams per user
 	setupLimiter  *ratelimit.Limiter
 	passwordCheck *ratelimit.Limiter // current-password checks, per user
 	pages         map[string]*template.Template
@@ -107,6 +112,8 @@ func New(o Options) (*Server, error) {
 	s.passwordCheck.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
 	s.statusLimiter.Now = now
+	s.apiLimiter = ratelimit.New(time.Minute, apiRatePerMinute, 0)
+	s.apiLimiter.Now = now
 	s.statusCache.maxBytes = statusCacheMaxBytes
 	funcs := template.FuncMap{
 		"ago":    func(t time.Time) string { return humanAgo(s.now().Sub(t)) },

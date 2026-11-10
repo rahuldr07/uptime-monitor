@@ -3,8 +3,27 @@ package web
 import (
 	"fmt"
 	"io/fs"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 )
+
+// apiRatePerMinute is the JSON API budget per session.
+const apiRatePerMinute = 120
+
+// apiLimited counts each request against the caller's session and answers
+// JSON 429 once the budget is spent.
+func (s *Server) apiLimited(h func(http.ResponseWriter, *http.Request, *authCtx)) func(http.ResponseWriter, *http.Request, *authCtx) {
+	return func(w http.ResponseWriter, r *http.Request, a *authCtx) {
+		if ok, retry := s.apiLimiter.Take(a.sessionHash); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
+			writeJSONStatus(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests"})
+			return
+		}
+		h(w, r, a)
+	}
+}
 
 type routeClass int
 
@@ -102,7 +121,11 @@ func (s *Server) routes() {
 			if r.authed == nil {
 				panic(fmt.Sprintf("web: route %s %s has no authed handler", r.method, r.pattern))
 			}
-			h = s.requireUser(r.authed)
+			authed := r.authed
+			if r.class == classWorkspace && strings.HasPrefix(r.pattern, "/api/") {
+				authed = s.apiLimited(authed)
+			}
+			h = s.requireUser(authed)
 		default:
 			panic(fmt.Sprintf("web: route %s %s has no class", r.method, r.pattern))
 		}
