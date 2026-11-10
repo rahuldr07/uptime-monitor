@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 )
 
@@ -82,19 +84,54 @@ INSERT INTO daily (target_id, day, total, ok, lat_sum)
 	FROM checks WHERE maint = 0 GROUP BY target_id, checked_at / 86400000;
 `
 
+// legacyWorkspaceID is the workspace that the not-yet-workspace-aware store
+// methods read and write. Temporary bridge; removed once every method takes a
+// workspace.
+const legacyWorkspaceID = 1
+
+// migration is one numbered schema step. foreignKeysOff runs it with foreign
+// key enforcement disabled, as SQLite's table-rebuild procedure requires.
+type migration struct {
+	run            func(context.Context, *sql.Tx) error
+	foreignKeysOff bool
+}
+
 // steps are the numbered schema migrations; step N brings PRAGMA user_version
 // to N. Append new steps, never edit existing ones.
-var steps = []func(context.Context, *sql.Tx) error{v1}
+var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}}
 
 // migrate runs every step above the database's user_version, each in its own
-// transaction together with the version bump.
-func migrate(ctx context.Context, db *sql.DB) error {
+// transaction together with the version bump. path is the database file; when
+// the accounts step is about to run on a database that already holds data, a
+// backup is written next to it first.
+func migrate(ctx context.Context, db *sql.DB, path string) error {
 	var cur int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&cur); err != nil {
 		return err
 	}
 	if cur > len(steps) {
 		return fmt.Errorf("database schema version %d is newer than this build supports (%d); use a newer uptime-monitor", cur, len(steps))
+	}
+	if cur < 2 && len(steps) >= 2 && path != "" {
+		has, err := hasData(ctx, db)
+		if err != nil {
+			return err
+		}
+		if has {
+			dest := path + ".pre-accounts-" + time.Now().Format("20060102-150405") + ".bak"
+			// A migration that failed and is retried within the same second
+			// finds its earlier backup in the way; keep both.
+			for i := 2; ; i++ {
+				if _, err := os.Stat(dest); err != nil {
+					break
+				}
+				dest = fmt.Sprintf("%s.pre-accounts-%s-%d.bak", path, time.Now().Format("20060102-150405"), i)
+			}
+			if err := Backup(ctx, path, dest); err != nil {
+				return fmt.Errorf("pre-migration backup: %w", err)
+			}
+			slog.Info("backed up database before the accounts migration", "backup", dest)
+		}
 	}
 	for v := cur + 1; v <= len(steps); v++ {
 		if err := runStep(ctx, db, v); err != nil {
@@ -104,14 +141,66 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func runStep(ctx context.Context, db *sql.DB, v int) error {
-	tx, err := db.BeginTx(ctx, nil)
+// hasData reports whether any row exists in targets, settings or maintenance.
+// A missing table counts as empty.
+func hasData(ctx context.Context, q querier) (bool, error) {
+	for _, table := range []string{"targets", "settings", "maintenance"} {
+		var n int
+		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {
+			return false, err
+		}
+		if n == 0 {
+			continue
+		}
+		var any int
+		err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s)`, table)).Scan(&any)
+		if err != nil {
+			return false, err
+		}
+		if any == 1 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func runStep(ctx context.Context, db *sql.DB, v int) (err error) {
+	// Pin the only connection: PRAGMA foreign_keys is per connection and is a
+	// no-op inside a transaction, so it is set before BeginTx.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	m := steps[v-1]
+	if m.foreignKeysOff {
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			return err
+		}
+		defer func() {
+			if _, ferr := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`); ferr != nil && err == nil {
+				err = ferr
+			}
+		}()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := steps[v-1](ctx, tx); err != nil {
+	if err := m.run(ctx, tx); err != nil {
 		return err
+	}
+	if m.foreignKeysOff {
+		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			return err
+		}
+		bad := rows.Next()
+		rows.Close()
+		if bad {
+			return fmt.Errorf("migration %d: foreign key check failed", v)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", v)); err != nil {
 		return err
@@ -182,4 +271,154 @@ func hasColumn(ctx context.Context, q querier, table, col string) (bool, error) 
 		}
 	}
 	return false, rows.Err()
+}
+
+const accountsSchema = `
+CREATE TABLE users (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	email         TEXT    NOT NULL UNIQUE,
+	password_hash TEXT    NOT NULL,
+	is_operator   INTEGER NOT NULL DEFAULT 0,
+	verified_at   INTEGER,
+	disabled_at   INTEGER,
+	created_at    INTEGER NOT NULL,
+	last_seen_at  INTEGER
+);
+CREATE TABLE workspaces (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT    NOT NULL,
+	slug         TEXT    NOT NULL UNIQUE,
+	suspended_at INTEGER,
+	created_at   INTEGER NOT NULL
+);
+CREATE TABLE memberships (
+	user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	role         TEXT    NOT NULL CHECK (role IN ('owner','editor','viewer')),
+	created_at   INTEGER NOT NULL,
+	PRIMARY KEY (user_id, workspace_id)
+);
+CREATE TABLE sessions (
+	token_hash   TEXT    PRIMARY KEY,
+	user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at   INTEGER NOT NULL,
+	last_seen_at INTEGER NOT NULL,
+	expires_at   INTEGER NOT NULL
+);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE TABLE tokens (
+	token_hash TEXT    PRIMARY KEY,
+	kind       TEXT    NOT NULL CHECK (kind IN ('setup','invite','verify','reset')),
+	user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+	email      TEXT,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	used_at    INTEGER
+);
+CREATE INDEX idx_tokens_user ON tokens(user_id, kind);
+`
+
+const targetsRebuild = `
+CREATE TABLE targets_new (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	workspace_id  INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	name          TEXT    NOT NULL,
+	url           TEXT    NOT NULL,
+	interval_ms   INTEGER NOT NULL,
+	timeout_ms    INTEGER NOT NULL,
+	expect_status INTEGER NOT NULL DEFAULT 0,
+	keyword       TEXT    NOT NULL DEFAULT '',
+	paused        INTEGER NOT NULL DEFAULT 0,
+	created_at    INTEGER NOT NULL,
+	grp           TEXT    NOT NULL DEFAULT '',
+	muted         INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (workspace_id, name)
+);
+INSERT INTO targets_new (id, workspace_id, name, url, interval_ms, timeout_ms, expect_status, keyword, paused, created_at, grp, muted)
+	SELECT id, 1, name, url, interval_ms, timeout_ms, expect_status, keyword, paused, created_at, grp, muted FROM targets;
+`
+
+const maintenanceRebuild = `
+CREATE TABLE maintenance_new (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	title        TEXT    NOT NULL,
+	starts_at    INTEGER NOT NULL,
+	ends_at      INTEGER NOT NULL,
+	grp          TEXT    NOT NULL DEFAULT '',
+	created_at   INTEGER NOT NULL
+);
+INSERT INTO maintenance_new (id, workspace_id, title, starts_at, ends_at, grp, created_at)
+	SELECT id, 1, title, starts_at, ends_at, grp, created_at FROM maintenance;
+`
+
+const settingsRebuild = `
+CREATE TABLE settings_new (
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	key          TEXT    NOT NULL,
+	value        TEXT    NOT NULL,
+	PRIMARY KEY (workspace_id, key)
+);
+INSERT INTO settings_new (workspace_id, key, value) SELECT 1, key, value FROM settings;
+DROP TABLE settings;
+ALTER TABLE settings_new RENAME TO settings;
+`
+
+// v2 adds the accounts tables and makes targets, maintenance and settings
+// belong to a workspace. Every existing row moves into workspace 1. It must run
+// with foreign keys off (see runStep) because it drops and renames tables.
+func v2(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, accountsSchema); err != nil {
+		return fmt.Errorf("create accounts tables: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces (id, name, slug, created_at) VALUES (1, 'Default', 'default', ?)`, time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("create default workspace: %w", err)
+	}
+	if err := rebuild(ctx, tx, "targets", targetsRebuild, ""); err != nil {
+		return err
+	}
+	if err := rebuild(ctx, tx, "maintenance", maintenanceRebuild,
+		`CREATE INDEX idx_maintenance_time ON maintenance(starts_at, ends_at);
+		 CREATE INDEX idx_maintenance_ws ON maintenance(workspace_id, starts_at);`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, settingsRebuild); err != nil {
+		return fmt.Errorf("rebuild settings: %w", err)
+	}
+	return nil
+}
+
+// rebuild replaces table with its <table>_new definition (created and filled by
+// create), then restores the AUTOINCREMENT counter so deleted ids are never
+// reused: dropping a table deletes its sqlite_sequence row.
+func rebuild(ctx context.Context, tx *sql.Tx, table, create, indexes string) error {
+	var oldSeq int64
+	err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = ?`, table).Scan(&oldSeq)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, q := range []string{create, `DROP TABLE ` + table, `ALTER TABLE ` + table + `_new RENAME TO ` + table, indexes} {
+		if q == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("rebuild %s: %w", table, err)
+		}
+	}
+	var maxID int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM `+table).Scan(&maxID); err != nil {
+		return err
+	}
+	seq := max(oldSeq, maxID)
+	if seq == 0 {
+		return nil
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = ?`, seq, table)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`, table, seq)
+	}
+	return err
 }

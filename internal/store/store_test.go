@@ -290,13 +290,21 @@ func TestRollupsOutliveRawChecks(t *testing.T) {
 
 func TestRollupBackfillAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
+	// Build the database as a v1 one: the workspace-aware step 2 is not
+	// idempotent, so it must not have run before step 1 is replayed.
+	full := steps
+	steps = full[:1]
 	s, err := Open(path)
+	steps = full
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	if _, err := s.db.Exec(`INSERT INTO targets (name, url, interval_ms, timeout_ms, created_at) VALUES ('A', 'https://a', 1000, 1000, ?)`, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	tg := Target{ID: 1}
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now, OK: true, LatencyMS: 50})
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(-24 * time.Hour), OK: false})
 	// Simulate a database from before rollups existed.

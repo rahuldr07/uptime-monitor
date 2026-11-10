@@ -49,8 +49,8 @@ func (s *Store) CreateMaintenance(ctx context.Context, m Maintenance, now time.T
 		return Maintenance{}, errors.New("maintenance must end after it starts")
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO maintenance (title, starts_at, ends_at, grp, created_at) VALUES (?, ?, ?, ?, ?)`,
-		m.Title, m.StartsAt.UnixMilli(), m.EndsAt.UnixMilli(), m.Group, now.UnixMilli())
+		`INSERT INTO maintenance (workspace_id, title, starts_at, ends_at, grp, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		legacyWorkspaceID, m.Title, m.StartsAt.UnixMilli(), m.EndsAt.UnixMilli(), m.Group, now.UnixMilli())
 	if err != nil {
 		return Maintenance{}, err
 	}

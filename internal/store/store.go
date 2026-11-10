@@ -48,7 +48,7 @@ func Open(path string) (*Store, error) {
 	}
 	// SQLite allows one writer at a time; a single connection keeps things simple.
 	db.SetMaxOpenConns(1)
-	if err := migrate(context.Background(), db); err != nil {
+	if err := migrate(context.Background(), db, path); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

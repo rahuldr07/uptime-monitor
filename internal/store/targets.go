@@ -80,9 +80,9 @@ func (s *Store) GetTargetByName(ctx context.Context, name string) (Target, error
 // CreateTarget inserts a target and returns it with its id.
 func (s *Store) CreateTarget(ctx context.Context, t Target, now time.Time) (Target, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO targets (name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, t.Group, boolToInt(t.Paused), boolToInt(t.Muted), now.UnixMilli())
+		`INSERT INTO targets (workspace_id, name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		legacyWorkspaceID, t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, t.Group, boolToInt(t.Paused), boolToInt(t.Muted), now.UnixMilli())
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Target{}, fmt.Errorf("a target named %q already exists", t.Name)

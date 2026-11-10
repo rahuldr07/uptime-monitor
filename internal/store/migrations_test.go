@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,8 +45,8 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := userVersion(t, s); v != len(steps) || v != 1 {
-		t.Fatalf("user_version = %d, want 1", v)
+	if v := userVersion(t, s); v != len(steps) || v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
 	}
 	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'daily'`); n != 1 {
 		t.Fatal("daily table missing on fresh database")
@@ -88,8 +89,8 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if v := userVersion(t, s); v != 1 {
-		t.Fatalf("user_version = %d, want 1", v)
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
 	}
 	ctx := context.Background()
 	for _, c := range [][2]string{{"targets", "grp"}, {"targets", "muted"}, {"incidents", "acked_at"}, {"incidents", "note"}, {"checks", "maint"}} {
@@ -141,18 +142,18 @@ func TestMigrateStepIsAtomic(t *testing.T) {
 
 	orig := steps
 	t.Cleanup(func() { steps = orig })
-	steps = append(append([]func(context.Context, *sql.Tx) error{}, orig...), func(ctx context.Context, tx *sql.Tx) error {
+	steps = append(append([]migration{}, orig...), migration{run: func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE half_done(x)`); err != nil {
 			return err
 		}
 		return errors.New("boom")
-	})
+	}})
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("Open err = %v, want boom", err)
 	}
 	raw := rawOpen(t, path)
-	if v := rawCount(t, raw, `PRAGMA user_version`); v != 1 {
-		t.Fatalf("user_version = %d, want 1", v)
+	if v := rawCount(t, raw, `PRAGMA user_version`); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
 	}
 	if n := rawCount(t, raw, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'half_done'`); n != 0 {
 		t.Fatal("half_done table survived a failed step")
@@ -165,4 +166,193 @@ func TestMigrateStepIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
+}
+
+// openV1 builds a v1 database at path holding targets A and B (B deleted),
+// their history, a maintenance window and a setting.
+func openV1(t *testing.T, path string) (deletedID int64) {
+	t.Helper()
+	orig := steps
+	steps = orig[:1]
+	defer func() { steps = orig }()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, q := range []string{
+		`INSERT INTO targets (name, url, interval_ms, timeout_ms, created_at) VALUES ('A', 'http://a', 1000, 1000, 1), ('B', 'http://b', 1000, 1000, 1)`,
+		`INSERT INTO checks (target_id, checked_at, ok, status_code, latency_ms) VALUES (1, 1, 1, 200, 5), (2, 1, 1, 200, 5)`,
+		`INSERT INTO incidents (target_id, started_at) VALUES (1, 1)`,
+		`INSERT INTO alerts (incident_id, target_id, sent_at, channel, event, ok) VALUES (1, 1, 1, 'slack', 'down', 1)`,
+		`INSERT INTO maintenance (title, starts_at, ends_at, created_at) VALUES ('m', 1, 2, 1)`,
+		`INSERT INTO settings (key, value) VALUES ('notify', '{}')`,
+		`DELETE FROM targets WHERE name = 'B'`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return 2
+}
+
+func TestMigrateV2Upgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	bID := openV1(t, path)
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+	var id int64
+	var name, slug string
+	if err := s.db.QueryRow(`SELECT id, name, slug FROM workspaces`).Scan(&id, &name, &slug); err != nil || id != 1 || name != "Default" || slug != "default" {
+		t.Fatalf("workspace = %d %q %q, %v", id, name, slug, err)
+	}
+	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM workspaces`); n != 1 {
+		t.Fatalf("workspaces = %d, want 1", n)
+	}
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM targets WHERE name = 'A' AND workspace_id = 1`,
+		`SELECT COUNT(*) FROM maintenance WHERE workspace_id = 1`,
+		`SELECT COUNT(*) FROM settings WHERE workspace_id = 1`,
+	} {
+		if n := rawCount(t, s.db, q); n != 1 {
+			t.Fatalf("%s = %d, want 1", q, n)
+		}
+	}
+	ctx := context.Background()
+	if v, err := s.GetSetting(ctx, "notify"); err != nil || v != "{}" {
+		t.Fatalf("GetSetting = %q, %v", v, err)
+	}
+	for table, want := range map[string]int{"checks": 2, "incidents": 1, "alerts": 1} {
+		if n := rawCount(t, s.db, `SELECT COUNT(*) FROM `+table); n != want {
+			t.Fatalf("%s rows = %d, want %d", table, n, want)
+		}
+	}
+	nt, err := s.CreateTarget(ctx, Target{Name: "C", URL: "http://c", Interval: time.Second, Timeout: time.Second}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nt.ID <= bID {
+		t.Fatalf("new target id = %d, want > %d", nt.ID, bID)
+	}
+	rows, err := s.db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows.Next() {
+		t.Fatal("foreign_key_check returned rows")
+	}
+	rows.Close()
+	if n := rawCount(t, s.db, `PRAGMA foreign_keys`); n != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", n)
+	}
+	s.Close()
+
+	baks, _ := filepath.Glob(path + ".pre-accounts-*.bak")
+	if len(baks) != 1 {
+		t.Fatalf("backups = %v, want 1", baks)
+	}
+	if fi, err := os.Stat(baks[0]); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("backup mode = %v, %v", fi, err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+	if baks, _ := filepath.Glob(path + ".pre-accounts-*.bak"); len(baks) != 1 {
+		t.Fatalf("backups = %v, want 1", baks)
+	}
+}
+
+func TestMigrateV2Fresh(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM workspaces WHERE id = 1`); n != 1 {
+		t.Fatal("workspace 1 missing")
+	}
+	if baks, _ := filepath.Glob(filepath.Join(dir, "*.bak")); len(baks) != 0 {
+		t.Fatalf("unexpected backups %v", baks)
+	}
+}
+
+func TestMigrateV2FailureRollsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	openV1(t, path)
+
+	orig := steps
+	t.Cleanup(func() { steps = orig })
+	steps = append([]migration{}, orig...)
+	steps[1].run = func(ctx context.Context, tx *sql.Tx) error {
+		if err := v2(ctx, tx); err != nil {
+			return err
+		}
+		return errors.New("boom")
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Open err = %v, want boom", err)
+	}
+	raw := rawOpen(t, path)
+	if v := rawCount(t, raw, `PRAGMA user_version`); v != 1 {
+		t.Fatalf("user_version = %d, want 1", v)
+	}
+	if n := rawCount(t, raw, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'workspaces'`); n != 0 {
+		t.Fatal("workspaces table survived a failed step")
+	}
+	if has, err := hasColumn(context.Background(), raw, "targets", "workspace_id"); err != nil || has {
+		t.Fatalf("targets.workspace_id = %v, %v", has, err)
+	}
+	if n := rawCount(t, raw, `SELECT COUNT(*) FROM targets`); n != 1 {
+		t.Fatalf("targets = %d, want 1", n)
+	}
+	raw.Close()
+
+	steps = orig
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if n := rawCount(t, s.db, `PRAGMA foreign_keys`); n != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", n)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+}
+
+func TestTwoWorkspacesSameTargetName(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.db.Exec(`INSERT INTO workspaces (id, name, slug, created_at) VALUES (2, 'Two', 'two', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	ins := `INSERT INTO targets (workspace_id, name, url, interval_ms, timeout_ms, created_at) VALUES (?, 'X', 'http://x', 1000, 1000, 1)`
+	for _, ws := range []int{1, 2} {
+		if _, err := s.db.Exec(ins, ws); err != nil {
+			t.Fatalf("workspace %d: %v", ws, err)
+		}
+	}
+	if _, err := s.db.Exec(ins, 1); err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("duplicate err = %v, want UNIQUE", err)
+	}
 }
