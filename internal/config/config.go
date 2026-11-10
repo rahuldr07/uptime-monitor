@@ -90,6 +90,11 @@ type Config struct {
 	Retention           Duration `json:"retention"`
 	Targets             []Target `json:"targets"`
 	Notify              Notify   `json:"notify"`
+
+	BaseURL string          `json:"base_url"` // public origin for links; empty derives one from listen
+	Signup  string          `json:"signup"`   // only "closed" is supported yet
+	Mail    json.RawMessage `json:"mail"`     // rejected until supported
+	Limits  json.RawMessage `json:"limits"`   // rejected until supported
 }
 
 // Load reads a JSON config file. Environment variables in the form $VAR or
@@ -148,6 +153,27 @@ func (c *Config) AllowPrivate(operator bool) bool {
 		return true
 	}
 	return operator
+}
+
+// HTTPSBase reports whether links are built on an https base URL.
+func (c *Config) HTTPSBase() bool {
+	return strings.HasPrefix(c.BaseURL, "https://")
+}
+
+// LinkBase is the origin used when building absolute links: base_url when set,
+// otherwise http:// plus the listen address, with wildcard hosts as localhost.
+func (c *Config) LinkBase() string {
+	if c.BaseURL != "" {
+		return c.BaseURL
+	}
+	host, port, err := net.SplitHostPort(c.Listen)
+	if err != nil {
+		return "http://" + c.Listen
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func isLoopback(listen string) bool {
@@ -219,6 +245,26 @@ func (c *Config) applyDefaults() error {
 	case "none", "operator", "all":
 	default:
 		return errors.New(`config: allow_private_targets must be "none", "operator" or "all"`)
+	}
+	if c.Signup == "" {
+		c.Signup = "closed"
+	}
+	if c.Signup != "closed" {
+		return fmt.Errorf("config: signup %q is not supported yet", c.Signup)
+	}
+	if isSet(c.Mail) {
+		return errors.New("config: mail is not supported yet")
+	}
+	if isSet(c.Limits) {
+		return errors.New("config: limits is not supported yet")
+	}
+	if c.BaseURL != "" {
+		u, err := url.Parse(c.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return errors.New("config: base_url must be an absolute http(s) URL with no path")
+		}
+		c.BaseURL = strings.TrimSuffix(c.BaseURL, "/")
 	}
 	if c.FailureThreshold <= 0 {
 		c.FailureThreshold = 2
@@ -298,4 +344,9 @@ func ValidateNotify(n *Notify) error {
 		}
 	}
 	return nil
+}
+
+// isSet reports whether an optional raw JSON key was given (and not null).
+func isSet(m json.RawMessage) bool {
+	return len(m) > 0 && string(m) != "null"
 }

@@ -133,3 +133,49 @@ func TestAllowPrivateTargets(t *testing.T) {
 		t.Fatalf("err = %v, want allow_private_targets must be", err)
 	}
 }
+
+func TestAccountsConfigKeys(t *testing.T) {
+	c, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Signup != "closed" {
+		t.Errorf("default signup = %q, want closed", c.Signup)
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{"signup open", `{"signup":"open"}`, "not supported yet"},
+		{"mail", `{"mail":{}}`, "mail is not supported yet"},
+		{"limits", `{"limits":{}}`, "limits is not supported yet"},
+		{"path", `{"base_url":"https://x/y"}`, "base_url must be"},
+		{"scheme", `{"base_url":"ftp://x"}`, "base_url must be"},
+		{"relative", `{"base_url":"status.example.com"}`, "base_url must be"},
+		{"query", `{"base_url":"https://x?a=1"}`, "base_url must be"},
+		{"fragment", `{"base_url":"https://x#f"}`, "base_url must be"},
+	} {
+		if _, err := Parse([]byte(tc.in)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want containing %q", tc.name, err, tc.want)
+		}
+	}
+	c, err = Parse([]byte(`{"base_url":"https://status.example.com/"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseURL != "https://status.example.com" || !c.HTTPSBase() || c.LinkBase() != "https://status.example.com" {
+		t.Errorf("base_url = %q https=%v link=%q", c.BaseURL, c.HTTPSBase(), c.LinkBase())
+	}
+	for listen, want := range map[string]string{
+		":8080":       "http://localhost:8080",
+		"127.0.0.1:9": "http://127.0.0.1:9",
+		"0.0.0.0:80":  "http://localhost:80",
+		"[::]:81":     "http://localhost:81",
+		"[::1]:82":    "http://[::1]:82",
+	} {
+		c, err := Parse([]byte(`{"listen":"` + listen + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.LinkBase(); got != want || c.HTTPSBase() {
+			t.Errorf("LinkBase(%q) = %q, want %q", listen, got, want)
+		}
+	}
+}
