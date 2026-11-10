@@ -164,6 +164,13 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request, a *authCtx) 
 	if !ok {
 		return
 	}
+	if !a.IsOperator {
+		if ok, retry := s.alertTest.Take(wsKey(a)); !ok {
+			retryAfter(w, retry)
+			s.renderAlerts(w, r, a, http.StatusTooManyRequests, n, "Settings saved, but too many test alerts were sent. Wait a minute and try again.")
+			return
+		}
+	}
 	ch := r.FormValue("channel")
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()

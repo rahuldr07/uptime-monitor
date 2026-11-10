@@ -18,6 +18,9 @@ import (
 type Duration struct{ time.Duration }
 
 func (d *Duration) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil // leave unset, so the default applies
+	}
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
 		return fmt.Errorf("duration must be a string like \"30s\": %w", err)
@@ -371,6 +374,7 @@ func normalizeBaseURL(raw string) (string, bool) {
 
 // isLoopbackHost reports whether host is localhost or a loopback IP.
 func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
@@ -402,8 +406,8 @@ func (l *Limits) applyDefaults() error {
 	if l.HostRequestsPerSecond == nil {
 		one := 1.0
 		l.HostRequestsPerSecond = &one
-	} else if *l.HostRequestsPerSecond < 0 {
-		return errors.New("config: limits.host_requests_per_second must not be negative")
+	} else if *l.HostRequestsPerSecond <= 0 {
+		return errors.New("config: limits.host_requests_per_second must be positive")
 	}
 	if l.MinInterval.Duration == 0 {
 		l.MinInterval.Duration = 30 * time.Second

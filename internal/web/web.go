@@ -58,6 +58,11 @@ type Server struct {
 	signupByAddr  *ratelimit.Limiter // sign-ups per client address
 	signupGlobal  *ratelimit.Limiter // sign-ups across the instance, key "all"
 	passwordCheck *ratelimit.Limiter // current-password checks, per user
+	createLimiter *ratelimit.Limiter // monitor creations, per workspace
+	checkTarget   *ratelimit.Limiter // Check now, per target
+	checkWS       *ratelimit.Limiter // Check now, per workspace
+	testURL       *ratelimit.Limiter // Test URL, per workspace
+	alertTest     *ratelimit.Limiter // alert test sends, per workspace
 	pages         map[string]*template.Template
 	mux           *http.ServeMux
 
@@ -116,6 +121,14 @@ func New(o Options) (*Server, error) {
 	s.signupGlobal.Now = now
 	s.passwordCheck = ratelimit.New(passwordCheckWindow, passwordCheckMax, 0)
 	s.passwordCheck.Now = now
+	s.createLimiter = ratelimit.New(time.Hour, 30, 0)
+	s.checkTarget = ratelimit.New(10*time.Second, 1, 0)
+	s.checkWS = ratelimit.New(time.Minute, 30, 0)
+	s.testURL = ratelimit.New(time.Minute, 10, 0)
+	s.alertTest = ratelimit.New(time.Minute, 5, 0)
+	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest} {
+		l.Now = now
+	}
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
 	s.statusLimiter.Now = now
 	s.apiLimiter = ratelimit.New(time.Minute, apiRatePerMinute, 0)

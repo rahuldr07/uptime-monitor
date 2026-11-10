@@ -24,6 +24,16 @@ import (
 	"uptimemon/internal/web"
 )
 
+// userAgent identifies this instance on probes, with its public address when
+// base_url is set so a probed site's owner can tell who is checking them.
+func userAgent(version, baseURL string) string {
+	ua := "uptime-monitor/" + version
+	if baseURL != "" {
+		ua += " (+" + baseURL + ")"
+	}
+	return ua
+}
+
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
@@ -190,7 +200,8 @@ func run(cfgPath string, logger *slog.Logger) error {
 			}
 			return notify.FromConfig(n, logger, cfg.AllowPrivate(ws == 1)), nil
 		},
-		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == 1) }})
+		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == 1) },
+		UserAgent:      userAgent(version, cfg.BaseURL)})
 	if err := mon.Start(ctx); err != nil {
 		return err
 	}

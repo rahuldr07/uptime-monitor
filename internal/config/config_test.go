@@ -204,12 +204,25 @@ func TestLimitsDefaults(t *testing.T) {
 	}
 }
 
+func TestLimitsNullGetsDefault(t *testing.T) {
+	c, err := Parse([]byte(`{"limits":{"max_monitors":null,"min_interval":null,"host_requests_per_second":null,"signups_per_hour":null}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Limits
+	if *l.MaxMonitors != 20 || l.MinInterval.Duration != 30*time.Second || *l.HostRequestsPerSecond != 1 || *l.SignupsPerHour != 100 {
+		t.Errorf("null limits = %+v", l)
+	}
+}
+
 func TestLimitsValidation(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"max_monitors", `{"limits":{"max_monitors":-1}}`, "limits.max_monitors"},
 		{"max_workspaces", `{"limits":{"max_workspaces":-1}}`, "limits.max_workspaces"},
 		{"signups_per_hour", `{"limits":{"signups_per_hour":-1}}`, "limits.signups_per_hour"},
-		{"host_requests_per_second", `{"limits":{"host_requests_per_second":-1}}`, "limits.host_requests_per_second"},
+		{"host_requests_per_second", `{"limits":{"host_requests_per_second":-1}}`, "limits.host_requests_per_second must be positive"},
+		{"host_requests_per_second zero", `{"limits":{"host_requests_per_second":0}}`, "limits.host_requests_per_second must be positive"},
+		{"min_interval negative", `{"limits":{"min_interval":"-1m"}}`, "limits.min_interval"},
 		{"min_interval", `{"limits":{"min_interval":"500ms"}}`, "limits.min_interval"},
 		{"mail_per_hour", `{"limits":{"mail_per_hour":10}}`, "limits.mail_per_hour is not supported yet"},
 		{"mail_per_hour zero", `{"limits":{"mail_per_hour":0}}`, "limits.mail_per_hour is not supported yet"},
@@ -230,6 +243,8 @@ func TestSignupNeedsBaseURL(t *testing.T) {
 		{"http://localhost:8080", true},
 		{"http://127.0.0.1:8080", true},
 		{"http://[::1]:8080", true},
+		{"http://localhost.:8080", true},
+		{"http://127.0.0.2:8080", true},
 		{"https://status.example.com", true},
 	} {
 		in := `{"signup":"invite"`

@@ -666,3 +666,59 @@ func TestPrivateAllowedPerWorkspace(t *testing.T) {
 		t.Fatalf("ws2 should be blocked: %+v", c)
 	}
 }
+
+func TestCheckAsyncCoalesces(t *testing.T) {
+	f := setup(t, 1)
+	release := make(chan struct{})
+	var hits atomic.Int32
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+	}))
+	defer slow.Close()
+	f.target.URL = slow.URL
+	f.target.Keyword = ""
+	f.mon.client, f.mon.openClient = slow.Client(), slow.Client()
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
+	ws := f.target.WorkspaceID
+	if !f.mon.CheckAsync(ws, f.target.ID) {
+		t.Fatal("first CheckAsync refused")
+	}
+	waitFor(t, "probe to start", func() bool { return hits.Load() == 1 })
+	if f.mon.CheckAsync(ws, f.target.ID) {
+		t.Fatal("second CheckAsync should coalesce")
+	}
+	if f.mon.CheckAsync(ws+1, f.target.ID) {
+		t.Fatal("foreign workspace should be refused")
+	}
+	close(release)
+	f.mon.wg.Wait()
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+	if !f.mon.CheckAsync(ws, f.target.ID) {
+		t.Fatal("CheckAsync after completion refused")
+	}
+	f.mon.wg.Wait()
+	if hits.Load() != 2 {
+		t.Fatalf("hits = %d, want 2", hits.Load())
+	}
+}
+
+func TestUserAgent(t *testing.T) {
+	var got atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Store(r.Header.Get("User-Agent"))
+	}))
+	defer srv.Close()
+	tg := store.Target{URL: srv.URL, Timeout: time.Second}
+	m := New(Options{Client: srv.Client(), UserAgent: "uptime-monitor/dev (+https://status.example.com)"})
+	m.Test(context.Background(), 2, tg)
+	if got.Load() != "uptime-monitor/dev (+https://status.example.com)" {
+		t.Errorf("User-Agent = %v", got.Load())
+	}
+	Probe(context.Background(), srv.Client(), tg, time.Now)
+	if got.Load() != "uptime-monitor/1.0" {
+		t.Errorf("default User-Agent = %v", got.Load())
+	}
+}

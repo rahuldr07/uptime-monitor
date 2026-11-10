@@ -26,6 +26,7 @@ var sysAllowed = map[string][]string{
 	"account.go|(*Server).accountSignOutAll": {"DeleteUserSessions"},
 	"reset.go|(*Server).resetPage":           {"PeekToken"},
 	"reset.go|(*Server).resetPost":           {"PeekToken", "ResetPassword", "CreateSession"},
+	"targets.go|(*Server).hostRateErr":       {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
 	"web.go|(*Server).healthz":               {"Ping"},
 	"status.go|(*Server).statusRedirect":     {"Workspace"},                    // operator's page for anonymous visitors
 	"status.go|(*Server).statusPage":         {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build

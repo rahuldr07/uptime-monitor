@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -135,6 +137,71 @@ func formFromRequest(r *http.Request, action, submit string) targetForm {
 		Group: strings.TrimSpace(r.FormValue("group")), Muted: r.FormValue("muted") == "1"}
 }
 
+// retryAfter sets the Retry-After header from a limiter's wait.
+func retryAfter(w http.ResponseWriter, d time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(d.Seconds())))))
+}
+
+func wsKey(a *authCtx) string { return strconv.FormatInt(a.WS.ID(), 10) }
+
+// hostEpsilon absorbs float rounding, so a total of exactly the limit passes.
+const hostEpsilon = 1e-9
+
+// limitErr applies the per-workspace limits that the operator is exempt from:
+// minimum interval, monitor cap (create only) and the combined per-host check
+// rate. selfID is the target being edited, or 0 for a new one.
+func (s *Server) limitErr(ctx context.Context, a *authCtx, t store.Target, selfID int64) error {
+	if a.IsOperator {
+		return nil
+	}
+	lim := s.cfg.Limits
+	if t.Interval < lim.MinInterval.Duration {
+		return fmt.Errorf("Check interval must be at least %s.", shortDur(lim.MinInterval.Duration))
+	}
+	if selfID == 0 && *lim.MaxMonitors > 0 {
+		n, err := a.WS.CountTargets(ctx)
+		if err != nil {
+			return err
+		}
+		if n >= *lim.MaxMonitors {
+			return fmt.Errorf("This workspace has reached its limit of %d monitors.", *lim.MaxMonitors)
+		}
+	}
+	return s.hostRateErr(ctx, a, t, selfID)
+}
+
+// hostRateErr refuses a target that would push the combined check rate to its
+// host, across every non-operator workspace, over limits.host_requests_per_second.
+func (s *Server) hostRateErr(ctx context.Context, a *authCtx, t store.Target, selfID int64) error {
+	host := hostOf(t.URL)
+	rate := 1 / t.Interval.Seconds()
+	others, err := s.sys.TargetsInOtherWorkspaces(ctx, a.WS.ID())
+	if err != nil {
+		return err
+	}
+	own, err := a.WS.ListTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, o := range append(others, own...) {
+		if o.ID != selfID && hostOf(o.URL) == host && o.Interval > 0 {
+			rate += 1 / o.Interval.Seconds()
+		}
+	}
+	if rate > *s.cfg.Limits.HostRequestsPerSecond+hostEpsilon {
+		return fmt.Errorf("Too many checks to this host from this instance. Use a longer interval.")
+	}
+	return nil
+}
+
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
 // toTarget validates the form and returns a Target (without ID).
 func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
 	t := store.Target{Name: f.Name, URL: f.URL, Keyword: f.Keyword, Group: f.Group, Muted: f.Muted,
@@ -170,22 +237,35 @@ func (f targetForm) toTarget(defaults *config.Config) (store.Target, error) {
 func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
 	f := formFromRequest(r, "/targets", "Create monitor")
+	fail := func(code int, msg string) {
+		if wantsJSON(r) {
+			writeJSONStatus(w, code, map[string]any{"error": msg})
+			return
+		}
+		d := monitorsData{base: s.base(r, a, "monitors", "Monitors")}
+		d.Error = msg
+		d.Rows, _ = s.views(r.Context(), ws, viewOpts{})
+		s.renderStatus(w, r, code, "monitors", d)
+	}
+	if !a.IsOperator {
+		if ok, retry := s.createLimiter.Take(wsKey(a)); !ok {
+			retryAfter(w, retry)
+			fail(http.StatusTooManyRequests, "You're creating monitors too quickly.")
+			return
+		}
+	}
 	t, err := f.toTarget(s.cfg)
 	if err == nil {
 		err = s.checkDestination(a, t.URL)
 	}
 	if err == nil {
+		err = s.limitErr(r.Context(), a, t, 0)
+	}
+	if err == nil {
 		t, err = ws.CreateTarget(r.Context(), t, s.now())
 	}
 	if err != nil {
-		if wantsJSON(r) {
-			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
-			return
-		}
-		d := monitorsData{base: s.base(r, a, "monitors", "Monitors")}
-		d.Error = err.Error()
-		d.Rows, _ = s.views(r.Context(), ws, viewOpts{})
-		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
+		fail(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if err := s.mon.Reload(r.Context(), t.ID); err != nil {
@@ -216,6 +296,13 @@ func (s *Server) checkDestination(a *authCtx, rawURL string) error {
 // targetTest probes the URL in the form without saving anything.
 func (s *Server) targetTest(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
+	if !a.IsOperator {
+		if ok, retry := s.testURL.Take(wsKey(a)); !ok {
+			retryAfter(w, retry)
+			writeJSONStatus(w, http.StatusTooManyRequests, map[string]any{"error": "Too many URL tests. Wait a minute and try again."})
+			return
+		}
+	}
 	f := formFromRequest(r, "", "")
 	if f.Name == "" {
 		f.Name = "test"
@@ -346,6 +433,9 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request, a *authCtx
 		err = s.checkDestination(a, nt.URL)
 	}
 	if err == nil {
+		err = s.limitErr(r.Context(), a, nt, t.ID)
+	}
+	if err == nil {
 		nt.ID, nt.Paused, nt.CreatedAt = t.ID, t.Paused, t.CreatedAt
 		nt, err = ws.UpdateTarget(r.Context(), nt)
 	}
@@ -445,10 +535,32 @@ func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request, a *authCtx)
 		redirect(w, r, fmt.Sprintf("/targets/%d", t.ID), t.Name+" is paused.")
 		return
 	}
-	s.mon.CheckAsync(ws.ID(), t.ID)
+	if !a.IsOperator {
+		tk := strconv.FormatInt(t.ID, 10)
+		ok, retry := s.checkTarget.Take(tk)
+		if ok {
+			if ok, retry = s.checkWS.Take(wsKey(a)); !ok {
+				s.checkTarget.Undo(tk)
+			}
+		}
+		if !ok {
+			retryAfter(w, retry)
+			msg := "Too many manual checks. Wait a moment and try again."
+			if wantsJSON(r) {
+				writeJSONStatus(w, http.StatusTooManyRequests, map[string]any{"ok": false, "message": msg})
+				return
+			}
+			http.Error(w, msg, http.StatusTooManyRequests)
+			return
+		}
+	}
+	msg := "Checking " + t.Name + "…"
+	if !s.mon.CheckAsync(ws.ID(), t.ID) {
+		msg = "A check is already running."
+	}
 	if wantsJSON(r) {
-		writeJSON(w, map[string]any{"ok": true, "message": "Checking " + t.Name + "…"})
+		writeJSON(w, map[string]any{"ok": true, "message": msg})
 		return
 	}
-	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), "Checking "+t.Name+"…")
+	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
 }

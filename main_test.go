@@ -169,3 +169,12 @@ func TestInviteEmailArg(t *testing.T) {
 		}
 	}
 }
+
+func TestUserAgentString(t *testing.T) {
+	if got := userAgent("dev", "https://status.example.com"); got != "uptime-monitor/dev (+https://status.example.com)" {
+		t.Errorf("with base_url: %q", got)
+	}
+	if got := userAgent("1.2.3", ""); got != "uptime-monitor/1.2.3" {
+		t.Errorf("without base_url: %q", got)
+	}
+}

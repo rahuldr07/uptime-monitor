@@ -56,6 +56,7 @@ type state struct {
 	State
 	firstFailAt time.Time
 	checkMu     sync.Mutex // serialises probe+apply per target
+	inflight    bool       // a CheckAsync is running or queued; guarded by Monitor.mu
 }
 
 // Options configure a Monitor.
@@ -73,6 +74,7 @@ type Options struct {
 	PrivateAllowed func(workspaceID int64) bool
 	Now            func() time.Time
 	RetryBase      time.Duration // backoff base for alert retries
+	UserAgent      string        // sent on every probe; empty means "uptime-monitor/1.0"
 }
 
 // Event is published whenever a target's state or latest check changes.
@@ -132,6 +134,7 @@ type Monitor struct {
 	threshold  int
 	now        func() time.Time
 	retryBase  time.Duration
+	userAgent  string
 
 	notifMu   sync.Mutex // guards notifiers; never held with mu or around loadNotif
 	notifiers map[int64]notify.Multi
@@ -172,6 +175,7 @@ func New(o Options) *Monitor {
 		threshold:  o.FailureThreshold,
 		now:        o.Now,
 		retryBase:  o.RetryBase,
+		userAgent:  o.UserAgent,
 		notifiers:  map[int64]notify.Multi{},
 		states:     map[int64]*state{},
 		cancels:    map[int64]context.CancelFunc{},
@@ -475,7 +479,7 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	if !still || cur != st || t.Paused {
 		return // removed, replaced or paused while we waited
 	}
-	c := Probe(ctx, m.clientFor(t.WorkspaceID), t, m.now)
+	c := probe(ctx, m.clientFor(t.WorkspaceID), t, m.now, m.userAgent)
 	if ctx.Err() != nil {
 		return // shutting down; do not record a cancelled probe
 	}
@@ -494,33 +498,49 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 	m.apply(sctx, id, c)
 }
 
-// CheckAsync runs CheckNow in the background, detached from the caller.
-func (m *Monitor) CheckAsync(ws, id int64) {
+// CheckAsync runs CheckNow in the background, detached from the caller. It
+// reports false, and starts nothing, when the target is not in workspace ws or
+// an earlier CheckAsync for it is still running or queued.
+func (m *Monitor) CheckAsync(ws, id int64) bool {
 	m.mu.Lock()
 	ctx := m.ctx
 	st, ok := m.states[id]
-	mine := ok && st.Target.WorkspaceID == ws
-	m.mu.Unlock()
-	if !mine {
-		return
+	if !ok || st.Target.WorkspaceID != ws || st.inflight {
+		m.mu.Unlock()
+		return false
 	}
+	st.inflight = true
+	m.wg.Add(1)
+	m.mu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		defer func() {
+			m.mu.Lock()
+			st.inflight = false
+			m.mu.Unlock()
+		}()
 		m.CheckNow(ctx, id)
 	}()
+	return true
 }
 
 // Test probes an unsaved target with the workspace's probe client.
 func (m *Monitor) Test(ctx context.Context, ws int64, t store.Target) store.Check {
-	return Probe(ctx, m.clientFor(ws), t, m.now)
+	return probe(ctx, m.clientFor(ws), t, m.now, m.userAgent)
 }
 
 // Probe performs one HTTP check of a target.
 func Probe(ctx context.Context, client *http.Client, t store.Target, now func() time.Time) store.Check {
+	return probe(ctx, client, t, now, "")
+}
+
+func probe(ctx context.Context, client *http.Client, t store.Target, now func() time.Time, userAgent string) store.Check {
+	if userAgent == "" {
+		userAgent = "uptime-monitor/1.0"
+	}
 	c := store.Check{TargetID: t.ID, CheckedAt: now().UTC()}
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
 	defer cancel()
@@ -529,7 +549,7 @@ func Probe(ctx context.Context, client *http.Client, t store.Target, now func() 
 		c.Error = err.Error()
 		return c
 	}
-	req.Header.Set("User-Agent", "uptime-monitor/1.0")
+	req.Header.Set("User-Agent", userAgent)
 	start := time.Now()
 	resp, err := client.Do(req)
 	c.LatencyMS = time.Since(start).Milliseconds()
