@@ -366,6 +366,9 @@ func (m *Monitor) Reload(ctx context.Context, targetID int64) error {
 		cancel()
 		return nil
 	}
+	if old, ok := m.cancels[t.ID]; ok {
+		old() // a concurrent Reload stored its runner first; never leak it
+	}
 	m.cancels[t.ID] = cancel
 	m.wg.Add(1)
 	m.mu.Unlock()

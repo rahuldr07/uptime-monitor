@@ -869,3 +869,36 @@ func TestReloadRacingForgetWorkspaceStartsNoRunner(t *testing.T) {
 		t.Fatal("a runner goroutine outlived the context")
 	}
 }
+
+// Two Reloads of one target at once must leave one runner: the second
+// cancels the first instead of overwriting its cancel func.
+func TestConcurrentReloadsLeaveOneRunner(t *testing.T) {
+	f := setup(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); f.mon.Reload(ctx, f.target.ID) }()
+	}
+	wg.Wait()
+	f.mon.mu.Lock()
+	n := len(f.mon.cancels)
+	f.mon.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("cancels = %d, want 1", n)
+	}
+	// Only the stored runner is left running: Wait returns once ctx ends only
+	// if every replaced runner was cancelled too.
+	f.mon.Remove(f.target.ID)
+	done := make(chan struct{})
+	go func() { f.mon.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a replaced runner was never cancelled")
+	}
+	cancel()
+}

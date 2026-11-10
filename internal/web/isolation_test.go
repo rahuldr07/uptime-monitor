@@ -57,19 +57,10 @@ func seedWorkspace(t *testing.T, e *env, ws *store.WS, name, maintTitle string) 
 	if err := e.mon.Reload(ctx, tg.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: e.now().Add(-time.Minute), OK: false, Error: "boom"}); err != nil {
-		t.Fatal(err)
-	}
-	inc, err := e.st.OpenIncident(ctx, tg.ID, e.now().Add(-time.Minute), "boom")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := ws.CreateMaintenance(ctx, store.Maintenance{Title: maintTitle, StartsAt: e.now().Add(-time.Hour), EndsAt: e.now().Add(time.Hour)}, e.now())
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Reload starts a probe in the background. Wait until it has recorded its
-	// check, incident and alert so nothing changes under the snapshots.
+	// check, incident and alert before seeding anything else: a maintenance
+	// window created earlier would make the probe open no incident, and a
+	// hand-made incident created earlier would sit beside the probe's.
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		ins, err := ws.ListIncidents(ctx, store.IncidentFilter{TargetID: tg.ID})
@@ -87,6 +78,17 @@ func seedWorkspace(t *testing.T, e *env, ws *store.WS, name, maintTitle string) 
 			t.Fatal("the monitor's first probe never finished")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if err := e.st.InsertCheck(ctx, store.Check{TargetID: tg.ID, CheckedAt: e.now().Add(-time.Minute), OK: false, Error: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	inc, err := e.st.OpenIncident(ctx, tg.ID, e.now().Add(-time.Minute), "boom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := ws.CreateMaintenance(ctx, store.Maintenance{Title: maintTitle, StartsAt: e.now().Add(-time.Hour), EndsAt: e.now().Add(time.Hour)}, e.now())
+	if err != nil {
+		t.Fatal(err)
 	}
 	return isoA{target: tg.ID, incident: inc, maint: m.ID}
 }
