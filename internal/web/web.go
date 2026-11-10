@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -43,8 +44,24 @@ type Server struct {
 	statusCache pageCache
 }
 
-// New builds a Server. now may be nil.
-func New(cfg *config.Config, st *store.Store, mon *monitor.Monitor, logger *slog.Logger, now func() time.Time) (*Server, error) {
+// Options configure a Server.
+type Options struct {
+	Config  *config.Config
+	Store   *store.Store
+	Monitor *monitor.Monitor
+	Logger  *slog.Logger     // nil means slog.Default(), as in monitor.New
+	Now     func() time.Time // nil means time.Now
+}
+
+// New builds a Server. Config, Store and Monitor are required.
+func New(o Options) (*Server, error) {
+	if o.Config == nil || o.Store == nil || o.Monitor == nil {
+		return nil, errors.New("web: Options.Config, Store and Monitor are required")
+	}
+	cfg, st, mon, logger, now := o.Config, o.Store, o.Monitor, o.Logger, o.Now
+	if logger == nil {
+		logger = slog.Default()
+	}
 	if now == nil {
 		now = time.Now
 	}

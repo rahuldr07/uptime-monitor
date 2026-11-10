@@ -45,7 +45,7 @@ func newEnv(t *testing.T, password string) *env {
 	if err := e.mon.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(cfg, st, e.mon, slog.Default(), now)
+	s, err := New(Options{Config: cfg, Store: st, Monitor: e.mon, Logger: slog.Default(), Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,5 +649,11 @@ func TestMaintenanceWindows(t *testing.T) {
 	}
 	if _, body := e.get(t, c, "/maintenance"); !strings.Contains(body, "Past") || !strings.Contains(body, "API deploy") || strings.Contains(body, "Disk swap") {
 		t.Fatal("ended window should be in Past and deleted one gone")
+	}
+}
+
+func TestNewRequiresDependencies(t *testing.T) {
+	if _, err := New(Options{}); err == nil {
+		t.Fatal("New must reject missing Config, Store and Monitor")
 	}
 }

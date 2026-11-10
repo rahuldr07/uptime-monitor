@@ -298,7 +298,7 @@ func (w *stalledWriter) Write(b []byte) (int, error) {
 
 func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 	e := newEnv(t, "pw")
-	s, err := New(e.cfg, e.st, e.mon, slog.Default(), func() time.Time { return e.clock })
+	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon, Logger: slog.Default(), Now: func() time.Time { return e.clock }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -118,7 +118,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if err := mon.Start(ctx); err != nil {
 		return err
 	}
-	srv, err := web.New(cfg, st, mon, logger, nil)
+	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger})
 	if err != nil {
 		return err
 	}
