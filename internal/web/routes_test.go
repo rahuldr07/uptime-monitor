@@ -93,7 +93,7 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 			}
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("POST %s cross-site: status %d, want 423", path, resp.StatusCode)
+				t.Errorf("POST %s cross-site: status %d, want 403", path, resp.StatusCode)
 			}
 		}
 	}

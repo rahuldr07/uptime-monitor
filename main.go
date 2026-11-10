@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,7 +58,7 @@ func main() {
 	backupPath := flag.String("backup", "", "write a consistent copy of the database to this path and exit")
 	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
 	resetEmail := flag.String("reset-password", "", "print a one-time password reset link for this email and exit")
-	invite := flag.Bool("invite", false, "print a one-time sign-up link and exit; follow with an email address to bind the invitation to it")
+	invite := flag.Bool("invite", false, "print a one-time sign-up link and exit; an email address, if any, must come last and binds the invitation to it")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -83,7 +84,12 @@ func main() {
 		return
 	}
 	if *invite {
-		link, err := newInviteLink(cfgPath, flag.Arg(0))
+		email, err := inviteEmailArg(flag.Args())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		link, err := newInviteLink(cfgPath, email)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -306,6 +312,20 @@ func newResetLink(cfgPath, email string) (string, error) {
 		return "", err
 	}
 	return cfg.LinkBase() + "/reset?token=" + raw, nil
+}
+
+// inviteEmailArg returns the optional email after -invite. Anything after
+// the flag that is not a single plain argument is a usage error, so a
+// misplaced flag is never taken for an address.
+func inviteEmailArg(args []string) (string, error) {
+	const usage = "usage: -invite [email] (the email, if any, must come last, after all other flags)"
+	if len(args) > 1 || (len(args) == 1 && strings.HasPrefix(args[0], "-")) {
+		return "", errors.New(usage)
+	}
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	return "", nil
 }
 
 // inviteTTL is how long a link from -invite works.

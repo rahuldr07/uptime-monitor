@@ -61,39 +61,36 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r, s.cfg.ProxyHops())
 	addr := clientKey(r, s.cfg.ProxyHops())
 	raw := r.FormValue("invite")
+	if raw == "" && s.cfg.Signup != "invite" {
+		http.NotFound(w, r)
+		return
+	}
 	d := signupData{base: s.page(r, "Sign up"), Invite: raw,
 		Email: strings.TrimSpace(r.FormValue("email")), WorkspaceName: strings.TrimSpace(r.FormValue("workspace"))}
-	if t, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now()); err == nil && t.Email != "" {
-		d.EmailLocked = true
-	}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "signup", d)
 	}
 
-	// 1. Limits. The slots are refunded when no account was created for a
-	// reason other than the form (unknown invite, busy hasher); validation
-	// failures keep theirs.
+	// 1. Address limit. It is refunded unless the form was a real attempt
+	// with a valid invite, so probing without one costs nothing.
 	if ok, _ := s.signupByAddr.Take(addr); !ok {
 		s.logger.Warn("sign-up throttled", "event", "signup_throttled", "ip", ip)
 		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
-	if ok, _ := s.signupGlobal.Take("all"); !ok {
-		s.signupByAddr.Undo(addr)
-		s.logger.Warn("sign-up throttled", "event", "signup_throttled", "ip", ip, "scope", "instance")
-		fail(http.StatusTooManyRequests, msgTooMany)
-		return
-	}
-	refund := true
+	refundAddr, refundGlobal := true, false
 	defer func() {
-		if refund {
+		if refundAddr {
 			s.signupByAddr.Undo(addr)
+		}
+		if refundGlobal {
 			s.signupGlobal.Undo("all")
 		}
 	}()
 
-	// 2. Validation.
+	// 2. Validation. Its result is shown only for a valid invite, so a
+	// duplicate email never answers anyone without one.
 	pw := r.FormValue("password")
 	email, emailErr := store.NormalizeEmail(d.Email)
 	pwErr := password.CheckLength(pw)
@@ -107,39 +104,37 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	case !validWorkspaceName(d.WorkspaceName):
 		d.Error = msgWorkspaceLen
 	}
+
+	// 3. Invite, peeked once.
+	tok, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now())
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	d.EmailLocked = tok.Email != ""
 	if d.Error != "" {
-		refund = false
+		refundAddr = false
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "signup", d)
 		return
 	}
 
-	// 3. Invite.
-	if _, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now()); errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		s.fail(w, err)
+	// 4. Instance-wide limit, spent only by a valid invite.
+	if ok, _ := s.signupGlobal.Take("all"); !ok {
+		s.logger.Warn("sign-up throttled", "event", "signup_throttled", "ip", ip, "scope", "instance")
+		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
-	refund = false
-
-	// 4. Workspace cap.
-	if max := *s.cfg.Limits.MaxWorkspaces; max > 0 {
-		n, err := s.sys.CountWorkspaces(ctx)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		if n >= max {
-			fail(http.StatusForbidden, msgNoNewAccounts)
-			return
-		}
-	}
+	refundGlobal = true
+	refundAddr = false
 
 	// 5. Hash.
 	phc, err := s.hasher.Hash(ctx, pw)
 	if errors.Is(err, password.ErrBusy) {
-		refund = true
+		refundAddr = true
 		fail(http.StatusServiceUnavailable, msgBusy)
 		return
 	}
@@ -148,28 +143,38 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Create the account. A failure leaves the invite unused.
+	// 6. Create the account; the workspace cap is checked in the transaction.
+	// A failure leaves the invite unused.
 	u, _, err := s.sys.CreateAccount(ctx, store.AccountInput{Email: email, PasswordHash: phc,
-		WorkspaceName: d.WorkspaceName, Verified: true, InviteToken: raw, Now: s.now()})
+		WorkspaceName: d.WorkspaceName, Verified: true, InviteToken: raw,
+		MaxWorkspaces: *s.cfg.Limits.MaxWorkspaces, Now: s.now()})
 	switch {
+	case errors.Is(err, store.ErrWorkspaceCap):
+		refundGlobal = false
+		fail(http.StatusForbidden, msgNoNewAccounts)
+		return
 	case errors.Is(err, store.ErrEmailTaken):
+		refundGlobal = false
+		s.logger.Warn("sign-up duplicate", "event", "signup_duplicate", "ip", ip)
 		fail(http.StatusUnprocessableEntity, msgEmailTaken)
 		return
 	case errors.Is(err, store.ErrInviteEmail):
+		refundGlobal = false
 		fail(http.StatusUnprocessableEntity, msgInviteEmail)
 		return
 	case errors.Is(err, store.ErrNotFound):
-		refund = true
+		refundAddr = true
 		http.NotFound(w, r)
 		return
 	case err != nil:
 		s.fail(w, err)
 		return
 	}
+	refundGlobal = false
 
 	// 7. Success. The session must survive a client that disconnects now.
 	ctx = context.WithoutCancel(ctx)
-	s.logger.Warn("sign-up", "event", "signup", "user_id", u.ID, "ip", ip)
+	s.logger.Info("sign-up", "event", "signup", "user_id", u.ID, "ip", ip)
 	sess, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)

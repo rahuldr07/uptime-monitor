@@ -19,7 +19,7 @@ var sysAllowed = map[string][]string{
 	"setup.go|(*Server).setupPage":           {"Workspace", "PeekToken"}, // first-run setup
 	"setup.go|(*Server).setupPost":           {"PeekToken", "CompleteSetup", "CreateSession"},
 	"signup.go|(*Server).signupPage":         {"PeekToken"},
-	"signup.go|(*Server).signupPost":         {"PeekToken", "CountWorkspaces", "CreateAccount", "CreateSession"},
+	"signup.go|(*Server).signupPost":         {"PeekToken", "CreateAccount", "CreateSession"},
 	"login.go|(*Server).loginPost":           {"UserByEmail", "DeleteSession", "CreateSession"},
 	"login.go|(*Server).logout":              {"DeleteSession"},
 	"account.go|(*Server).accountPassword":   {"PasswordHash", "SetPassword"},

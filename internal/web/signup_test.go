@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -171,4 +173,64 @@ func TestSignupLimits(t *testing.T) {
 			t.Fatalf("invite consumed by refused sign-up: %v", err)
 		}
 	})
+}
+
+const inviteCfg = `{"signup":"invite","base_url":"http://localhost:8080"}`
+
+// A client with its own remote address, so limits keyed by address differ.
+func (e *env) clientFrom(t *testing.T, ip string) *http.Client {
+	t.Helper()
+	c := e.client(t)
+	c.Transport = &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		d := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip)}}
+		return d.DialContext(ctx, network, addr)
+	}}
+	t.Cleanup(c.Transport.(*http.Transport).CloseIdleConnections)
+	return c
+}
+
+func TestSignupBudgetNeedsValidInvite(t *testing.T) {
+	e := newSignupEnv(t, `{"signup":"invite","base_url":"http://localhost:8080","limits":{"signups_per_hour":5}}`)
+	a := e.clientFrom(t, "127.0.0.2")
+	for i := 0; i < 5; i++ {
+		if resp, _ := e.post(t, a, "/signup", signupForm("bogus", "x@example.com")); resp.StatusCode != 404 {
+			t.Fatalf("bogus %d: %d", i, resp.StatusCode)
+		}
+	}
+	b := e.clientFrom(t, "127.0.0.3")
+	if resp, body := e.post(t, b, "/signup", signupForm(e.invite(t, ""), "new@example.com")); resp.StatusCode != 303 {
+		t.Fatalf("valid sign-up after probes: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestSignupNoEnumeration(t *testing.T) {
+	for _, mode := range []string{"invite", "closed"} {
+		e := newSignupEnv(t, `{"signup":"`+mode+`","base_url":"http://localhost:8080"}`)
+		c := e.client(t)
+		for _, inv := range []string{"", "bogus"} {
+			resp, body := e.post(t, c, "/signup", signupForm(inv, opEmail))
+			if resp.StatusCode != 404 || strings.Contains(body, msgEmailTaken) {
+				t.Fatalf("%s invite %q: %d %s", mode, inv, resp.StatusCode, body)
+			}
+		}
+	}
+	e := newSignupEnv(t, inviteCfg)
+	c := e.client(t)
+	for i := 0; i < 6; i++ {
+		if resp, _ := e.post(t, c, "/signup", signupForm("bogus", opEmail)); resp.StatusCode != 404 {
+			t.Fatalf("probe %d: %d", i, resp.StatusCode)
+		}
+	}
+	if resp, body := e.post(t, c, "/signup", signupForm(e.invite(t, ""), "new@example.com")); resp.StatusCode != 303 {
+		t.Fatalf("per-address slot not refunded: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestSignupInvalidFormBogusInviteIs404(t *testing.T) {
+	e := newSignupEnv(t, inviteCfg)
+	f := signupForm("bogus", "x@example.com")
+	f.Set("confirm", "nope")
+	if resp, _ := e.post(t, e.client(t), "/signup", f); resp.StatusCode != 404 {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
 }

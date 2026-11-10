@@ -150,3 +150,22 @@ func TestInviteCLI(t *testing.T) {
 		t.Fatal("invalid email should fail")
 	}
 }
+
+func TestInviteEmailArg(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+		bad  bool
+	}{
+		{nil, "", false},
+		{[]string{"a@b.co"}, "a@b.co", false},
+		{[]string{"a@b.co", "extra"}, "", true},
+		{[]string{"-config"}, "", true},
+		{[]string{"-config", "x.json"}, "", true},
+	} {
+		got, err := inviteEmailArg(c.args)
+		if (err != nil) != c.bad || got != c.want {
+			t.Errorf("%v: got %q, %v", c.args, got, err)
+		}
+	}
+}

@@ -1252,3 +1252,42 @@ func TestDeriveSlugFallbackAfterManyCollisions(t *testing.T) {
 		t.Fatalf("not unique: %v", err)
 	}
 }
+
+func TestCreateAccountWorkspaceCap(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	// The operator workspace exists, so a cap of 2 leaves room for one more.
+	n, err := s.CountWorkspaces(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	max := n + 1
+	errs := make(chan error, 2)
+	for _, e := range []string{"a@b.co", "c@d.co"} {
+		go func() {
+			_, _, err := s.CreateAccount(ctx, AccountInput{Email: e, PasswordHash: "h", WorkspaceName: e, MaxWorkspaces: max, Now: now})
+			errs <- err
+		}()
+	}
+	var ok, capped int
+	for range 2 {
+		switch err := <-errs; {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrWorkspaceCap):
+			capped++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if ok != 1 || capped != 1 {
+		t.Fatalf("ok=%d capped=%d, want 1 and 1", ok, capped)
+	}
+	if got, _ := s.CountWorkspaces(ctx); got != max {
+		t.Fatalf("workspaces = %d, want %d", got, max)
+	}
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "e@f.co", PasswordHash: "h", WorkspaceName: "E", Now: now}); err != nil {
+		t.Fatalf("MaxWorkspaces 0 is unlimited: %v", err)
+	}
+}

@@ -18,6 +18,8 @@ var (
 	ErrEmailTaken = errors.New("email is already registered")
 	// ErrInviteEmail is returned when an invite is bound to another address.
 	ErrInviteEmail = errors.New("This invite is for a different email address.")
+	// ErrWorkspaceCap is returned when AccountInput.MaxWorkspaces is reached.
+	ErrWorkspaceCap = errors.New("workspace limit reached")
 	// ErrInvalidEmail is returned by NormalizeEmail.
 	ErrInvalidEmail = errors.New("Enter a valid email address.")
 )
@@ -251,7 +253,10 @@ type AccountInput struct {
 	Operator    bool
 	// Verified marks the address verified at creation.
 	Verified bool
-	Now      time.Time
+	// MaxWorkspaces, when positive, refuses the account with ErrWorkspaceCap
+	// once that many workspaces exist. The count is taken in the transaction.
+	MaxWorkspaces int
+	Now           time.Time
 }
 
 // CreateAccount creates a user, a new workspace and the owner membership in
@@ -262,6 +267,15 @@ func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, 
 		return User{}, nil, err
 	}
 	defer tx.Rollback()
+	if in.MaxWorkspaces > 0 {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspaces`).Scan(&n); err != nil {
+			return User{}, nil, err
+		}
+		if n >= in.MaxWorkspaces {
+			return User{}, nil, ErrWorkspaceCap
+		}
+	}
 	if in.InviteToken != "" {
 		email, err := NormalizeEmail(in.Email)
 		if err != nil {
