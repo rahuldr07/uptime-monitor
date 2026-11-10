@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -53,6 +54,18 @@ const tokenLive = `kind = ? AND used_at IS NULL AND expires_at > ?
 // raw value, which is never stored. Earlier unused tokens of the same kind
 // for that user (every unused setup token) are deleted.
 func (s *Store) CreateToken(ctx context.Context, kind TokenKind, userID int64, ttl time.Duration, now time.Time) (string, error) {
+	switch kind {
+	case TokenSetup:
+		if userID != 0 {
+			return "", errors.New("store: setup token takes no user")
+		}
+	case TokenReset:
+		if userID <= 0 {
+			return "", errors.New("store: reset token needs a user")
+		}
+	default:
+		return "", fmt.Errorf("store: unsupported token kind %q", kind)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err

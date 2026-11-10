@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net"
 	"net/mail"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
@@ -29,9 +31,14 @@ type User struct {
 
 // NormalizeEmail validates an address and returns it trimmed and lowercased.
 func NormalizeEmail(s string) (string, error) {
-	s = strings.TrimSpace(s)
+	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" || len(s) > 254 {
 		return "", ErrInvalidEmail
+	}
+	for _, r := range s {
+		if unicode.In(r, unicode.Cc, unicode.Cf) {
+			return "", ErrInvalidEmail
+		}
 	}
 	a, err := mail.ParseAddress(s)
 	if err != nil || a.Address != s {
@@ -39,10 +46,10 @@ func NormalizeEmail(s string) (string, error) {
 	}
 	at := strings.LastIndexByte(s, '@')
 	domain := s[at+1:]
-	if strings.Contains(s, "@[") || !strings.Contains(domain, ".") {
+	if strings.Contains(s, "@[") || !strings.Contains(domain, ".") || net.ParseIP(domain) != nil {
 		return "", ErrInvalidEmail
 	}
-	return strings.ToLower(s), nil
+	return s, nil
 }
 
 // isEmailTaken reports whether err is the users.email UNIQUE violation. It is
@@ -83,9 +90,13 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// UserByEmail returns the user and their password hash. email must already be
-// normalized.
+// UserByEmail returns the user and their password hash. The email is
+// normalized first; an invalid address is ErrNotFound.
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, string, error) {
+	email, err := NormalizeEmail(email)
+	if err != nil {
+		return User{}, "", ErrNotFound
+	}
 	var phc string
 	u, err := scanUser(s.db.QueryRowContext(ctx,
 		`SELECT `+userCols+`, password_hash FROM users WHERE email = ?`, email), &phc)
@@ -107,8 +118,12 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 // IsUpgradedInstall reports whether this is a pre-accounts database: no users
 // yet, but workspace 1 already holds targets, settings or maintenance.
 func (s *Store) IsUpgradedInstall(ctx context.Context) (bool, error) {
+	return isUpgradedInstall(ctx, s.db)
+}
+
+func isUpgradedInstall(ctx context.Context, q querier) (bool, error) {
 	var has bool
-	err := s.db.QueryRowContext(ctx, `SELECT
+	err := q.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM users) = 0 AND (
 			EXISTS (SELECT 1 FROM targets WHERE workspace_id = 1) OR
 			EXISTS (SELECT 1 FROM settings WHERE workspace_id = 1) OR
@@ -120,10 +135,18 @@ func (s *Store) IsUpgradedInstall(ctx context.Context) (bool, error) {
 // password-unlock path, where the caller has already checked the password.
 type SetupInput struct {
 	Email, PasswordHash, WorkspaceName, SetupToken string
-	Now                                            time.Time
+	// PasswordUnlocked authorizes the password-unlock path; the caller sets
+	// it only after verifying admin_password.
+	PasswordUnlocked bool
+	Now              time.Time
 }
 
 func insertUser(ctx context.Context, q querier, email, phc string, operator, verified bool, now time.Time) (User, error) {
+	email, err := NormalizeEmail(email)
+	if err != nil {
+		return User{}, err
+	}
+	now = time.UnixMilli(now.UnixMilli()).UTC()
 	var ver any
 	if verified {
 		ver = now.UnixMilli()
@@ -141,9 +164,9 @@ func insertUser(ctx context.Context, q querier, email, phc string, operator, ver
 	if err != nil {
 		return User{}, err
 	}
-	u := User{ID: id, Email: email, IsOperator: operator, CreatedAt: now.UTC()}
+	u := User{ID: id, Email: email, IsOperator: operator, CreatedAt: now}
 	if verified {
-		t := now.UTC()
+		t := now
 		u.VerifiedAt = &t
 	}
 	return u, nil
@@ -157,9 +180,19 @@ func insertOwner(ctx context.Context, q querier, userID, workspaceID int64, now 
 }
 
 // CompleteSetup creates the first user, an operator, and adopts workspace 1.
+//
+// Authorization is explicit: either SetupToken is set (the token is consumed
+// inside the transaction) or PasswordUnlocked is true, in which case the
+// caller must already have verified admin_password and the upgraded-install
+// condition is re-checked inside the transaction. With neither, it returns
+// ErrNotFound and changes nothing.
+//
 // The no-user check runs inside the transaction, so of any concurrent calls
 // exactly one succeeds and the rest get ErrSetupDone.
 func (s *Store) CompleteSetup(ctx context.Context, in SetupInput) (User, error) {
+	if in.SetupToken == "" && !in.PasswordUnlocked {
+		return User{}, ErrNotFound
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return User{}, err
@@ -172,6 +205,15 @@ func (s *Store) CompleteSetup(ctx context.Context, in SetupInput) (User, error) 
 	if n > 0 {
 		return User{}, ErrSetupDone
 	}
+	if in.PasswordUnlocked {
+		up, err := isUpgradedInstall(ctx, tx)
+		if err != nil {
+			return User{}, err
+		}
+		if !up {
+			return User{}, ErrNotFound
+		}
+	}
 	if in.SetupToken != "" {
 		if _, err := consumeToken(ctx, tx, TokenSetup, in.SetupToken, in.Now); err != nil {
 			return User{}, err
@@ -181,7 +223,11 @@ func (s *Store) CompleteSetup(ctx context.Context, in SetupInput) (User, error) 
 	if err != nil {
 		return User{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET name = ? WHERE id = 1`, in.WorkspaceName); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE workspaces SET name = ? WHERE id = 1`, in.WorkspaceName)
+	if err != nil {
+		return User{}, err
+	}
+	if err := requireRow(res); err != nil {
 		return User{}, err
 	}
 	if err := insertOwner(ctx, tx, u.ID, 1, in.Now); err != nil {

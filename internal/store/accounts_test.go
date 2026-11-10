@@ -200,7 +200,7 @@ func TestIsUpgradedInstall(t *testing.T) {
 	if got, err = s.IsUpgradedInstall(ctx); err != nil || !got {
 		t.Fatalf("with target: %v %v", got, err)
 	}
-	if _, err := s.CompleteSetup(ctx, SetupInput{Email: "op@example.com", PasswordHash: "phc", WorkspaceName: "W", Now: now}); err != nil {
+	if _, err := s.CompleteSetup(ctx, SetupInput{Email: "op@example.com", PasswordHash: "phc", WorkspaceName: "W", PasswordUnlocked: true, Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = s.IsUpgradedInstall(ctx); err != nil || got {
@@ -214,7 +214,7 @@ func TestNormalizeEmail(t *testing.T) {
 		t.Fatalf("got %q, %v", got, err)
 	}
 	long := strings.Repeat("a", 255-len("@b.co")) + "@b.co"
-	for _, in := range []string{"Bob <a@b.c>", "a@[127.0.0.1]", "a@localhost", "", long} {
+	for _, in := range []string{"Bob <a@b.c>", "a@[127.0.0.1]", "a@localhost", "", long, "a@127.0.0.1", "a\u200b@x.co", "a@x\u200d.co", strings.Repeat("Ⱥ", 100) + "@x.co"} {
 		if _, err := NormalizeEmail(in); !errors.Is(err, ErrInvalidEmail) {
 			t.Errorf("%q: err = %v", in, err)
 		}
@@ -309,5 +309,87 @@ func TestPruneTokens(t *testing.T) {
 	}
 	if n, err = s.PruneTokens(ctx, now); err != nil || n != 1 {
 		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
+func TestCompleteSetupExplicitAuthorization(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	in := SetupInput{Email: "op@example.com", PasswordHash: "phc", WorkspaceName: "Acme", Now: now}
+
+	s := open(t)
+	if _, err := s.CompleteSetup(ctx, in); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("neither: %v", err)
+	}
+	in.PasswordUnlocked = true
+	if _, err := s.CompleteSetup(ctx, in); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("fresh install unlocked: %v", err)
+	}
+	if n, _ := s.CountUsers(ctx); n != 0 {
+		t.Fatalf("users = %d", n)
+	}
+	if _, err := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Minute, Timeout: time.Second}, now); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.CompleteSetup(ctx, in)
+	if err != nil {
+		t.Fatalf("upgraded: %v", err)
+	}
+	if got, _ := s.UserByID(ctx, u.ID); !got.CreatedAt.Equal(u.CreatedAt) || !got.VerifiedAt.Equal(*u.VerifiedAt) {
+		t.Fatalf("times differ: %+v vs %+v", got, u)
+	}
+}
+
+func TestEmailNormalizedInStore(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 123456789, time.UTC)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "A@X.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Now: now})
+	if err != nil || u.Email != "a@x.co" {
+		t.Fatalf("%v %+v", err, u)
+	}
+	if got, err := s.UserByID(ctx, u.ID); err != nil || got.Email != "a@x.co" || !got.CreatedAt.Equal(u.CreatedAt) {
+		t.Fatalf("%v %+v vs %+v", err, got, u)
+	}
+	if _, _, err := s.UserByEmail(ctx, "A@X.CO"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "B", Slug: "b", Now: now}); !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("dup: %v", err)
+	}
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "bad", PasswordHash: "h", WorkspaceName: "C", Slug: "c", Now: now}); !errors.Is(err, ErrInvalidEmail) {
+		t.Fatalf("invalid: %v", err)
+	}
+}
+
+func TestCreateTokenValidation(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Now()
+	for _, c := range []struct {
+		k TokenKind
+		u int64
+	}{{TokenSetup, 1}, {TokenReset, 0}, {TokenReset, -1}, {"bogus", 0}, {"invite", 1}} {
+		if _, err := s.CreateToken(ctx, c.k, c.u, time.Hour, now); err == nil {
+			t.Errorf("%v accepted", c)
+		}
+	}
+}
+
+func TestResetTokenScopedPerUser(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	a, _, _ := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Now: now})
+	b, _, _ := s.CreateAccount(ctx, AccountInput{Email: "b@x.co", PasswordHash: "h", WorkspaceName: "B", Slug: "b", Now: now})
+	rawB, err := s.CreateToken(ctx, TokenReset, b.ID, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateToken(ctx, TokenReset, a.ID, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PeekToken(ctx, TokenReset, rawB, now); err != nil {
+		t.Fatalf("B's token lost: %v", err)
 	}
 }
