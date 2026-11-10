@@ -80,7 +80,7 @@ type Notify struct {
 type Config struct {
 	Listen              string   `json:"listen"`
 	DB                  string   `json:"db"`
-	AdminPassword       string   `json:"admin_password"`        // empty disables login (local use only)
+	AdminPassword       string   `json:"admin_password"`        // unlocks setup on an upgraded install; ignored once an account exists
 	InsecureNoAuth      bool     `json:"insecure_no_auth"`      // no effect: sign-in is always required (main logs a warning)
 	TrustProxy          bool     `json:"trust_proxy"`           // trust X-Forwarded-For/-Proto from a reverse proxy
 	TrustedProxies      int      `json:"trusted_proxies"`       // proxies in front of the server (default 1 with trust_proxy)

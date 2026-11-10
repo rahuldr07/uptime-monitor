@@ -10,7 +10,8 @@ Group=uptime
 StateDirectory=uptime-monitor
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/uptime-monitor
-# Put UPTIME_ADMIN_PASSWORD and other secrets here; chmod 600, owned by root.
+# Put secrets here, such as alert credentials; chmod 600, owned by root.
+# UPTIME_ADMIN_PASSWORD is only needed to unlock setup on an upgraded install.
 EnvironmentFile=-/etc/uptime-monitor.env
 ExecStart=/usr/local/bin/uptime-monitor -config /etc/uptime-monitor.json
 Restart=on-failure

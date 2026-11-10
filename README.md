@@ -45,7 +45,7 @@ Sign in with email and password. On first run there are no users, and the
 server logs a setup link at WARN (`setup required: open …/setup?token=…`).
 Open it to create the operator account. If you missed it, run
 `uptime-monitor -setup-link` for a fresh link. Only one setup token is valid
-at a time, and it expires after 24 hours. Setup adopts workspace 1 and renames
+at a time: each server start in setup mode, and each `-setup-link`, replaces the previous link. A link expires after 24 hours. Setup adopts workspace 1 and renames
 it; the config's `targets` and `notify` are seeded into it afterwards.
 
 - **Passwords** are at least 10 characters and at most 256 bytes, hashed with argon2id.
@@ -71,12 +71,12 @@ process only. IPv6 clients are grouped by /64.
 |---|---|
 | Sign-in failures | 5 per minute per address; 10 per 15 minutes per email and address |
 | Sign-in slowdown | after 20 failures in 15 minutes for one email, at most 1 attempt every 5 seconds. This slows sign-in down but never locks the account |
-| Setup unlock | 5 per 15 minutes per address |
+| Setup attempts | 5 per 15 minutes per address |
 | Current-password checks | 5 per 15 minutes per user |
 | JSON API | 120 per minute per session |
 | Live updates | 5 streams per user |
 | Status pages | 120 per minute per address, at most 2 rebuilds at once |
-| Password hashing | 4 at once, 64 waiting; a request that waits more than 2 seconds gets 503 |
+| Password hashing | 4 at once, 64 waiting; a request that can't queue, or waits more than 2 seconds, gets 503 |
 
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
 delete those files. Account deletion arrives in a later release.
@@ -85,8 +85,9 @@ With Docker:
 
 ```bash
 cp config.example.json config.json   # keep it readable (0644): the container reads it as a non-root user
-echo "UPTIME_ADMIN_PASSWORD=$(openssl rand -base64 24)" > .env
 docker compose up -d
+docker compose logs uptime | grep 'setup required'   # the setup link
+# or: docker compose exec uptime uptime-monitor -setup-link
 ```
 
 The config is mounted read-only at `/etc/uptime-monitor/config.json` and the
@@ -127,8 +128,8 @@ From a release before workspaces:
 
 From a release before the production hardening:
 
-- **Empty password.** The server now refuses to start with an empty
-  `admin_password` on a non-loopback `listen`. Set a password, listen on
+- **Empty password.** (No longer applies since accounts: the server starts
+  without a password and sign-in is always required.) The server then refused to start with an empty `admin_password` on a non-loopback `listen`. Set a password, listen on
   `127.0.0.1`, or, if something in front already authenticates users, set
   `"insecure_no_auth": true`.
 - **`retention`** must be at least `24h`.
@@ -136,7 +137,8 @@ From a release before the production hardening:
   working. Without `-config` the binary uses `/data/config.json` when it
   exists. To keep that layout with the new `docker-compose.yml`, replace its
   two volume lines with `- ./data:/data`.
-- **Docker: the password is now required.** The old `docker-compose.yml`
+- **Docker: the password is now required.** (Superseded: since accounts the
+  password is optional and only unlocks setup on an upgraded install.) The old `docker-compose.yml`
   fell back to the password `change-me`; the new one refuses to run any
   command, `docker compose down` included, until `UPTIME_ADMIN_PASSWORD` is
   set. Do this first:
@@ -171,10 +173,10 @@ From a release before the production hardening:
 | `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
 | `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup and reset links; an https value makes session cookies always Secure |
-| `signup` | `closed` | only `closed` is accepted for now; `mail` and `limits` are rejected until later releases |
+| `signup` | `closed` | only `closed` is accepted for now. The `mail` and `limits` keys are rejected until later releases |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
-| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until accounts exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
+| `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until other workspaces exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
@@ -212,7 +214,7 @@ All endpoints need a signed-in session cookie.
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
 - `GET /api/maintenance` active and upcoming maintenance windows
-- `GET /events` Server-Sent Events stream of state changes (admin session required)
+- `GET /events` Server-Sent Events stream of state changes (signed-in session required)
 - `GET /healthz` health check: `200 ok` when the database answers, `503` otherwise
 
 ## Layout
@@ -279,10 +281,10 @@ go vet ./...
 - SQLite runs in WAL mode through a pure-Go driver, so the binary cross-compiles without cgo.
 - Secrets saved from the Alerts page are stored in the database in plain text. The database (and backups) are created with mode `0600`; keep them private. Saved secrets are never sent back to the browser: the Alerts page shows them as "Saved", a blank field keeps the stored value, and "Remove these settings" deletes a channel.
 - Sessions are random tokens; only a hash is stored in the database, so a restart does not sign anyone out and revoking a session takes effect immediately.
-- State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts even with no password set. Request bodies are capped at 1 MB.
+- State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts. Request bodies are capped at 1 MB.
 - Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public status page (`/s/{slug}`) may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
 - Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
 - Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
-- The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.
+- The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. The workspace owner always sees live data.
 - Passwords are hashed with argon2id, and failed sign-ins are rate limited per address and per email. Secrets are never logged, except the setup and reset links, which are printed on purpose.
 - Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.

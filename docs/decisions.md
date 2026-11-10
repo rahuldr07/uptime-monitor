@@ -413,4 +413,7 @@ Full design:
   - A per-user limit on current-password checks: 5 per 15 minutes. This is not in §8.2.
   - `/reset` is a guest route for now. Handling sign-in as a different user moves to M2, together with `/forgot`. An unverified sign-in gives a generic 401 until M2. The operator route class comes in M3. Account deletion comes in M1e.
   - Under §12, the reset link printed by `-reset-password` is a second deliberate exception to "secrets are never printed", next to the setup link.
+  - Startup logs a WARN when `trust_proxy` is set without an https `base_url`: a plain-HTTP origin still accepts the `uptime_session` cookie, which allows login CSRF there.
+  - `-reset-password` refuses disabled users.
+  - If stored hashes ever use params above the `Verify` caps, raise the caps together with `DefaultParams`.
 - **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.
