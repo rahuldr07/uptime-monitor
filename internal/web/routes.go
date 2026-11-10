@@ -33,6 +33,8 @@ func (s *Server) routeTable() []route {
 		{"GET", "/healthz", classPublic, s.healthz, nil},
 		{"GET", "/status", classPublic, s.statusRedirect, nil},
 		{"GET", "/s/{slug}", classPublic, s.statusPage, nil},
+		{"GET", "/setup", classSetup, s.setupPage, nil},
+		{"POST", "/setup", classSetup, s.setupPost, nil},
 		{"GET", "/login", classGuest, s.loginPage, nil},
 		{"POST", "/login", classGuest, s.loginPost, nil},
 		{"POST", "/logout", classUser, nil, s.logout},

@@ -55,6 +55,7 @@ func main() {
 	logFormat := flag.String("log-format", "text", "log format: text or json")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	backupPath := flag.String("backup", "", "write a consistent copy of the database to this path and exit")
+	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -68,6 +69,15 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("backup of %s written to %s\n", src, *backupPath)
+		return
+	}
+	if *setupLink {
+		link, err := newSetupLink(cfgPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(link)
 		return
 	}
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
@@ -114,6 +124,13 @@ func run(cfgPath string, logger *slog.Logger) error {
 	upgraded, err := st.IsUpgradedInstall(ctx)
 	if err != nil {
 		return err
+	}
+	if setup {
+		raw, err := st.CreateToken(ctx, store.TokenSetup, 0, setupTokenTTL, time.Now())
+		if err != nil {
+			return err
+		}
+		logger.Warn("setup required: open " + cfg.LinkBase() + "/setup?token=" + raw)
 	}
 	if !setup && cfg.AdminPassword != "" {
 		logger.Warn("admin_password is ignored once an account exists")
@@ -200,6 +217,36 @@ func run(cfgPath string, logger *slog.Logger) error {
 		logger.Warn("alerts still in flight at shutdown deadline; exiting")
 	}
 	return nil
+}
+
+// setupTokenTTL is how long a setup link stays valid.
+const setupTokenTTL = 24 * time.Hour
+
+// newSetupLink creates a setup token and returns the link that uses it. It
+// fails when setup is already complete.
+func newSetupLink(cfgPath string) (string, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return "", err
+	}
+	st, err := store.Open(cfg.DB)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	n, err := st.CountUsers(ctx)
+	if err != nil {
+		return "", err
+	}
+	if n > 0 {
+		return "", errors.New("setup is already complete")
+	}
+	raw, err := st.CreateToken(ctx, store.TokenSetup, 0, setupTokenTTL, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return cfg.LinkBase() + "/setup?token=" + raw, nil
 }
 
 // backup copies the configured database to dest and returns the absolute

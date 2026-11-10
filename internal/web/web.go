@@ -44,6 +44,7 @@ type Server struct {
 	afterSetup    func(ctx context.Context) error
 	limiter       *ratelimit.Limiter
 	statusLimiter *ratelimit.Limiter
+	setupLimiter  *ratelimit.Limiter
 	pages         map[string]*template.Template
 	mux           *http.ServeMux
 
@@ -85,6 +86,8 @@ func New(o Options) (*Server, error) {
 	s.setupMode.Store(o.SetupMode)
 	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
 	s.limiter.Now = now
+	s.setupLimiter = ratelimit.New(setupWindow, setupMaxAttempts, 0)
+	s.setupLimiter.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
 	s.statusLimiter.Now = now
 	s.statusCache.maxBytes = statusCacheMaxBytes
@@ -140,7 +143,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "login"} {
+	for _, page := range []string{"status", "login", "setup"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)

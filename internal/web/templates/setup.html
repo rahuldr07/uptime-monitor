@@ -1,0 +1,21 @@
+{{define "content"}}
+<div class="login">
+  <div class="card">
+    <h1>Set up Uptime</h1>
+    {{if .Form}}
+    <p class="muted small" style="margin:4px 0 16px">Create the operator account. It owns the existing workspace and all of its monitors.</p>
+    <form method="post" action="/setup">
+      {{if .Token}}<input type="hidden" name="token" value="{{.Token}}">{{end}}
+      {{if .AskPassword}}<div class="field"><label>Current admin password</label><input name="admin_password" type="password" required autocomplete="off"></div>{{end}}
+      <div class="field"><label>Email</label><input name="email" type="email" value="{{.Email}}" autofocus required autocomplete="username"></div>
+      <div class="field"><label>Password</label><input name="password" type="password" required minlength="10" autocomplete="new-password"></div>
+      <div class="field"><label>Confirm password</label><input name="confirm" type="password" required minlength="10" autocomplete="new-password"></div>
+      <div class="field"><label>Workspace name</label><input name="workspace" value="{{.WorkspaceName}}" required maxlength="60"></div>
+      <div class="btns" style="margin-top:14px"><button type="submit" class="primary">Create account</button></div>
+    </form>
+    {{else}}
+    <p class="muted" style="margin:8px 0 0">{{.Hint}}</p>
+    {{end}}
+  </div>
+</div>
+{{end}}

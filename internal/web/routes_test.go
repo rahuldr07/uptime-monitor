@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 33 {
-		t.Errorf("len = %d, want 33", len(routes))
+	if len(routes) != 35 {
+		t.Errorf("len = %d, want 35", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -47,6 +47,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 	}
 	for class, want := range map[routeClass][]string{
 		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}"},
+		classSetup:  {"GET /setup", "POST /setup"},
 		classGuest:  {"GET /login", "POST /login"},
 		classUser:   {"POST /logout"},
 	} {
