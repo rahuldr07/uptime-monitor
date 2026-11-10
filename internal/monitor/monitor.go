@@ -56,7 +56,7 @@ type state struct {
 	State
 	firstFailAt time.Time
 	checkMu     sync.Mutex // serialises probe+apply per target
-	inflight    bool       // a CheckAsync is running or queued; guarded by Monitor.mu
+	busy        bool       // a check is running or queued; guarded by Monitor.mu
 }
 
 // Options configure a Monitor.
@@ -442,7 +442,14 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	if st == nil {
 		return
 	}
-	m.CheckNow(ctx, id)
+	// A reload (edit, pause, mute) restarts this loop; do not probe again
+	// when the last check is still fresh.
+	m.mu.Lock()
+	fresh := st.Last != nil && m.now().Sub(st.Last.CheckedAt) < interval
+	m.mu.Unlock()
+	if !fresh {
+		m.CheckNow(ctx, id)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -455,15 +462,39 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	}
 }
 
-// CheckNow probes a target once and applies the result. It is safe to call
-// from the web UI while the runner is active.
-func (m *Monitor) CheckNow(ctx context.Context, id int64) {
+// claim marks the target busy. It returns nil when the target is gone or a
+// check is already running or queued.
+func (m *Monitor) claim(id int64) *state {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	st, ok := m.states[id]
-	if !ok {
-		m.mu.Unlock()
+	if !ok || st.busy {
+		return nil
+	}
+	st.busy = true
+	return st
+}
+
+func (m *Monitor) release(st *state) {
+	m.mu.Lock()
+	st.busy = false
+	m.mu.Unlock()
+}
+
+// CheckNow probes a target once and applies the result. It is safe to call
+// from the web UI while the runner is active. It does nothing when another
+// check of the target is already running or queued.
+func (m *Monitor) CheckNow(ctx context.Context, id int64) {
+	st := m.claim(id)
+	if st == nil {
 		return
 	}
+	defer m.release(st)
+	m.checkClaimed(ctx, id, st)
+}
+
+func (m *Monitor) checkClaimed(ctx context.Context, id int64, st *state) {
+	m.mu.Lock()
 	t := st.Target
 	m.mu.Unlock()
 	// One probe+apply at a time per target, so a manual "check now" cannot
@@ -500,16 +531,16 @@ func (m *Monitor) CheckNow(ctx context.Context, id int64) {
 
 // CheckAsync runs CheckNow in the background, detached from the caller. It
 // reports false, and starts nothing, when the target is not in workspace ws or
-// an earlier CheckAsync for it is still running or queued.
+// a check of it (manual or scheduled) is still running or queued.
 func (m *Monitor) CheckAsync(ws, id int64) bool {
 	m.mu.Lock()
 	ctx := m.ctx
 	st, ok := m.states[id]
-	if !ok || st.Target.WorkspaceID != ws || st.inflight {
+	if !ok || st.Target.WorkspaceID != ws || st.busy {
 		m.mu.Unlock()
 		return false
 	}
-	st.inflight = true
+	st.busy = true
 	m.wg.Add(1)
 	m.mu.Unlock()
 	if ctx == nil {
@@ -517,12 +548,8 @@ func (m *Monitor) CheckAsync(ws, id int64) bool {
 	}
 	go func() {
 		defer m.wg.Done()
-		defer func() {
-			m.mu.Lock()
-			st.inflight = false
-			m.mu.Unlock()
-		}()
-		m.CheckNow(ctx, id)
+		defer m.release(st)
+		m.checkClaimed(ctx, id, st)
 	}()
 	return true
 }

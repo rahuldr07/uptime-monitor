@@ -1064,12 +1064,67 @@ func TestCounts(t *testing.T) {
 		t.Fatalf("op targets: %d", n)
 	}
 	others, err := s.TargetsInOtherWorkspaces(ctx, a.ID())
-	if err != nil || len(others) != 1 || others[0].Name != "b1" {
+	if err != nil || len(others) != 1 || others[0].URL != "https://b1" {
 		t.Fatalf("others: %v %+v", err, others)
 	}
 	others, _ = s.TargetsInOtherWorkspaces(ctx, 999)
 	if len(others) != 3 {
 		t.Fatalf("others of none = %d", len(others))
+	}
+	if o := others[0]; o.URL == "" || o.Interval != time.Minute || o.ID == 0 || o.WorkspaceID == 0 || o.Name != "" {
+		t.Fatalf("fields = %+v", o)
+	}
+	// A second operator's workspace is excluded as well.
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET is_operator = 1 WHERE email = 'b@x.co'`); err != nil {
+		t.Fatal(err)
+	}
+	others, _ = s.TargetsInOtherWorkspaces(ctx, a.ID())
+	if len(others) != 0 {
+		t.Fatalf("operator-owned workspace counted: %+v", others)
+	}
+}
+
+func TestCreateTargetCapped(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	_, w, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "alpha", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string, max int) error {
+		_, err := w.CreateTargetCapped(ctx, Target{Name: name, URL: "https://" + name, Interval: time.Minute, Timeout: time.Second}, now, max)
+		return err
+	}
+	if err := mk("first", 3); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = mk("c"+strconv.Itoa(i), 3)
+		}()
+	}
+	wg.Wait()
+	ok, capped := 0, 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			ok++
+		case errors.Is(e, ErrMonitorCap):
+			capped++
+		default:
+			t.Fatal(e)
+		}
+	}
+	if n, _ := w.CountTargets(ctx); n != 3 || ok != 2 || capped != 2 {
+		t.Fatalf("count %d ok %d capped %d", n, ok, capped)
+	}
+	if err := mk("unlimited", 0); err != nil {
+		t.Fatalf("max 0 should be unlimited: %v", err)
 	}
 }
 

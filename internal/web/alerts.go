@@ -160,16 +160,17 @@ func (s *Server) alertsSave(w http.ResponseWriter, r *http.Request, a *authCtx) 
 // alertsTest saves the form first, then sends a test through one channel.
 func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
-	n, ok := s.saveNotify(w, r, a)
-	if !ok {
-		return
-	}
 	if !a.IsOperator {
 		if ok, retry := s.alertTest.Take(wsKey(a)); !ok {
 			retryAfter(w, retry)
-			s.renderAlerts(w, r, a, http.StatusTooManyRequests, n, "Settings saved, but too many test alerts were sent. Wait a minute and try again.")
+			n := parseNotifyForm(r, s.notifyConfig(r.Context(), ws))
+			s.renderAlerts(w, r, a, http.StatusTooManyRequests, n, "Too many test messages. Wait a minute and try again. Settings were not saved.")
 			return
 		}
+	}
+	n, ok := s.saveNotify(w, r, a)
+	if !ok {
+		return
 	}
 	ch := r.FormValue("channel")
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)

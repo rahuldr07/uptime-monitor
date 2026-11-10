@@ -14,6 +14,9 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrMonitorCap is returned by CreateTargetCapped when the workspace is full.
+var ErrMonitorCap = errors.New("monitor limit reached")
+
 // querier is satisfied by *sql.DB and *sql.Tx. The store uses a single
 // connection, so code running inside a transaction must query through the
 // transaction, never the DB.

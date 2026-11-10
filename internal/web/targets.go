@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"math"
@@ -148,8 +149,8 @@ func wsKey(a *authCtx) string { return strconv.FormatInt(a.WS.ID(), 10) }
 const hostEpsilon = 1e-9
 
 // limitErr applies the per-workspace limits that the operator is exempt from:
-// minimum interval, monitor cap (create only) and the combined per-host check
-// rate. selfID is the target being edited, or 0 for a new one.
+// minimum interval and the combined per-host check rate. (The monitor cap is
+// enforced inside the create transaction.) selfID is the target being edited, or 0 for a new one.
 func (s *Server) limitErr(ctx context.Context, a *authCtx, t store.Target, selfID int64) error {
 	if a.IsOperator {
 		return nil
@@ -157,15 +158,6 @@ func (s *Server) limitErr(ctx context.Context, a *authCtx, t store.Target, selfI
 	lim := s.cfg.Limits
 	if t.Interval < lim.MinInterval.Duration {
 		return fmt.Errorf("Check interval must be at least %s.", shortDur(lim.MinInterval.Duration))
-	}
-	if selfID == 0 && *lim.MaxMonitors > 0 {
-		n, err := a.WS.CountTargets(ctx)
-		if err != nil {
-			return err
-		}
-		if n >= *lim.MaxMonitors {
-			return fmt.Errorf("This workspace has reached its limit of %d monitors.", *lim.MaxMonitors)
-		}
 	}
 	return s.hostRateErr(ctx, a, t, selfID)
 }
@@ -199,7 +191,7 @@ func hostOf(rawURL string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(u.Hostname())
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 }
 
 // toTarget validates the form and returns a Target (without ID).
@@ -262,7 +254,14 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request, a *authCtx
 		err = s.limitErr(r.Context(), a, t, 0)
 	}
 	if err == nil {
-		t, err = ws.CreateTarget(r.Context(), t, s.now())
+		max := 0
+		if !a.IsOperator {
+			max = *s.cfg.Limits.MaxMonitors
+		}
+		t, err = ws.CreateTargetCapped(r.Context(), t, s.now(), max)
+		if errors.Is(err, store.ErrMonitorCap) {
+			err = fmt.Errorf("This workspace has reached its limit of %d monitors.", max)
+		}
 	}
 	if err != nil {
 		fail(http.StatusUnprocessableEntity, err.Error())
@@ -523,7 +522,7 @@ func (s *Server) targetMute(w http.ResponseWriter, r *http.Request, a *authCtx) 
 
 func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
-	t, _, ok := s.loadTarget(w, r, ws)
+	t, st, ok := s.loadTarget(w, r, ws)
 	if !ok {
 		return
 	}
@@ -550,7 +549,13 @@ func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request, a *authCtx)
 				writeJSONStatus(w, http.StatusTooManyRequests, map[string]any{"ok": false, "message": msg})
 				return
 			}
-			http.Error(w, msg, http.StatusTooManyRequests)
+			d, err := s.targetData(r, a, t, st)
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			d.Error = msg
+			s.renderStatus(w, r, http.StatusTooManyRequests, "target", d)
 			return
 		}
 	}

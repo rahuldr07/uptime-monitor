@@ -138,15 +138,30 @@ func (s *Store) CountWorkspaces(ctx context.Context) (int, error) {
 }
 
 // TargetsInOtherWorkspaces returns the targets of every workspace except
-// exceptWS and the operator's, for the host-rate check.
+// exceptWS and any workspace that has an operator as a member, for the
+// host-rate check. Only ID, WorkspaceID, URL and Interval are filled in.
 func (s *Store) TargetsInOtherWorkspaces(ctx context.Context, exceptWS int64) ([]Target, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+targetCols+` FROM targets WHERE workspace_id <> ? AND workspace_id <> ? ORDER BY id`,
+		`SELECT id, workspace_id, url, interval_ms FROM targets
+		 WHERE workspace_id <> ? AND workspace_id <> ?
+		   AND workspace_id NOT IN (SELECT m.workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.is_operator <> 0)
+		 ORDER BY id`,
 		exceptWS, OperatorWorkspaceID)
 	if err != nil {
 		return nil, err
 	}
-	return scanTargets(rows)
+	defer rows.Close()
+	var out []Target
+	for rows.Next() {
+		var t Target
+		var ms int64
+		if err := rows.Scan(&t.ID, &t.WorkspaceID, &t.URL, &ms); err != nil {
+			return nil, err
+		}
+		t.Interval = time.Duration(ms) * time.Millisecond
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // inWS restricts a query on a table with a target_id column (checks,

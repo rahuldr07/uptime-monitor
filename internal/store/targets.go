@@ -106,7 +106,41 @@ func (w *WS) GetTargetByName(ctx context.Context, name string) (Target, error) {
 // CreateTarget inserts a target into the workspace and returns it with its
 // id. Any WorkspaceID on t is ignored.
 func (w *WS) CreateTarget(ctx context.Context, t Target, now time.Time) (Target, error) {
-	res, err := w.db.ExecContext(ctx,
+	return w.insertTarget(ctx, w.db, t, now)
+}
+
+// CreateTargetCapped is CreateTarget that refuses with ErrMonitorCap when the
+// workspace already holds max targets (max <= 0 means unlimited). The count
+// and the insert share one transaction, so concurrent creates cannot overshoot.
+func (w *WS) CreateTargetCapped(ctx context.Context, t Target, now time.Time, max int) (Target, error) {
+	if max <= 0 {
+		return w.CreateTarget(ctx, t, now)
+	}
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Target{}, err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM targets WHERE workspace_id = ?`, w.id).Scan(&n); err != nil {
+		return Target{}, err
+	}
+	if n >= max {
+		return Target{}, ErrMonitorCap
+	}
+	t, err = w.insertTarget(ctx, tx, t, now)
+	if err != nil {
+		return Target{}, err
+	}
+	return t, tx.Commit()
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func (w *WS) insertTarget(ctx context.Context, db execer, t Target, now time.Time) (Target, error) {
+	res, err := db.ExecContext(ctx,
 		`INSERT INTO targets (workspace_id, name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		w.id, t.Name, t.URL, t.Interval.Milliseconds(), t.Timeout.Milliseconds(), t.ExpectStatus, t.Keyword, t.Group, boolToInt(t.Paused), boolToInt(t.Muted), now.UnixMilli())

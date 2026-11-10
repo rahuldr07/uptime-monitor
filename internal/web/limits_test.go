@@ -103,6 +103,10 @@ func TestHostRateLimitAcrossWorkspaces(t *testing.T) {
 	if resp.StatusCode != 422 || !strings.Contains(body, "Too many checks to this host from this instance. Use a longer interval.") {
 		t.Fatalf("over rate: %d %s", resp.StatusCode, body)
 	}
+	// A trailing dot or different case names the same host.
+	if resp, _ := addTarget(t, e, c, "dot", "https://same.example./", "10s"); resp.StatusCode != 422 {
+		t.Fatalf("trailing dot bypassed the host rate: %d", resp.StatusCode)
+	}
 	if resp, body := addTarget(t, e, c, "other", "https://other.example/", "10s"); resp.StatusCode != 303 {
 		t.Fatalf("other host: %d %s", resp.StatusCode, body)
 	}
@@ -125,8 +129,19 @@ func TestHostRateLimitAcrossWorkspaces(t *testing.T) {
 	if resp, body := e.post(t, c, path, url.Values{"name": {"s"}, "url": {"https://same.example/"}, "interval": {"2s"}, "timeout": {"1s"}}); resp.StatusCode != 303 {
 		t.Fatalf("update same: %d %s", resp.StatusCode, body)
 	}
-	if resp, body := e.post(t, c, path, url.Values{"name": {"s"}, "url": {"https://same.example/"}, "interval": {"1s"}, "timeout": {"500ms"}}); resp.StatusCode != 422 {
+	if resp, body := e.post(t, c, path, url.Values{"name": {"s"}, "url": {"https://same.example/"}, "interval": {"1s"}, "timeout": {"500ms"}}); resp.StatusCode != 422 || !strings.Contains(body, "Too many checks to this host from this instance.") {
 		t.Fatalf("update faster: %d %s", resp.StatusCode, body)
+	}
+	// Moving a monitor to a busy host is checked against that host.
+	var other int64
+	ts, _ = cws.ListTargets(t.Context())
+	for _, x := range ts {
+		if x.Name == "other" {
+			other = x.ID
+		}
+	}
+	if resp, body := e.post(t, c, "/targets/"+itoa(other), url.Values{"name": {"other"}, "url": {"https://SAME.example/"}, "interval": {"2s"}, "timeout": {"500ms"}}); resp.StatusCode != 422 || !strings.Contains(body, "Too many checks to this host from this instance.") {
+		t.Fatalf("hostname change: %d %s", resp.StatusCode, body)
 	}
 }
 
@@ -252,4 +267,64 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 func storeTarget(name, u string) store.Target {
 	return store.Target{Name: name, URL: u, Interval: time.Hour, Timeout: 5 * time.Second}
+}
+
+func TestFailedCreateSpendsSlot(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.account(t, "a@example.com")
+	for i := 0; i < 30; i++ {
+		if resp, _ := addTarget(t, e, c, "bad", "ftp://x", "1h"); resp.StatusCode != 422 {
+			t.Fatalf("invalid create %d: %d", i, resp.StatusCode)
+		}
+	}
+	if resp, _ := addTarget(t, e, c, "good", "https://good.example/", "1h"); resp.StatusCode != 429 {
+		t.Fatalf("31st create after 30 failures: %d", resp.StatusCode)
+	}
+}
+
+func TestCheckNowCoalescedFlash(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.AllowPrivateTargets = "all"
+	release := make(chan struct{})
+	var hits atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+	}))
+	defer up.Close()
+	defer close(release)
+	c, ws := e.account(t, "a@example.com")
+	if resp, body := addTarget(t, e, c, "slow", up.URL, "1h"); resp.StatusCode != 303 {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	for hits.Load() == 0 { // the runner's first probe is now in flight
+		time.Sleep(5 * time.Millisecond)
+	}
+	ts, _ := ws.ListTargets(t.Context())
+	resp, _ := e.post(t, c, "/targets/"+itoa(ts[0].ID)+"/check", nil)
+	if resp.StatusCode != 303 {
+		t.Fatalf("check: %d", resp.StatusCode)
+	}
+	_, page := e.get(t, c, resp.Header.Get("Location"))
+	if !strings.Contains(page, "A check is already running.") {
+		t.Fatalf("flash missing: %s", page)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+}
+
+func TestAlertTestLimitDoesNotSave(t *testing.T) {
+	e := newEnv(t)
+	c, ws := e.account(t, "a@example.com")
+	for i := 0; i < 5; i++ {
+		e.post(t, c, "/alerts/test", url.Values{"channel": {"log"}})
+	}
+	resp, body := e.post(t, c, "/alerts/test", url.Values{"channel": {"slack"}, "slack_url": {"https://hooks.slack.com/services/T/B/x"}})
+	if resp.StatusCode != 429 || !strings.Contains(body, "Too many test messages. Wait a minute and try again. Settings were not saved.") {
+		t.Fatalf("6th: %d %s", resp.StatusCode, body)
+	}
+	if sk := e.srv.notifyConfig(t.Context(), ws).Slack; sk != nil {
+		t.Fatalf("settings saved despite the limit: %+v", sk)
+	}
 }

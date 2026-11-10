@@ -722,3 +722,60 @@ func TestUserAgent(t *testing.T) {
 		t.Errorf("default User-Agent = %v", got.Load())
 	}
 }
+
+func TestCheckAsyncRefusedDuringRunnerProbe(t *testing.T) {
+	f := setup(t, 1)
+	release := make(chan struct{})
+	var hits atomic.Int32
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+	}))
+	defer slow.Close()
+	f.target.URL, f.target.Keyword = slow.URL, ""
+	f.mon.client, f.mon.openClient = slow.Client(), slow.Client()
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
+	done := make(chan struct{})
+	go func() { // what the runner does on a tick
+		f.mon.CheckNow(context.Background(), f.target.ID)
+		close(done)
+	}()
+	waitFor(t, "runner probe", func() bool { return hits.Load() == 1 })
+	if f.mon.CheckAsync(f.target.WorkspaceID, f.target.ID) {
+		t.Fatal("CheckAsync accepted during a runner probe")
+	}
+	// A runner tick that finds a check running skips its probe.
+	f.mon.CheckNow(context.Background(), f.target.ID)
+	close(release)
+	<-done
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+}
+
+func TestReloadDoesNotReprobeFreshTarget(t *testing.T) {
+	f := setup(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ws := f.st.Workspace(1)
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	waitFor(t, "first probe", func() bool { return count() == 1 })
+	for i := 0; i < 5; i++ {
+		if err := ws.SetMuted(ctx, f.target.ID, i%2 == 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := count(); n > 2 {
+		t.Fatalf("%d checks after 5 mute toggles; want at most one extra", n)
+	}
+}

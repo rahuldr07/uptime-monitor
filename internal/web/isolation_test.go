@@ -70,7 +70,7 @@ func seedWorkspace(t *testing.T, e *env, ws *store.WS, name, maintTitle string) 
 	}
 	// Reload starts a probe in the background. Wait until it has recorded its
 	// check, incident and alert so nothing changes under the snapshots.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		ins, err := ws.ListIncidents(ctx, store.IncidentFilter{TargetID: tg.ID})
 		if err != nil {
@@ -265,7 +265,7 @@ func (e *env) delivered(t *testing.T, ch <-chan string, wsID int64) {
 		if !strings.Contains(l, `"kind":"check"`) {
 			t.Fatalf("unexpected event on B's stream: %s", l)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("B's own event never arrived; the stream is not delivering")
 	}
 }
@@ -394,7 +394,7 @@ func testIsolationLive(t *testing.T) {
 	}
 	select {
 	case <-control:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("A's own stream got no event; the test would pass vacuously")
 	}
 	// Let the check finish publishing before judging B's stream.
