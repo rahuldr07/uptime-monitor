@@ -392,3 +392,11 @@ Full design:
 - **Status:** Accepted (amends the M1b row of the spec's delivery table (§2))
 - **Decision:** The non-redirecting webhook client and Telegram token validation move from M1b to M1e. `netguard.Transport` replaces the spec's `netguard.Wrap`, and the monitor takes `AllowPrivate bool` until M1c makes it per workspace. The static test matches text, so it does not catch import aliases of net/http or net.
 - **Why:** Both restrictions apply only to non-operator workspaces (§7.2), which first exist in M1e. Built earlier, they would be unused code. Every call site builds a new transport, so a constructor lets the static test forbid transport literals everywhere else.
+
+### D-123: Workspace 1 always exists; M1c scope
+- **Status:** Accepted (amends §4.4 and the M1c row of the spec's delivery table)
+- **Decision:**
+  - Schema v2 creates workspace 1 ("Default", `/s/default`) on every database, fresh or upgraded. In M1d, setup adopts it instead of creating a workspace. The pre-migration backup is still written only when data exists.
+  - Until M1d adds users, workspace 1 is the operator's workspace.
+  - Slug derivation and editing, `CountTargets`, workspace deletion and Check-now coalescing move to M1e, where they are first used. The static allow-list test for the unscoped store moves to M1d.
+- **Why:** Before M1d there is no setup page, so a fresh install would otherwise have no workspace and nothing would work. With one workspace always present, every step stays releasable and the setup flow stays simpler.

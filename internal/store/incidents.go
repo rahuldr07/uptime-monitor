@@ -59,11 +59,6 @@ func scanIncident(sc scanner) (Incident, error) {
 	return in, nil
 }
 
-// GetIncident returns one incident by id.
-func (s *Store) GetIncident(ctx context.Context, id int64) (Incident, error) {
-	return s.Workspace(legacyWorkspaceID).GetIncident(ctx, id)
-}
-
 // GetIncident returns one of the workspace's incidents by id.
 func (w *WS) GetIncident(ctx context.Context, id int64) (Incident, error) {
 	in, err := scanIncident(w.db.QueryRowContext(ctx, incidentQuery+` WHERE i.id = ? AND i.`+inWS, id, w.id))
@@ -71,11 +66,6 @@ func (w *WS) GetIncident(ctx context.Context, id int64) (Incident, error) {
 		return Incident{}, ErrNotFound
 	}
 	return in, err
-}
-
-// AcknowledgeIncident marks an incident as seen by a human.
-func (s *Store) AcknowledgeIncident(ctx context.Context, id int64, at time.Time) error {
-	return s.Workspace(legacyWorkspaceID).AcknowledgeIncident(ctx, id, at)
 }
 
 // AcknowledgeIncident marks one of the workspace's incidents as seen.
@@ -88,11 +78,6 @@ func (w *WS) AcknowledgeIncident(ctx context.Context, id int64, at time.Time) er
 	return requireRow(res)
 }
 
-// SetIncidentNote stores a free-text note on an incident.
-func (s *Store) SetIncidentNote(ctx context.Context, id int64, note string) error {
-	return s.Workspace(legacyWorkspaceID).SetIncidentNote(ctx, id, note)
-}
-
 // SetIncidentNote stores a note on one of the workspace's incidents.
 func (w *WS) SetIncidentNote(ctx context.Context, id int64, note string) error {
 	res, err := w.db.ExecContext(ctx, `UPDATE incidents SET note = ? WHERE id = ? AND `+inWS, note, id, w.id)
@@ -100,11 +85,6 @@ func (w *WS) SetIncidentNote(ctx context.Context, id int64, note string) error {
 		return err
 	}
 	return requireRow(res)
-}
-
-// CountUnacknowledged counts ongoing incidents nobody has acknowledged.
-func (s *Store) CountUnacknowledged(ctx context.Context) (int, error) {
-	return s.Workspace(legacyWorkspaceID).CountUnacknowledged(ctx)
 }
 
 // CountUnacknowledged counts the workspace's ongoing unacknowledged incidents.
@@ -152,11 +132,6 @@ type IncidentFilter struct {
 	Limit       int       // 0 for default 200
 }
 
-// ListIncidents returns incidents newest first.
-func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, error) {
-	return s.Workspace(legacyWorkspaceID).ListIncidents(ctx, f)
-}
-
 // ListIncidents returns the workspace's incidents newest first.
 func (w *WS) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, error) {
 	q := incidentQuery + ` WHERE i.` + inWS
@@ -192,11 +167,6 @@ func (w *WS) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, e
 		out = append(out, in)
 	}
 	return out, rows.Err()
-}
-
-// CountIncidents counts incidents started since the given time.
-func (s *Store) CountIncidents(ctx context.Context, since time.Time) (int, error) {
-	return s.Workspace(legacyWorkspaceID).CountIncidents(ctx, since)
 }
 
 // CountIncidents counts the workspace's incidents started since the given time.

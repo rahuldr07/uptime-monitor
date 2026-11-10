@@ -99,10 +99,10 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 			t.Fatalf("hasColumn(%s.%s) = %v, %v", c[0], c[1], has, err)
 		}
 	}
-	if _, err := s.GetTarget(ctx, 1); err != nil {
+	if _, err := s.Workspace(1).GetTarget(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.RollupStats(ctx, 1, time.Now().Add(-7*24*time.Hour))
+	st, err := s.Workspace(1).RollupStats(ctx, 1, time.Now().Add(-7*24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestMigrateV2Upgrade(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	if v, err := s.GetSetting(ctx, "notify"); err != nil || v != "{}" {
+	if v, err := s.Workspace(1).GetSetting(ctx, "notify"); err != nil || v != "{}" {
 		t.Fatalf("GetSetting = %q, %v", v, err)
 	}
 	for table, want := range map[string]int{"checks": 2, "incidents": 1, "alerts": 1} {
@@ -232,7 +232,7 @@ func TestMigrateV2Upgrade(t *testing.T) {
 			t.Fatalf("%s rows = %d, want %d", table, n, want)
 		}
 	}
-	nt, err := s.CreateTarget(ctx, Target{Name: "C", URL: "http://c", Interval: time.Second, Timeout: time.Second}, time.Now())
+	nt, err := s.Workspace(1).CreateTarget(ctx, Target{Name: "C", URL: "http://c", Interval: time.Second, Timeout: time.Second}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

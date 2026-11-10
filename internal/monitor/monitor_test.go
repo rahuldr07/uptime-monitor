@@ -73,7 +73,7 @@ func setup(t *testing.T, threshold int) *fixture {
 	t.Cleanup(func() { st.Close() })
 	f.st = st
 	f.clock = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	f.target, _ = st.CreateTarget(context.Background(), store.Target{Name: "api", URL: f.srv.URL, Interval: time.Hour, Timeout: 2 * time.Second, Keyword: "hello"}, f.clock)
+	f.target, _ = st.Workspace(1).CreateTarget(context.Background(), store.Target{Name: "api", URL: f.srv.URL, Interval: time.Hour, Timeout: 2 * time.Second, Keyword: "hello"}, f.clock)
 	f.rec = &recorder{}
 	f.mon = New(Options{Store: st, Notifiers: func(context.Context, int64) (notify.Multi, error) {
 		return notify.Multi{{Name: "rec", Notifier: f.rec}}, nil
@@ -139,7 +139,7 @@ func TestStateMachineWithThreshold(t *testing.T) {
 	if _, err := f.st.OngoingIncident(ctx, f.target.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("incident should be closed: %v", err)
 	}
-	if n, _ := f.st.CountAlerts(ctx, time.Time{}); n != 2 {
+	if n, _ := f.st.Workspace(1).CountAlerts(ctx, time.Time{}); n != 2 {
 		t.Fatalf("alerts recorded: %d", n)
 	}
 }
@@ -215,12 +215,12 @@ func TestPauseResumeAndRemove(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	f.st.SetPaused(ctx, f.target.ID, true)
+	f.st.Workspace(1).SetPaused(ctx, f.target.ID, true)
 	f.mon.Reload(ctx, f.target.ID)
 	if s, _ := f.mon.Get(1, f.target.ID); s.Status != Paused {
 		t.Fatalf("want paused: %+v", s)
 	}
-	f.st.SetPaused(ctx, f.target.ID, false)
+	f.st.Workspace(1).SetPaused(ctx, f.target.ID, false)
 	f.mon.Reload(ctx, f.target.ID)
 	if s, _ := f.mon.Get(1, f.target.ID); s.Status == Paused {
 		t.Fatalf("want resumed: %+v", s)
@@ -260,14 +260,14 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	if !in.StartedAt.Equal(s.Since) {
 		t.Fatalf("incident start %v should equal Since %v", in.StartedAt, s.Since)
 	}
-	f.st.SetPaused(ctx, f.target.ID, true)
+	f.st.Workspace(1).SetPaused(ctx, f.target.ID, true)
 	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.st.OngoingIncident(ctx, f.target.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("pausing should close the incident: %v", err)
 	}
-	f.st.SetPaused(ctx, f.target.ID, false)
+	f.st.Workspace(1).SetPaused(ctx, f.target.ID, false)
 	f.mon.Reload(ctx, f.target.ID)
 	s, _ = f.mon.Get(1, f.target.ID)
 	if s.Status != Unknown || s.IncidentID != 0 || s.Failures != 0 {
@@ -279,7 +279,7 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	if s.Status != Down || !s.Since.Equal(f.clock) {
 		t.Fatalf("new incident should start at the post-resume failure: %+v (clock %v)", s, f.clock)
 	}
-	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 1 {
+	if list, _ := f.st.Workspace(1).ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 1 {
 		t.Fatalf("exactly one ongoing incident, got %d", len(list))
 	}
 	if len(f.rec.list()) != before+1 {
@@ -289,7 +289,7 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	if s = f.tick(t); s.Status != Up {
 		t.Fatalf("want up: %+v", s)
 	}
-	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
+	if list, _ := f.st.Workspace(1).ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
 		t.Fatalf("no ongoing incidents expected, got %d", len(list))
 	}
 }
@@ -312,7 +312,7 @@ func TestConcurrentCheckNowIsSerialised(t *testing.T) {
 	}
 	wg.Wait()
 	f.mon.WaitAlerts()
-	list, _ := f.st.ListIncidents(context.Background(), store.IncidentFilter{OngoingOnly: true})
+	list, _ := f.st.Workspace(1).ListIncidents(context.Background(), store.IncidentFilter{OngoingOnly: true})
 	s, _ := f.mon.Get(1, f.target.ID)
 	if (s.Status == Down) != (len(list) == 1) || len(list) > 1 {
 		t.Fatalf("state %v but %d ongoing incidents", s.Status, len(list))
@@ -335,7 +335,7 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.mon.CheckNow(ctx, f.target.ID); close(done) }()
 	time.Sleep(50 * time.Millisecond) // probe is in flight
-	f.st.SetPaused(ctx, f.target.ID, true)
+	f.st.Workspace(1).SetPaused(ctx, f.target.ID, true)
 	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 	f.mon.WaitAlerts()
 	// Either the check applied first and pause closed the incident, or pause
 	// won and the check was dropped: in both cases nothing stays open.
-	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
+	if list, _ := f.st.Workspace(1).ListIncidents(ctx, store.IncidentFilter{OngoingOnly: true}); len(list) != 0 {
 		t.Fatalf("incident left open across pause: %+v", list)
 	}
 	if s, _ := f.mon.Get(1, f.target.ID); s.Status != Paused || s.IncidentID != 0 {
@@ -359,7 +359,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("want up, got %v", s.Status)
 	}
 	// A window covering the next hour, for every target.
-	if _, err := f.st.CreateMaintenance(ctx, store.Maintenance{Title: "deploy", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour)}, f.clock); err != nil {
+	if _, err := f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "deploy", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour)}, f.clock); err != nil {
 		t.Fatal(err)
 	}
 	atomic.StoreInt32(&f.status, 500)
@@ -375,7 +375,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 	if got := f.rec.list(); len(got) != 0 {
 		t.Fatalf("no alerts expected during maintenance, got %+v", got)
 	}
-	if list, _ := f.st.ListIncidents(ctx, store.IncidentFilter{}); len(list) != 0 {
+	if list, _ := f.st.Workspace(1).ListIncidents(ctx, store.IncidentFilter{}); len(list) != 0 {
 		t.Fatalf("no incidents expected during maintenance, got %+v", list)
 	}
 	// Window over: failures count again from zero, so threshold 2 needs two ticks.
@@ -391,7 +391,7 @@ func TestMaintenanceSuppressesIncidentsAndAlerts(t *testing.T) {
 		t.Fatalf("want one down alert, got %+v", got)
 	}
 	// A recovery seen inside a later window still closes the incident.
-	f.st.CreateMaintenance(ctx, store.Maintenance{Title: "fix", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour), Group: ""}, f.clock)
+	f.st.Workspace(1).CreateMaintenance(ctx, store.Maintenance{Title: "fix", StartsAt: f.clock, EndsAt: f.clock.Add(time.Hour), Group: ""}, f.clock)
 	atomic.StoreInt32(&f.status, 200)
 	if s := f.tick(t); s.Status != Up || s.IncidentID != 0 {
 		t.Fatalf("recovery during maintenance: %+v", s)

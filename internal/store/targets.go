@@ -42,11 +42,6 @@ func scanTarget(sc scanner) (Target, error) {
 	return t, nil
 }
 
-// ListTargets returns all targets ordered by name.
-func (s *Store) ListTargets(ctx context.Context) ([]Target, error) {
-	return s.Workspace(legacyWorkspaceID).ListTargets(ctx)
-}
-
 // ListTargets returns the workspace's targets ordered by name.
 func (w *WS) ListTargets(ctx context.Context) ([]Target, error) {
 	rows, err := w.db.QueryContext(ctx,
@@ -88,11 +83,6 @@ func (s *Store) TargetByID(ctx context.Context, id int64) (Target, error) {
 	return t, err
 }
 
-// GetTarget returns one target by id.
-func (s *Store) GetTarget(ctx context.Context, id int64) (Target, error) {
-	return s.Workspace(legacyWorkspaceID).GetTarget(ctx, id)
-}
-
 // GetTarget returns one of the workspace's targets by id.
 func (w *WS) GetTarget(ctx context.Context, id int64) (Target, error) {
 	t, err := scanTarget(w.db.QueryRowContext(ctx,
@@ -103,11 +93,6 @@ func (w *WS) GetTarget(ctx context.Context, id int64) (Target, error) {
 	return t, err
 }
 
-// GetTargetByName returns one target by name.
-func (s *Store) GetTargetByName(ctx context.Context, name string) (Target, error) {
-	return s.Workspace(legacyWorkspaceID).GetTargetByName(ctx, name)
-}
-
 // GetTargetByName returns one of the workspace's targets by name.
 func (w *WS) GetTargetByName(ctx context.Context, name string) (Target, error) {
 	t, err := scanTarget(w.db.QueryRowContext(ctx,
@@ -116,11 +101,6 @@ func (w *WS) GetTargetByName(ctx context.Context, name string) (Target, error) {
 		return Target{}, ErrNotFound
 	}
 	return t, err
-}
-
-// CreateTarget inserts a target and returns it with its id.
-func (s *Store) CreateTarget(ctx context.Context, t Target, now time.Time) (Target, error) {
-	return s.Workspace(legacyWorkspaceID).CreateTarget(ctx, t, now)
 }
 
 // CreateTarget inserts a target into the workspace and returns it with its
@@ -142,12 +122,6 @@ func (w *WS) CreateTarget(ctx context.Context, t Target, now time.Time) (Target,
 	return t, nil
 }
 
-// UpdateTarget rewrites the editable fields of a target.
-func (s *Store) UpdateTarget(ctx context.Context, t Target) error {
-	_, err := s.Workspace(legacyWorkspaceID).UpdateTarget(ctx, t)
-	return err
-}
-
 // UpdateTarget rewrites the editable fields of one of the workspace's
 // targets and returns the stored row.
 func (w *WS) UpdateTarget(ctx context.Context, t Target) (Target, error) {
@@ -167,11 +141,6 @@ func (w *WS) UpdateTarget(ctx context.Context, t Target) (Target, error) {
 	return w.GetTarget(ctx, t.ID)
 }
 
-// SetPaused pauses or resumes a target.
-func (s *Store) SetPaused(ctx context.Context, id int64, paused bool) error {
-	return s.Workspace(legacyWorkspaceID).SetPaused(ctx, id, paused)
-}
-
 // SetPaused pauses or resumes one of the workspace's targets.
 func (w *WS) SetPaused(ctx context.Context, id int64, paused bool) error {
 	res, err := w.db.ExecContext(ctx,
@@ -182,11 +151,6 @@ func (w *WS) SetPaused(ctx context.Context, id int64, paused bool) error {
 	return requireRow(res)
 }
 
-// SetMuted mutes or unmutes alerts for a target.
-func (s *Store) SetMuted(ctx context.Context, id int64, muted bool) error {
-	return s.Workspace(legacyWorkspaceID).SetMuted(ctx, id, muted)
-}
-
 // SetMuted mutes or unmutes alerts for one of the workspace's targets.
 func (w *WS) SetMuted(ctx context.Context, id int64, muted bool) error {
 	res, err := w.db.ExecContext(ctx,
@@ -195,11 +159,6 @@ func (w *WS) SetMuted(ctx context.Context, id int64, muted bool) error {
 		return err
 	}
 	return requireRow(res)
-}
-
-// DeleteTarget removes a target and all of its history.
-func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
-	return s.Workspace(legacyWorkspaceID).DeleteTarget(ctx, id)
 }
 
 // DeleteTarget removes one of the workspace's targets and all of its history.

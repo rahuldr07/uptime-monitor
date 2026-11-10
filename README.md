@@ -37,7 +37,7 @@ cp config.example.json config.json
 UPTIME_ADMIN_PASSWORD='a-long-random-password' go run . -config config.json
 ```
 
-Open http://localhost:8080. The public status page is at `/status`.
+Open http://localhost:8080. The public status page is at `/s/default`; `/status` redirects to it.
 
 The server refuses to start with an empty password unless it listens on a
 loopback address (`127.0.0.1:8080`), so an unset `UPTIME_ADMIN_PASSWORD`
@@ -103,7 +103,7 @@ From a release before the production hardening:
 |---|---|---|
 | `listen` | `:8080` | address to serve on |
 | `db` | `uptime.db` | SQLite file |
-| `admin_password` | empty | protects everything except `/status` and `/healthz`; empty means no login and is only allowed on a loopback `listen` |
+| `admin_password` | empty | protects everything except status pages (`/s/{slug}`, `/status`) and `/healthz`; empty means no login and is only allowed on a loopback `listen` |
 | `insecure_no_auth` | `false` | allow an empty password on a non-loopback address (not recommended) |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
@@ -112,7 +112,7 @@ From a release before the production hardening:
 | `interval`, `timeout` | `30s`, `10s` | defaults for targets |
 | `retention` | `168h` | raw checks older than this are pruned hourly; they feed the latency charts and recent-check lists (minimum `24h`) |
 | `targets[]` | | `name`, `url`, optional `interval`, `timeout`, `expect_status`, `keyword`, `group` |
-| `notify` | | `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
+| `notify` | | copied into workspace 1 once, when it has no saved channels; after that, channels saved in the browser belong to the workspace and this key is ignored. `telegram {bot_token, chat_id}`, `slack {webhook_url}`, `email {smtp_host, smtp_port, username, password, from, to[]}` |
 
 Uptime is also rolled up per day and kept for 400 days, independent of
 `retention`, so the 30-day uptime figures and the 90-day status page history
@@ -138,6 +138,7 @@ with that name does not already exist. Alert settings work the same way.
 
 All endpoints need the admin session cookie when a password is set.
 
+- `GET /s/{slug}` the public status page (`/status` redirects to `/s/default`)
 - `GET /api/status` current state and uptime for every target
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
@@ -152,6 +153,7 @@ main.go               wiring, seeding, shutdown, retention loop
 internal/config       config file parsing and validation
 internal/store        SQLite schema and queries
 internal/monitor      scheduler, HTTP probe, state machine, alert dispatch
+internal/netguard     blocks internal destinations for monitors, Test URL and alert channels
 internal/notify       Telegram, Slack, email, log channels
 internal/web          handlers, templates, auth, SVG charts
 deploy/               hardened systemd unit
@@ -184,6 +186,11 @@ deploy/               hardened systemd unit
    if that database does not exist, so a wrong path cannot produce an empty
    backup. Backups are created with mode `0600`.
 
+   Upgrading from a version before accounts writes
+   `<db>.pre-accounts-<timestamp>.bak` (mode `0600`) before migrating. Keep it
+   until you have checked the upgrade, then delete it: it contains alert
+   secrets.
+
 4. Point your orchestrator or external monitor at `/healthz`.
 5. For systemd: create the user (`useradd --system uptime`), install the binary to
    `/usr/local/bin`, the config to `/etc/uptime-monitor.json`, secrets to
@@ -205,7 +212,7 @@ go vet ./...
 - Secrets saved from the Alerts page are stored in the database in plain text. The database (and backups) are created with mode `0600`; keep them private. Saved secrets are never sent back to the browser: the Alerts page shows them as "Saved", a blank field keeps the stored value, and "Remove these settings" deletes a channel.
 - Login sessions are random tokens kept in memory for 30 days; a restart logs everyone out and logout revokes the token immediately.
 - State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts even with no password set. Request bodies are capped at 1 MB.
-- Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public `/status` page may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
+- Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public status page (`/s/{slug}`) may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
 - Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
 - Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
 - The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy, so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.

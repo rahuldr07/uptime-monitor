@@ -84,11 +84,6 @@ INSERT INTO daily (target_id, day, total, ok, lat_sum)
 	FROM checks WHERE maint = 0 GROUP BY target_id, checked_at / 86400000;
 `
 
-// legacyWorkspaceID is the workspace that the not-yet-workspace-aware store
-// methods read and write. Temporary bridge; removed once every method takes a
-// workspace.
-const legacyWorkspaceID = 1
-
 // migration is one numbered schema step. foreignKeysOff runs it with foreign
 // key enforcement disabled, as SQLite's table-rebuild procedure requires.
 type migration struct {

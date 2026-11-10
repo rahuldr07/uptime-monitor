@@ -23,44 +23,44 @@ func TestTargetsCRUD(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, err := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: 30 * time.Second, Timeout: 5 * time.Second}, now)
+	tg, err := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: 30 * time.Second, Timeout: 5 * time.Second}, now)
 	if err != nil || tg.ID == 0 {
 		t.Fatalf("create: %v %+v", err, tg)
 	}
-	if _, err := s.CreateTarget(ctx, Target{Name: "A", URL: "https://b", Interval: time.Second, Timeout: time.Second}, now); err == nil {
+	if _, err := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://b", Interval: time.Second, Timeout: time.Second}, now); err == nil {
 		t.Fatal("duplicate name should fail")
 	}
-	got, err := s.GetTarget(ctx, tg.ID)
+	got, err := s.Workspace(1).GetTarget(ctx, tg.ID)
 	if err != nil || got.Interval != 30*time.Second || got.Name != "A" {
 		t.Fatalf("get: %v %+v", err, got)
 	}
 	got.Name, got.Keyword = "B", "ok"
-	if err := s.UpdateTarget(ctx, got); err != nil {
+	if _, err := s.Workspace(1).UpdateTarget(ctx, got); err != nil {
 		t.Fatal(err)
 	}
-	if g, _ := s.GetTargetByName(ctx, "B"); g.Keyword != "ok" {
+	if g, _ := s.Workspace(1).GetTargetByName(ctx, "B"); g.Keyword != "ok" {
 		t.Fatalf("update not persisted: %+v", g)
 	}
-	if err := s.SetPaused(ctx, tg.ID, true); err != nil {
+	if err := s.Workspace(1).SetPaused(ctx, tg.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	list, _ := s.ListTargets(ctx)
+	list, _ := s.Workspace(1).ListTargets(ctx)
 	if len(list) != 1 || !list[0].Paused {
 		t.Fatalf("list: %+v", list)
 	}
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now, OK: true, StatusCode: 200, LatencyMS: 10})
 	id, _ := s.OpenIncident(ctx, tg.ID, now, "x")
 	s.InsertAlert(ctx, Alert{IncidentID: id, TargetID: tg.ID, SentAt: now, Channel: "log", Event: "down", OK: true})
-	if err := s.DeleteTarget(ctx, tg.ID); err != nil {
+	if err := s.Workspace(1).DeleteTarget(ctx, tg.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetTarget(ctx, tg.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Workspace(1).GetTarget(ctx, tg.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want not found, got %v", err)
 	}
-	if n, _ := s.CountAlerts(ctx, time.Time{}); n != 0 {
+	if n, _ := s.Workspace(1).CountAlerts(ctx, time.Time{}); n != 0 {
 		t.Fatalf("alerts not cascaded: %d", n)
 	}
-	if err := s.UpdateTarget(ctx, got); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Workspace(1).UpdateTarget(ctx, got); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update missing: %v", err)
 	}
 }
@@ -69,19 +69,19 @@ func TestChecksStatsPrune(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	tg, _ := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
 	for i := 0; i < 10; i++ {
 		ok := i%5 != 0 // 2 failures
 		s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(time.Duration(-i) * time.Minute), OK: ok, StatusCode: 200, LatencyMS: int64(100 + i)})
 	}
-	st, err := s.Stats(ctx, tg.ID, now.Add(-time.Hour))
+	st, err := s.Workspace(1).Stats(ctx, tg.ID, now.Add(-time.Hour))
 	if err != nil || st.Total != 10 || st.OKCount != 8 {
 		t.Fatalf("stats: %v %+v", err, st)
 	}
 	if st.UptimePercent() != 80 {
 		t.Fatalf("uptime %v", st.UptimePercent())
 	}
-	all, _ := s.Stats(ctx, 0, now.Add(-time.Hour))
+	all, _ := s.Workspace(1).Stats(ctx, 0, now.Add(-time.Hour))
 	if all.Total != 10 {
 		t.Fatalf("global stats %+v", all)
 	}
@@ -89,15 +89,15 @@ func TestChecksStatsPrune(t *testing.T) {
 	if err != nil || !latest.CheckedAt.Equal(now) {
 		t.Fatalf("latest: %v %+v", err, latest)
 	}
-	recent, _ := s.RecentChecks(ctx, tg.ID, 3)
+	recent, _ := s.Workspace(1).RecentChecks(ctx, tg.ID, 3)
 	if len(recent) != 3 || !recent[0].CheckedAt.Equal(now) {
 		t.Fatalf("recent: %+v", recent)
 	}
-	since, _ := s.ChecksSince(ctx, tg.ID, now.Add(-2*time.Minute))
+	since, _ := s.Workspace(1).ChecksSince(ctx, tg.ID, now.Add(-2*time.Minute))
 	if len(since) != 3 || !since[0].CheckedAt.Before(since[2].CheckedAt) {
 		t.Fatalf("since should be oldest first: %+v", since)
 	}
-	days, err := s.DailyUptime(ctx, tg.ID, now, 3)
+	days, err := s.Workspace(1).DailyUptime(ctx, tg.ID, now, 3)
 	if err != nil || len(days) != 3 || days[2].Total != 10 || days[0].Total != 0 {
 		t.Fatalf("daily: %v %+v", err, days)
 	}
@@ -111,7 +111,7 @@ func TestIncidents(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	tg, _ := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
 	if _, err := s.OngoingIncident(ctx, tg.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want not found, got %v", err)
 	}
@@ -131,17 +131,17 @@ func TestIncidents(t *testing.T) {
 	if err := s.CloseIncident(ctx, id, now); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("double close should be not found: %v", err)
 	}
-	list, _ := s.ListIncidents(ctx, IncidentFilter{TargetID: tg.ID})
+	list, _ := s.Workspace(1).ListIncidents(ctx, IncidentFilter{TargetID: tg.ID})
 	if len(list) != 1 || list[0].Ongoing() || list[0].Duration(now) != 5*time.Minute {
 		t.Fatalf("list: %+v", list)
 	}
-	if l, _ := s.ListIncidents(ctx, IncidentFilter{OngoingOnly: true}); len(l) != 0 {
+	if l, _ := s.Workspace(1).ListIncidents(ctx, IncidentFilter{OngoingOnly: true}); len(l) != 0 {
 		t.Fatalf("ongoing filter: %+v", l)
 	}
-	if n, _ := s.CountIncidents(ctx, now.Add(-time.Hour)); n != 1 {
+	if n, _ := s.Workspace(1).CountIncidents(ctx, now.Add(-time.Hour)); n != 1 {
 		t.Fatalf("count %d", n)
 	}
-	if n, _ := s.CountAlerts(ctx, now.Add(-time.Hour)); n != 1 {
+	if n, _ := s.Workspace(1).CountAlerts(ctx, now.Add(-time.Hour)); n != 1 {
 		t.Fatalf("alerts %d", n)
 	}
 }
@@ -149,12 +149,12 @@ func TestIncidents(t *testing.T) {
 func TestSettings(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	if _, err := s.GetSetting(ctx, "k"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Workspace(1).GetSetting(ctx, "k"); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
-	s.SetSetting(ctx, "k", "1")
-	s.SetSetting(ctx, "k", "2")
-	if v, _ := s.GetSetting(ctx, "k"); v != "2" {
+	s.Workspace(1).SetSetting(ctx, "k", "1")
+	s.Workspace(1).SetSetting(ctx, "k", "2")
+	if v, _ := s.Workspace(1).GetSetting(ctx, "k"); v != "2" {
 		t.Fatalf("got %q", v)
 	}
 }
@@ -163,53 +163,53 @@ func TestMaintenanceWindows(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	if _, err := s.CreateMaintenance(ctx, Maintenance{Title: "bad", StartsAt: now, EndsAt: now}, now); err == nil {
+	if _, err := s.Workspace(1).CreateMaintenance(ctx, Maintenance{Title: "bad", StartsAt: now, EndsAt: now}, now); err == nil {
 		t.Fatal("zero-length window should be rejected")
 	}
-	all, err := s.CreateMaintenance(ctx, Maintenance{Title: "DB upgrade", StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)}, now)
+	all, err := s.Workspace(1).CreateMaintenance(ctx, Maintenance{Title: "DB upgrade", StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)}, now)
 	if err != nil || all.ID == 0 {
 		t.Fatalf("create: %v", err)
 	}
-	api, _ := s.CreateMaintenance(ctx, Maintenance{Title: "API deploy", StartsAt: now.Add(2 * time.Hour), EndsAt: now.Add(3 * time.Hour), Group: "api"}, now)
-	old, _ := s.CreateMaintenance(ctx, Maintenance{Title: "Old", StartsAt: now.Add(-48 * time.Hour), EndsAt: now.Add(-47 * time.Hour)}, now)
+	api, _ := s.Workspace(1).CreateMaintenance(ctx, Maintenance{Title: "API deploy", StartsAt: now.Add(2 * time.Hour), EndsAt: now.Add(3 * time.Hour), Group: "api"}, now)
+	old, _ := s.Workspace(1).CreateMaintenance(ctx, Maintenance{Title: "Old", StartsAt: now.Add(-48 * time.Hour), EndsAt: now.Add(-47 * time.Hour)}, now)
 
 	if !all.Active(now) || all.Upcoming(now) || !api.Upcoming(now) || !all.Covers("x") || api.Covers("web") || !api.Covers("api") {
 		t.Fatal("window predicates wrong")
 	}
-	active, err := s.ActiveMaintenance(ctx, now)
+	active, err := s.Workspace(1).ActiveMaintenance(ctx, now)
 	if err != nil || len(active) != 1 || active[0].ID != all.ID {
 		t.Fatalf("active: %v %+v", err, active)
 	}
-	if m, ok, err := s.InMaintenance(ctx, "web", now); err != nil || !ok || m.ID != all.ID {
+	if m, ok, err := s.Workspace(1).InMaintenance(ctx, "web", now); err != nil || !ok || m.ID != all.ID {
 		t.Fatalf("in maintenance (all): %v %v", ok, err)
 	}
-	if _, ok, _ := s.InMaintenance(ctx, "web", now.Add(2*time.Hour+time.Minute)); ok {
+	if _, ok, _ := s.Workspace(1).InMaintenance(ctx, "web", now.Add(2*time.Hour+time.Minute)); ok {
 		t.Fatal("web should not be covered by the api window")
 	}
-	if m, ok, _ := s.InMaintenance(ctx, "api", now.Add(2*time.Hour+time.Minute)); !ok || m.ID != api.ID {
+	if m, ok, _ := s.Workspace(1).InMaintenance(ctx, "api", now.Add(2*time.Hour+time.Minute)); !ok || m.ID != api.ID {
 		t.Fatal("api should be covered by the api window")
 	}
-	list, _ := s.ListMaintenance(ctx, now, 0)
+	list, _ := s.Workspace(1).ListMaintenance(ctx, now, 0)
 	if len(list) != 2 || list[0].ID != all.ID || list[1].ID != api.ID {
 		t.Fatalf("list since now: %+v", list)
 	}
-	if list, _ = s.ListMaintenance(ctx, time.Time{}, 0); len(list) != 3 || list[0].ID != old.ID {
+	if list, _ = s.Workspace(1).ListMaintenance(ctx, time.Time{}, 0); len(list) != 3 || list[0].ID != old.ID {
 		t.Fatalf("list all: %+v", list)
 	}
 	// End the active one now; a window that has not started cannot be ended.
-	if err := s.EndMaintenance(ctx, all.ID, now); err != nil {
+	if err := s.Workspace(1).EndMaintenance(ctx, all.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EndMaintenance(ctx, api.ID, now); !errors.Is(err, ErrNotFound) {
+	if err := s.Workspace(1).EndMaintenance(ctx, api.ID, now); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ending an upcoming window: %v", err)
 	}
-	if active, _ = s.ActiveMaintenance(ctx, now); len(active) != 0 {
+	if active, _ = s.Workspace(1).ActiveMaintenance(ctx, now); len(active) != 0 {
 		t.Fatalf("still active after end: %+v", active)
 	}
-	if err := s.DeleteMaintenance(ctx, api.ID); err != nil {
+	if err := s.Workspace(1).DeleteMaintenance(ctx, api.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetMaintenance(ctx, api.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Workspace(1).GetMaintenance(ctx, api.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted window still found: %v", err)
 	}
 }
@@ -218,25 +218,25 @@ func TestMaintenanceChecksExcludedFromUptime(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	tg, _ := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(-3 * time.Minute), OK: true, LatencyMS: 100})
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(-2 * time.Minute), OK: false, Maintenance: true})
 	s.InsertCheck(ctx, Check{TargetID: tg.ID, CheckedAt: now.Add(-1 * time.Minute), OK: true, LatencyMS: 900, Maintenance: true})
-	st, err := s.Stats(ctx, tg.ID, now.Add(-time.Hour))
+	st, err := s.Workspace(1).Stats(ctx, tg.ID, now.Add(-time.Hour))
 	if err != nil || st.Total != 1 || st.OKCount != 1 || st.AvgLatencyMS != 100 {
 		t.Fatalf("stats should skip maintenance checks: %v %+v", err, st)
 	}
-	if days, _ := s.DailyUptime(ctx, tg.ID, now, 1); days[0].Total != 1 {
+	if days, _ := s.Workspace(1).DailyUptime(ctx, tg.ID, now, 1); days[0].Total != 1 {
 		t.Fatalf("daily: %+v", days)
 	}
-	if hours, _ := s.HourlyUptime(ctx, tg.ID, now, 2); hours[0].Total != 1 {
+	if hours, _ := s.Workspace(1).HourlyUptime(ctx, tg.ID, now, 2); hours[0].Total != 1 {
 		t.Fatalf("hourly: %+v", hours)
 	}
-	if lat, _ := s.Latencies(ctx, tg.ID, now.Add(-time.Hour)); len(lat) != 1 || lat[0] != 100 {
+	if lat, _ := s.Workspace(1).Latencies(ctx, tg.ID, now.Add(-time.Hour)); len(lat) != 1 || lat[0] != 100 {
 		t.Fatalf("latencies: %v", lat)
 	}
 	// The raw history still has all three, flagged.
-	recent, _ := s.RecentChecks(ctx, tg.ID, 10)
+	recent, _ := s.Workspace(1).RecentChecks(ctx, tg.ID, 10)
 	if len(recent) != 3 || !recent[0].Maintenance || recent[2].Maintenance {
 		t.Fatalf("recent: %+v", recent)
 	}
@@ -246,7 +246,7 @@ func TestRollupsOutliveRawChecks(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	tg, _ := s.CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
+	tg, _ := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Second, Timeout: time.Second}, now)
 	// 20 days of history: one ok and one failed check per day, plus one
 	// maintenance failure that must not count.
 	for d := 0; d < 20; d++ {
@@ -259,11 +259,11 @@ func TestRollupsOutliveRawChecks(t *testing.T) {
 	if _, err := s.Prune(ctx, now.AddDate(0, 0, -7)); err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.RollupStats(ctx, tg.ID, now.AddDate(0, 0, -29))
+	st, err := s.Workspace(1).RollupStats(ctx, tg.ID, now.AddDate(0, 0, -29))
 	if err != nil || st.Total != 40 || st.OKCount != 20 || st.AvgLatencyMS != 100 {
 		t.Fatalf("30d rollup after prune: %v %+v", err, st)
 	}
-	days, _ := s.DailyUptime(ctx, tg.ID, now, 90)
+	days, _ := s.Workspace(1).DailyUptime(ctx, tg.ID, now, 90)
 	filled := 0
 	for _, d := range days {
 		if d.Total > 0 {
@@ -273,17 +273,17 @@ func TestRollupsOutliveRawChecks(t *testing.T) {
 	if filled != 20 || days[89].Total != 2 {
 		t.Fatalf("90-day history should keep all 20 days after prune, got %d", filled)
 	}
-	if all, _ := s.RollupStats(ctx, 0, now.AddDate(0, 0, -29)); all.Total != 40 {
+	if all, _ := s.Workspace(1).RollupStats(ctx, 0, now.AddDate(0, 0, -29)); all.Total != 40 {
 		t.Fatalf("all-target rollup: %+v", all)
 	}
 	// Days 11..19 ago end before the cutoff day; day 10 ago is kept.
 	if n, err := s.PruneRollups(ctx, now.AddDate(0, 0, -10)); err != nil || n != 9 {
 		t.Fatalf("prune rollups: %v %d", err, n)
 	}
-	if err := s.DeleteTarget(ctx, tg.ID); err != nil {
+	if err := s.Workspace(1).DeleteTarget(ctx, tg.ID); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := s.RollupStats(ctx, 0, time.Time{}); st.Total != 0 {
+	if st, _ := s.Workspace(1).RollupStats(ctx, 0, time.Time{}); st.Total != 0 {
 		t.Fatalf("rollups should be deleted with the target: %+v", st)
 	}
 }
@@ -323,7 +323,7 @@ func TestRollupBackfillAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if st, _ := s.RollupStats(ctx, tg.ID, now.AddDate(0, 0, -7)); st.Total != 2 || st.OKCount != 1 {
+	if st, _ := s.Workspace(1).RollupStats(ctx, tg.ID, now.AddDate(0, 0, -7)); st.Total != 2 || st.OKCount != 1 {
 		t.Fatalf("rollups should be backfilled from existing checks: %+v", st)
 	}
 	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
@@ -360,7 +360,7 @@ func TestRollupBackfillAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	if got, _ := b.GetTarget(ctx, tg.ID); got.Name != "A" {
+	if got, _ := b.Workspace(1).GetTarget(ctx, tg.ID); got.Name != "A" {
 		t.Fatalf("backup should contain the data: %+v", got)
 	}
 	if fi, _ := os.Stat(dest); fi.Mode().Perm() != 0o600 {

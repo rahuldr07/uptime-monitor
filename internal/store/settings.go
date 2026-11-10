@@ -9,11 +9,6 @@ import (
 	"uptimemon/internal/config"
 )
 
-// GetSetting returns a setting value, or ErrNotFound.
-func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
-	return s.Workspace(legacyWorkspaceID).GetSetting(ctx, key)
-}
-
 // GetSetting returns one of the workspace's settings, or ErrNotFound.
 func (w *WS) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
@@ -22,11 +17,6 @@ func (w *WS) GetSetting(ctx context.Context, key string) (string, error) {
 		return "", ErrNotFound
 	}
 	return v, err
-}
-
-// SetSetting upserts a setting.
-func (s *Store) SetSetting(ctx context.Context, key, value string) error {
-	return s.Workspace(legacyWorkspaceID).SetSetting(ctx, key, value)
 }
 
 // SetSetting upserts one of the workspace's settings.

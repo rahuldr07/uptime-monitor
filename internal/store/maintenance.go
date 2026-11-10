@@ -43,11 +43,6 @@ func scanMaintenance(sc scanner) (Maintenance, error) {
 	return m, nil
 }
 
-// CreateMaintenance schedules a window and returns it with its id.
-func (s *Store) CreateMaintenance(ctx context.Context, m Maintenance, now time.Time) (Maintenance, error) {
-	return s.Workspace(legacyWorkspaceID).CreateMaintenance(ctx, m, now)
-}
-
 // CreateMaintenance schedules a window in the workspace and returns it.
 func (w *WS) CreateMaintenance(ctx context.Context, m Maintenance, now time.Time) (Maintenance, error) {
 	if !m.EndsAt.After(m.StartsAt) {
@@ -64,11 +59,6 @@ func (w *WS) CreateMaintenance(ctx context.Context, m Maintenance, now time.Time
 	return m, nil
 }
 
-// GetMaintenance returns one window by id.
-func (s *Store) GetMaintenance(ctx context.Context, id int64) (Maintenance, error) {
-	return s.Workspace(legacyWorkspaceID).GetMaintenance(ctx, id)
-}
-
 // GetMaintenance returns one of the workspace's windows by id.
 func (w *WS) GetMaintenance(ctx context.Context, id int64) (Maintenance, error) {
 	m, err := scanMaintenance(w.db.QueryRowContext(ctx,
@@ -77,12 +67,6 @@ func (w *WS) GetMaintenance(ctx context.Context, id int64) (Maintenance, error) 
 		return Maintenance{}, ErrNotFound
 	}
 	return m, err
-}
-
-// EndMaintenance cuts an active window short at the given time. Windows
-// that have not started are deleted instead; ended ones are left alone.
-func (s *Store) EndMaintenance(ctx context.Context, id int64, at time.Time) error {
-	return s.Workspace(legacyWorkspaceID).EndMaintenance(ctx, id, at)
 }
 
 // EndMaintenance cuts one of the workspace's active windows short.
@@ -96,11 +80,6 @@ func (w *WS) EndMaintenance(ctx context.Context, id int64, at time.Time) error {
 	return requireRow(res)
 }
 
-// DeleteMaintenance removes a window.
-func (s *Store) DeleteMaintenance(ctx context.Context, id int64) error {
-	return s.Workspace(legacyWorkspaceID).DeleteMaintenance(ctx, id)
-}
-
 // DeleteMaintenance removes one of the workspace's windows.
 func (w *WS) DeleteMaintenance(ctx context.Context, id int64) error {
 	res, err := w.db.ExecContext(ctx, `DELETE FROM maintenance WHERE id = ? AND workspace_id = ?`, id, w.id)
@@ -108,12 +87,6 @@ func (w *WS) DeleteMaintenance(ctx context.Context, id int64) error {
 		return err
 	}
 	return requireRow(res)
-}
-
-// ListMaintenance returns windows that end after since, soonest first.
-// Pass the zero time for the full history.
-func (s *Store) ListMaintenance(ctx context.Context, since time.Time, limit int) ([]Maintenance, error) {
-	return s.Workspace(legacyWorkspaceID).ListMaintenance(ctx, since, limit)
 }
 
 // ListMaintenance returns the workspace's windows that end after since.
@@ -124,11 +97,6 @@ func (w *WS) ListMaintenance(ctx context.Context, since time.Time, limit int) ([
 	return w.queryMaintenance(ctx,
 		`SELECT `+maintCols+` FROM maintenance WHERE workspace_id = ? AND ends_at > ? ORDER BY starts_at ASC, id ASC LIMIT ?`,
 		w.id, since.UnixMilli(), limit)
-}
-
-// ActiveMaintenance returns the windows covering the instant at.
-func (s *Store) ActiveMaintenance(ctx context.Context, at time.Time) ([]Maintenance, error) {
-	return s.Workspace(legacyWorkspaceID).ActiveMaintenance(ctx, at)
 }
 
 // ActiveMaintenance returns the workspace's windows covering the instant at.
@@ -153,12 +121,6 @@ func (w *WS) queryMaintenance(ctx context.Context, q string, args ...any) ([]Mai
 		out = append(out, m)
 	}
 	return out, rows.Err()
-}
-
-// InMaintenance reports whether a target in group is covered by an active
-// window at the given time, returning that window.
-func (s *Store) InMaintenance(ctx context.Context, group string, at time.Time) (Maintenance, bool, error) {
-	return s.Workspace(legacyWorkspaceID).InMaintenance(ctx, group, at)
 }
 
 // InMaintenance reports whether a target in group is covered by one of the

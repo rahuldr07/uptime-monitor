@@ -25,11 +25,6 @@ func (s *Store) InsertAlert(ctx context.Context, a Alert) error {
 	return err
 }
 
-// LastAlerts returns the most recent delivery attempt per channel.
-func (s *Store) LastAlerts(ctx context.Context) (map[string]Alert, error) {
-	return s.Workspace(legacyWorkspaceID).LastAlerts(ctx)
-}
-
 // LastAlerts returns the workspace's most recent delivery attempt per channel.
 func (w *WS) LastAlerts(ctx context.Context) (map[string]Alert, error) {
 	rows, err := w.db.QueryContext(ctx,
@@ -52,11 +47,6 @@ func (w *WS) LastAlerts(ctx context.Context) (map[string]Alert, error) {
 		out[a.Channel] = a
 	}
 	return out, rows.Err()
-}
-
-// CountAlerts counts successful deliveries since the given time.
-func (s *Store) CountAlerts(ctx context.Context, since time.Time) (int, error) {
-	return s.Workspace(legacyWorkspaceID).CountAlerts(ctx, since)
 }
 
 // CountAlerts counts the workspace's successful deliveries since the given time.

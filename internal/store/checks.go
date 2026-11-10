@@ -89,22 +89,12 @@ func (s *Store) LatestCheck(ctx context.Context, targetID int64) (Check, error) 
 	return c, err
 }
 
-// RecentChecks returns up to limit checks, newest first.
-func (s *Store) RecentChecks(ctx context.Context, targetID int64, limit int) ([]Check, error) {
-	return s.Workspace(legacyWorkspaceID).RecentChecks(ctx, targetID, limit)
-}
-
 // RecentChecks returns up to limit of the workspace's checks, newest first.
 // A targetID of 0 covers all of the workspace's targets.
 func (w *WS) RecentChecks(ctx context.Context, targetID int64, limit int) ([]Check, error) {
 	cond, args := w.scope(targetID)
 	return w.queryChecks(ctx,
 		`SELECT `+checkCols+` FROM checks WHERE `+cond+` ORDER BY checked_at DESC, id DESC LIMIT ?`, append(args, limit)...)
-}
-
-// ChecksSince returns checks at or after since, oldest first.
-func (s *Store) ChecksSince(ctx context.Context, targetID int64, since time.Time) ([]Check, error) {
-	return s.Workspace(legacyWorkspaceID).ChecksSince(ctx, targetID, since)
 }
 
 // ChecksSince returns the workspace's checks at or after since, oldest first.
@@ -133,13 +123,6 @@ func (w *WS) queryChecks(ctx context.Context, q string, args ...any) ([]Check, e
 	return out, rows.Err()
 }
 
-// Stats aggregates checks for a target since the given time. A targetID of
-// 0 aggregates across all targets. Checks made during maintenance windows
-// are left out, as are they from every other uptime aggregate below.
-func (s *Store) Stats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
-	return s.Workspace(legacyWorkspaceID).Stats(ctx, targetID, since)
-}
-
 // Stats aggregates the workspace's checks since the given time. A targetID of
 // 0 aggregates across all of its targets. Maintenance checks are left out.
 func (w *WS) Stats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
@@ -157,12 +140,6 @@ func (w *WS) Stats(ctx context.Context, targetID int64, since time.Time) (Stats,
 		st.AvgLatencyMS = avg.Float64
 	}
 	return st, nil
-}
-
-// DailyUptime returns per-day (UTC) stats for the last days days, oldest
-// first, from the rollups. Days with no checks have Total 0.
-func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, days int) ([]Stats, error) {
-	return s.Workspace(legacyWorkspaceID).DailyUptime(ctx, targetID, now, days)
 }
 
 // DailyUptime is the workspace-scoped form of the store method; a targetID of
@@ -199,14 +176,6 @@ func (w *WS) DailyUptime(ctx context.Context, targetID int64, now time.Time, day
 	return out, nil
 }
 
-// RollupStats aggregates the daily rollups of whole UTC days from the one
-// containing since up to now. It covers periods longer than the raw check
-// retention; the first day is counted in full, so the window can be up to a
-// day longer than asked. A targetID of 0 aggregates across all targets.
-func (s *Store) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
-	return s.Workspace(legacyWorkspaceID).RollupStats(ctx, targetID, since)
-}
-
 // RollupStats is the workspace-scoped form of the store method.
 func (w *WS) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
 	cond, args := w.scope(targetID)
@@ -222,12 +191,6 @@ func (w *WS) RollupStats(ctx context.Context, targetID int64, since time.Time) (
 		st.AvgLatencyMS = float64(latSum) / float64(st.OKCount)
 	}
 	return st, nil
-}
-
-// Latencies returns the latencies of successful checks since the given
-// time, sorted ascending. A targetID of 0 covers all targets.
-func (s *Store) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
-	return s.Workspace(legacyWorkspaceID).Latencies(ctx, targetID, since)
 }
 
 // Latencies is the workspace-scoped form of the store method.
@@ -264,12 +227,6 @@ func Percentile(sorted []int64, p float64) int64 {
 		idx = len(sorted) - 1
 	}
 	return sorted[idx]
-}
-
-// HourlyUptime returns per-hour stats for the last hours hours ending at
-// now, oldest first.
-func (s *Store) HourlyUptime(ctx context.Context, targetID int64, now time.Time, hours int) ([]Stats, error) {
-	return s.Workspace(legacyWorkspaceID).HourlyUptime(ctx, targetID, now, hours)
 }
 
 // HourlyUptime is the workspace-scoped form of the store method.
