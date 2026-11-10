@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
-	"time"
 )
 
 // safeNext only allows plain local paths as post-login redirect targets.
@@ -28,59 +26,11 @@ func safeNext(next string) string {
 	return next
 }
 
-// loginLimiter allows a handful of failed attempts per client per minute.
+// loginMaxFailures is how many failed logins a client may make per minute.
 // Successful logins are not counted, so the admin is never locked out by
 // their own use; attackers sharing the admin's IP (or proxy, when
 // trust_proxy is off) still get throttled.
-type loginLimiter struct {
-	mu       sync.Mutex
-	failures map[string][]time.Time
-	now      func() time.Time
-}
-
-func newLoginLimiter(now func() time.Time) *loginLimiter {
-	return &loginLimiter{failures: map[string][]time.Time{}, now: now}
-}
-
 const loginMaxFailures = 5
-
-// blocked reports whether the key has too many recent failures.
-func (l *loginLimiter) blocked(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.prune(key)) >= loginMaxFailures
-}
-
-// fail records a failed attempt.
-func (l *loginLimiter) fail(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.failures[key] = append(l.prune(key), l.now())
-	if len(l.failures) > 10000 { // evict stale keys, never wipe live ones
-		for k := range l.failures {
-			if len(l.prune(k)) == 0 {
-				delete(l.failures, k)
-			}
-		}
-	}
-}
-
-// prune drops failures older than a minute; caller holds the lock.
-func (l *loginLimiter) prune(key string) []time.Time {
-	cutoff := l.now().Add(-time.Minute)
-	kept := l.failures[key][:0]
-	for _, t := range l.failures[key] {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	if len(kept) == 0 {
-		delete(l.failures, key)
-		return nil
-	}
-	l.failures[key] = kept
-	return kept
-}
 
 // passwordEqual compares in constant time. Hashing first gives both sides
 // the same length, since ConstantTimeCompare returns early on a length
@@ -110,7 +60,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	d := loginData{base: s.base(r, "login", "Log in · Uptime"), Next: safeNext(r.FormValue("next"))}
 	key := clientKey(r, s.cfg.ProxyHops())
-	if s.limiter.blocked(key) {
+	if ok, _ := s.limiter.Allow(key); !ok {
 		d.Error = "Too many failed attempts. Wait a minute and try again."
 		w.WriteHeader(http.StatusTooManyRequests)
 		s.render(w, r, "login", d)
@@ -121,7 +71,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, d.Next, http.StatusSeeOther)
 		return
 	}
-	s.limiter.fail(key)
+	s.limiter.Hit(key)
 	d.Error = "Wrong password."
 	w.WriteHeader(http.StatusUnauthorized)
 	s.render(w, r, "login", d)

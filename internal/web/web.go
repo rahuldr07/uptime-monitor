@@ -18,6 +18,7 @@ import (
 
 	"uptimemon/internal/config"
 	"uptimemon/internal/monitor"
+	"uptimemon/internal/ratelimit"
 	"uptimemon/internal/store"
 )
 
@@ -35,7 +36,7 @@ type Server struct {
 	logger   *slog.Logger
 	now      func() time.Time
 	sessions *sessions
-	limiter  *loginLimiter
+	limiter  *ratelimit.Limiter
 	pages    map[string]*template.Template
 	mux      *http.ServeMux
 
@@ -48,7 +49,9 @@ func New(cfg *config.Config, st *store.Store, mon *monitor.Monitor, logger *slog
 		now = time.Now
 	}
 	s := &Server{cfg: cfg, store: st, mon: mon, logger: logger, now: now,
-		sessions: newSessions(now), limiter: newLoginLimiter(now), pages: map[string]*template.Template{}}
+		sessions: newSessions(now), pages: map[string]*template.Template{}}
+	s.limiter = ratelimit.New(time.Minute, loginMaxFailures, 0)
+	s.limiter.Now = now
 	funcs := template.FuncMap{
 		"ago":    func(t time.Time) string { return humanAgo(s.now().Sub(t)) },
 		"dur":    humanDur,
