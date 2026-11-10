@@ -120,6 +120,8 @@ type isoSnapshot struct {
 	Maint     []store.Maintenance
 	Checks    []store.Check
 	Settings  map[string]string
+	Slug      string
+	Name      string
 }
 
 func snapshotWS(t *testing.T, ws *store.WS, a isoA) isoSnapshot {
@@ -139,6 +141,11 @@ func snapshotWS(t *testing.T, ws *store.WS, a isoA) isoSnapshot {
 	if s.Checks, err = ws.RecentChecks(ctx, a.target, 100); err != nil {
 		t.Fatal(err)
 	}
+	info, err := ws.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Slug, s.Name = info.Slug, info.Name
 	s.Settings = map[string]string{}
 	for _, k := range []string{"notify", "status_title", "status_desc"} {
 		v, err := ws.GetSetting(ctx, k)
@@ -149,6 +156,17 @@ func snapshotWS(t *testing.T, ws *store.WS, a isoA) isoSnapshot {
 	}
 	return s
 }
+
+// statusAttackForm also tries to move the status page address and rename.
+var statusAttackForm = func() url.Values {
+	f := url.Values{"slug": {"attacker-slug"}, "name": {"Attacker"}}
+	for k, v := range attackForm {
+		if k != "name" {
+			f[k] = v
+		}
+	}
+	return f
+}()
 
 // isoCase is one attack from B on a workspace route.
 type isoCase struct {
@@ -184,7 +202,7 @@ var isoCases = map[string]isoCase{
 	"GET /alerts":                   {query: "?target=%T", deny: "leave blank to keep"}, // B stored no channel
 	"POST /alerts":                  {form: attackForm},
 	"POST /alerts/test":             {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
-	"POST /status/settings":         {form: attackForm},
+	"POST /status/settings":         {form: statusAttackForm},
 	"GET /maintenance":              {query: "?target=%T"},
 	"POST /maintenance":             {form: attackForm},
 	"POST /maintenance/{id}/end":    {form: attackForm},

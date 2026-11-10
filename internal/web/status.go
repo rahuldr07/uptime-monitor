@@ -28,6 +28,8 @@ type statusData struct {
 	StatusTitle string
 	StatusDesc  string
 	ShareURL    string
+	Slug        string // owner view: the settings form's current values
+	WSName      string
 	Groups      []statusGroup
 	Total       int
 	Upcoming    []store.Maintenance // scheduled within the next 7 days
@@ -364,6 +366,11 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 
 // statusOwner renders the live page with the settings form.
 func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, a *authCtx, info store.Workspace) {
+	s.statusOwnerCode(w, r, a, info, http.StatusOK, "")
+}
+
+// statusOwnerCode renders the owner view with code, showing errMsg when set.
+func (s *Server) statusOwnerCode(w http.ResponseWriter, r *http.Request, a *authCtx, info store.Workspace, code int, errMsg string) {
 	ws := a.WS
 	// The owner view carries the settings form, so unlike the public page
 	// it must not be framed, not even by a same-site origin that would
@@ -376,12 +383,14 @@ func (s *Server) statusOwner(w http.ResponseWriter, r *http.Request, a *authCtx,
 		return
 	}
 	d.base = s.base(r, a, "status", d.StatusTitle)
+	d.Error = errMsg
+	d.Slug, d.WSName = info.Slug, info.Name
 	scheme := "http"
 	if s.isHTTPS(r) {
 		scheme = "https"
 	}
 	d.ShareURL = scheme + "://" + r.Host + "/s/" + info.Slug
-	s.render(w, r, "status", d)
+	s.renderStatus(w, r, code, "status", d)
 }
 
 // statusData builds the anonymous view of ws. It needs no request, and
@@ -433,6 +442,11 @@ func (s *Server) statusMeta(ctx context.Context, ws *store.WS) (title, desc stri
 	return title, desc
 }
 
+const (
+	msgBadSlug   = "Use 3–40 lowercase letters, digits and dashes."
+	msgSlugTaken = "That address is taken."
+)
+
 func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
 	title := strings.TrimSpace(r.FormValue("title"))
@@ -440,6 +454,42 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authC
 	if len(title) > 80 || len(desc) > 200 {
 		redirect(w, r, s.statusURL(r.Context(), ws), "Title or description too long.")
 		return
+	}
+	info, err := ws.Info(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	slug := strings.TrimSpace(r.FormValue("slug"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	newSlug := slug != "" && slug != info.Slug
+	newName := name != "" && name != info.Name
+	switch {
+	case newSlug && !store.ValidSlug(slug):
+		s.statusOwnerCode(w, r, a, info, http.StatusUnprocessableEntity, msgBadSlug)
+		return
+	case newName && !validWorkspaceName(name):
+		s.statusOwnerCode(w, r, a, info, http.StatusUnprocessableEntity, msgWorkspaceLen)
+		return
+	}
+	if newSlug {
+		switch err := ws.SetSlug(r.Context(), slug); {
+		case errors.Is(err, store.ErrSlugTaken):
+			s.statusOwnerCode(w, r, a, info, http.StatusUnprocessableEntity, msgSlugTaken)
+			return
+		case errors.Is(err, store.ErrInvalidSlug):
+			s.statusOwnerCode(w, r, a, info, http.StatusUnprocessableEntity, msgBadSlug)
+			return
+		case err != nil:
+			s.fail(w, err)
+			return
+		}
+	}
+	if newName {
+		if err := ws.Rename(r.Context(), name); err != nil {
+			s.fail(w, err)
+			return
+		}
 	}
 	if err := ws.SetSetting(r.Context(), "status_title", title); err != nil {
 		s.fail(w, err)
