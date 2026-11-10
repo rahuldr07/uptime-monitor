@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -541,5 +542,105 @@ func TestSessionCapAndRevoke(t *testing.T) {
 	}
 	if _, err := s.SessionAuth(ctx, live, now); err != nil {
 		t.Fatalf("live pruned: %v", err)
+	}
+}
+
+func TestSessionAbsoluteExpiryAndIdleBoundary(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u := newVerified(t, s, t0)
+	day := 24 * time.Hour
+	raw, _ := s.CreateSession(ctx, u.ID, t0)
+	for _, d := range []time.Duration{6, 12, 18, 24, 29} {
+		if _, err := s.SessionAuth(ctx, raw, t0.Add(d*day)); err != nil {
+			t.Fatalf("+%dd: %v", d, err)
+		}
+	}
+	if _, err := s.SessionAuth(ctx, raw, t0.Add(SessionTTL-time.Second)); err != nil {
+		t.Fatalf("TTL-1s: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, t0.Add(SessionTTL)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("at TTL: %v", err)
+	}
+
+	raw, _ = s.CreateSession(ctx, u.ID, t0)
+	if _, err := s.SessionAuth(ctx, raw, t0.Add(SessionIdle)); err != nil {
+		t.Fatalf("exactly idle: %v", err)
+	}
+	raw, _ = s.CreateSession(ctx, u.ID, t0)
+	if _, err := s.SessionAuth(ctx, raw, t0.Add(SessionIdle+time.Millisecond)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("idle+1ms: %v", err)
+	}
+}
+
+func TestSessionCapIgnoresDeadSessions(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u := newVerified(t, s, now)
+	var raws []string
+	for i := 0; i < MaxSessionsPerUser; i++ {
+		raw, err := s.CreateSession(ctx, u.ID, now.Add(time.Duration(i)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raws = append(raws, raw)
+	}
+	for _, r := range raws[:5] {
+		if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`,
+			now.Add(-SessionIdle-time.Hour).UnixMilli(), hashSecret(r)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later := now.Add(time.Minute)
+	nw, err := s.CreateSession(ctx, u.ID, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range append(raws[5:], nw) {
+		if _, err := s.SessionAuth(ctx, r, later); err != nil {
+			t.Fatalf("live session evicted: %v", err)
+		}
+	}
+	var n int
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`, u.ID).Scan(&n)
+	if n != MaxSessionsPerUser-5+1 {
+		t.Fatalf("count = %d", n)
+	}
+}
+
+func TestSessionTouchThrottle(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u := newVerified(t, s, t0)
+	raw, _ := s.CreateSession(ctx, u.ID, t0)
+	seen := func() (sess int64, user *int64) {
+		t.Helper()
+		if err := s.db.QueryRowContext(ctx, `SELECT last_seen_at FROM sessions WHERE token_hash = ?`, hashSecret(raw)).Scan(&sess); err != nil {
+			t.Fatal(err)
+		}
+		var v sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, `SELECT last_seen_at FROM users WHERE id = ?`, u.ID).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		if v.Valid {
+			user = &v.Int64
+		}
+		return
+	}
+	if _, err := s.SessionAuth(ctx, raw, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if ss, us := seen(); ss != t0.UnixMilli() || us != nil {
+		t.Fatalf("touched early: %d %v", ss, us)
+	}
+	t5 := t0.Add(5 * time.Minute)
+	if _, err := s.SessionAuth(ctx, raw, t5); err != nil {
+		t.Fatal(err)
+	}
+	if ss, us := seen(); ss != t5.UnixMilli() || us == nil || *us != t5.UnixMilli() {
+		t.Fatalf("not touched: %d %v", ss, us)
 	}
 }

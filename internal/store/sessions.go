@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -17,6 +18,14 @@ const (
 	// MaxSessionsPerUser caps live sessions; the oldest are dropped.
 	MaxSessionsPerUser = 20
 )
+
+// sessionDead is the condition for an expired or idle session. Arguments:
+// now (ms), now minus SessionIdle (ms); see deadArgs.
+const sessionDead = `(expires_at <= ? OR last_seen_at < ?)`
+
+func deadArgs(now time.Time) []any {
+	return []any{now.UnixMilli(), now.Add(-SessionIdle).UnixMilli()}
+}
 
 // Auth is an authenticated request's identity.
 type Auth struct {
@@ -42,11 +51,17 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, now time.Time) 
 		hash, userID, ms, ms, now.Add(SessionTTL).UnixMilli()); err != nil {
 		return "", err
 	}
+	// Dead sessions never count toward the cap.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND `+sessionDead,
+		append([]any{userID}, deadArgs(now)...)...); err != nil {
+		return "", err
+	}
+	// Keep the new session plus the newest MaxSessionsPerUser-1 others.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN (
-			SELECT token_hash FROM sessions WHERE user_id = ?
-			ORDER BY created_at DESC, rowid DESC LIMIT ?)`,
-		userID, userID, MaxSessionsPerUser); err != nil {
+		`DELETE FROM sessions WHERE user_id = ? AND token_hash <> ? AND token_hash NOT IN (
+			SELECT token_hash FROM sessions WHERE user_id = ? AND token_hash <> ?
+			ORDER BY created_at DESC, token_hash LIMIT ?)`,
+		userID, hash, userID, hash, MaxSessionsPerUser-1); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -84,17 +99,33 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 	a.User, a.SessionHash = u, hash
 	a.WS = s.Workspace(a.Workspace.ID)
 	if now.Sub(time.UnixMilli(lastSeen)) >= sessionTouchEvery {
-		// Separate statements: the store has one connection, so the read
-		// above must be finished before writing.
-		ms := now.UnixMilli()
-		if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`, ms, hash); err != nil {
-			return Auth{}, err
-		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE users SET last_seen_at = ? WHERE id = ?`, ms, u.ID); err != nil {
-			return Auth{}, err
+		// Best effort: the touch only extends the idle window, so a failed
+		// or skipped touch makes the session expire sooner, the safe
+		// direction. A valid session must not be rejected because of it.
+		if err := s.touchSession(ctx, hash, u.ID, now); err != nil {
+			slog.Warn("store: session touch failed", "err", err)
 		}
 	}
 	return a, nil
+}
+
+// touchSession refreshes last_seen_at on the session and its user in one
+// transaction, after the read in SessionAuth has finished (single
+// connection).
+func (s *Store) touchSession(ctx context.Context, hash string, userID int64, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ms := now.UnixMilli()
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`, ms, hash); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET last_seen_at = ? WHERE id = ?`, ms, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteSession revokes one session. A missing session is not an error.
@@ -111,8 +142,7 @@ func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) error {
 
 // PruneSessions deletes expired and idle sessions and returns how many.
 func (s *Store) PruneSessions(ctx context.Context, now time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ? OR last_seen_at < ?`,
-		now.UnixMilli(), now.Add(-SessionIdle).UnixMilli())
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE `+sessionDead, deadArgs(now)...)
 	if err != nil {
 		return 0, err
 	}
