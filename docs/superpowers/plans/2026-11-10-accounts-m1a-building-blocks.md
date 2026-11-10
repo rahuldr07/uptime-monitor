@@ -254,7 +254,8 @@ func TestWindow(t *testing.T) {
 	// New(time.Minute, 3, 0). Allow("a") ok; 3× Hit("a") at 0s, 10s, 20s
 	// (advance now between hits). At 30s: Allow -> ok false, retryAfter 30s.
 	// At 59.999s still blocked; at exactly 60s ok (the 0s event is out of
-	// (now-window, now]); at 70s: Hit, then Allow -> false, retryAfter 10s.
+	// (now-window, now]). Hit at 60s (counted: 10s, 20s, 60s); at 65s Allow ->
+	// false, retryAfter 5s (the 10s event leaves the window at 70s).
 }
 
 func TestKeysAreIndependentAndReset(t *testing.T) {
