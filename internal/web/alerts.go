@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -101,7 +102,7 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 	// same way clearing the email fields removes email.
 	if v("tg_clear") != "1" && (v("tg_chat") != "" || v("tg_token") != "") {
 		var old string
-		if prev.Telegram != nil {
+		if prev.Telegram != nil && prev.Telegram.ChatID == v("tg_chat") {
 			old = prev.Telegram.BotToken
 		}
 		n.Telegram = &config.Telegram{BotToken: keep("tg_token", old), ChatID: v("tg_chat"), Disabled: v("tg_enabled") != "1"}
@@ -123,9 +124,11 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 				to = append(to, a)
 			}
 		}
+		// A saved password follows its destination: a new host, port or
+		// username must not receive it.
 		var old string
-		if prev.Email != nil {
-			old = prev.Email.Password
+		if pe := prev.Email; pe != nil && pe.SMTPHost == v("smtp_host") && smtpPort(pe.SMTPPort) == smtpPort(port) && pe.Username == v("smtp_user") {
+			old = pe.Password
 		}
 		n.Email = &config.Email{SMTPHost: v("smtp_host"), SMTPPort: port, Username: v("smtp_user"),
 			Password: keep("smtp_pass", old), From: v("smtp_from"), To: to, Disabled: v("email_enabled") != "1"}
@@ -133,11 +136,40 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 	return n
 }
 
+// smtpPort maps the unset port to the default so it compares with a saved one.
+func smtpPort(p int) int {
+	if p == 0 {
+		return 587
+	}
+	return p
+}
+
+// clearedSecret names a saved secret the form dropped because its
+// destination changed and no new value was given; "" if none.
+func clearedSecret(prev, n config.Notify) string {
+	if prev.Telegram != nil && prev.Telegram.BotToken != "" && n.Telegram != nil && n.Telegram.BotToken == "" {
+		return "telegram: the chat ID changed, so re-enter the bot token"
+	}
+	if prev.Email != nil && prev.Email.Password != "" && n.Email != nil && n.Email.Password == "" {
+		return "email: the SMTP host, port or username changed, so re-enter the password"
+	}
+	return ""
+}
+
 // saveNotify validates and persists settings, swapping the live notifiers.
 func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, a *authCtx) (config.Notify, bool) {
 	ws := a.WS
-	n := parseNotifyForm(r, s.notifyConfig(r.Context(), ws))
-	if err := config.ValidateNotify(&n); err != nil {
+	prev := s.notifyConfig(r.Context(), ws)
+	n := parseNotifyForm(r, prev)
+	validate := config.ValidateNotifyRestricted
+	if a.IsOperator {
+		validate = config.ValidateNotify
+	}
+	err := validate(&n)
+	if msg := clearedSecret(prev, n); msg != "" {
+		err = errors.New(msg)
+	}
+	if err != nil {
 		s.renderAlerts(w, r, a, http.StatusUnprocessableEntity, n, err.Error())
 		return n, false
 	}
@@ -146,7 +178,7 @@ func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, a *authCtx) 
 		s.fail(w, err)
 		return n, false
 	}
-	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(a.IsOperator)))
+	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(a.IsOperator), !a.IsOperator))
 	return n, true
 }
 

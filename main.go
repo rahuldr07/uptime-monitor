@@ -198,9 +198,10 @@ func run(cfgPath string, logger *slog.Logger) error {
 			if err != nil {
 				return nil, err
 			}
-			return notify.FromConfig(n, logger, cfg.AllowPrivate(ws == 1)), nil
+			restricted := ws != store.OperatorWorkspaceID
+			return notify.FromConfig(n, logger, cfg.AllowPrivate(!restricted), restricted), nil
 		},
-		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == 1) },
+		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == store.OperatorWorkspaceID) },
 		UserAgent:      userAgent(version, cfg.BaseURL)})
 	if err := mon.Start(ctx); err != nil {
 		return err

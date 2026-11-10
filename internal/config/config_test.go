@@ -260,3 +260,35 @@ func TestSignupNeedsBaseURL(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateNotifyRestricted(t *testing.T) {
+	goodTok := "123456:" + strings.Repeat("A", 30)
+	mail := func(mod func(e *Email)) *Notify {
+		e := &Email{SMTPHost: "h", SMTPPort: 587, Username: "u", From: "a@b", To: []string{"c@d"}}
+		mod(e)
+		return &Notify{Email: e}
+	}
+	cases := []struct {
+		name string
+		n    *Notify
+		want string // "" = valid
+	}{
+		{"ok telegram", &Notify{Telegram: &Telegram{BotToken: goodTok, ChatID: "1"}}, ""},
+		{"short token", &Notify{Telegram: &Telegram{BotToken: "123:abc", ChatID: "1"}}, "telegram bot_token"},
+		{"token without id", &Notify{Telegram: &Telegram{BotToken: strings.Repeat("A", 40), ChatID: "1"}}, "telegram bot_token"},
+		{"ok email", mail(func(e *Email) {}), ""},
+		{"port 465", mail(func(e *Email) { e.SMTPPort = 465 }), ""},
+		{"port 25", mail(func(e *Email) { e.SMTPPort = 25 }), "smtp_port"},
+		{"default port ok", mail(func(e *Email) { e.SMTPPort = 0 }), ""},
+		{"no username", mail(func(e *Email) { e.Username = "" }), "username"},
+		{"6 recipients", mail(func(e *Email) { e.To = []string{"1@x", "2@x", "3@x", "4@x", "5@x", "6@x"} }), "at most 5"},
+		{"5 recipients", mail(func(e *Email) { e.To = []string{"1@x", "2@x", "3@x", "4@x", "5@x"} }), ""},
+		{"base rules still apply", &Notify{Slack: &Slack{WebhookURL: "http://x"}}, "https"},
+	}
+	for _, c := range cases {
+		err := ValidateNotifyRestricted(c.n)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: err=%v, want %q", c.name, err, c.want)
+		}
+	}
+}

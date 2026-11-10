@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -340,6 +341,32 @@ func ValidateNotify(n *Notify) error {
 		u, err := url.Parse(s.WebhookURL)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
 			return errors.New("slack notifier needs an https webhook_url")
+		}
+	}
+	return nil
+}
+
+var telegramTokenRE = regexp.MustCompile(`^\d+:[A-Za-z0-9_-]{30,}$`)
+
+// ValidateNotifyRestricted is ValidateNotify plus the limits for
+// non-operator workspaces: a well-formed Telegram token, SMTP on 465 or 587
+// with a login, and at most 5 recipients.
+func ValidateNotifyRestricted(n *Notify) error {
+	if err := ValidateNotify(n); err != nil {
+		return err
+	}
+	if t := n.Telegram; t != nil && !telegramTokenRE.MatchString(t.BotToken) {
+		return errors.New("telegram bot_token is not a valid bot token (expected 123456:ABC...)")
+	}
+	if e := n.Email; e != nil {
+		if e.SMTPPort != 465 && e.SMTPPort != 587 {
+			return errors.New("email smtp_port must be 465 or 587")
+		}
+		if e.Username == "" {
+			return errors.New("email username is required")
+		}
+		if len(e.To) > 5 {
+			return errors.New("email to may list at most 5 addresses")
 		}
 	}
 	return nil

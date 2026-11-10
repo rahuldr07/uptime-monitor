@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"uptimemon/internal/config"
 	"uptimemon/internal/store"
 )
 
@@ -104,10 +105,10 @@ func TestAlertSecretsNotEchoed(t *testing.T) {
 	form.Set("tg_token", "")
 	form.Set("slack_url", "")
 	form.Set("smtp_pass", "")
-	form.Set("tg_chat", "43")
+	form.Set("tg_chat", "42")
 	e.post(t, c, "/alerts", form)
 	n := (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1))
-	if n.Telegram.BotToken != "SECRET-TG" || n.Telegram.ChatID != "43" || n.Slack.WebhookURL != "https://hooks.example/SECRET-SLACK" || n.Email.Password != "SECRET-SMTP" {
+	if n.Telegram.BotToken != "SECRET-TG" || n.Telegram.ChatID != "42" || n.Slack.WebhookURL != "https://hooks.example/SECRET-SLACK" || n.Email.Password != "SECRET-SMTP" {
 		t.Fatalf("blank secret fields should keep saved values: %+v %+v %+v", n.Telegram, n.Slack, n.Email)
 	}
 
@@ -591,5 +592,54 @@ func TestStatusBuildSurvivesCancelledLeader(t *testing.T) {
 	}
 	if v := buildErr.Load(); v != nil {
 		t.Fatalf("build ctx was cancelled with the leader: %v", v)
+	}
+}
+
+func TestRestrictedChannelsForAccounts(t *testing.T) {
+	e := newEnv(t)
+	c, _ := e.account(t, "chan@example.com")
+	smtp25 := url.Values{"smtp_host": {"h"}, "smtp_port": {"25"}, "smtp_user": {"u"}, "smtp_pass": {"p"},
+		"smtp_from": {"a@b"}, "smtp_to": {"x@y"}, "email_enabled": {"1"}}
+	if resp, _ := e.post(t, c, "/alerts", smtp25); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("account port 25: %d, want 422", resp.StatusCode)
+	}
+	badTG := url.Values{"tg_token": {"not-a-token"}, "tg_chat": {"1"}, "tg_enabled": {"1"}}
+	if resp, _ := e.post(t, e.op, "/alerts", badTG); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("operator keeps loose telegram tokens: %d", resp.StatusCode)
+	}
+	if resp, _ := e.post(t, c, "/alerts", badTG); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("account bad telegram token: %d, want 422", resp.StatusCode)
+	}
+	if resp, _ := e.post(t, e.op, "/alerts", smtp25); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("operator port 25: %d, want 303", resp.StatusCode)
+	}
+}
+
+func TestSecretClearedWhenDestinationChanges(t *testing.T) {
+	e := newEnv(t)
+	c := e.op
+	form := url.Values{"smtp_host": {"h"}, "smtp_port": {"587"}, "smtp_user": {"u"}, "smtp_pass": {"SECRET-SMTP"},
+		"smtp_from": {"a@b"}, "smtp_to": {"x@y"}, "email_enabled": {"1"}}
+	if resp, _ := e.post(t, c, "/alerts", form); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save: %d", resp.StatusCode)
+	}
+	saved := func() config.Notify {
+		return (&Server{sys: e.st, cfg: e.cfg}).notifyConfig(context.Background(), e.st.Workspace(1))
+	}
+	form.Set("smtp_pass", "")
+	form.Set("smtp_host", "other")
+	resp, body := e.post(t, c, "/alerts", form)
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "re-enter the password") {
+		t.Fatalf("changed host, blank password: %d", resp.StatusCode)
+	}
+	if n := saved(); n.Email.SMTPHost != "h" || n.Email.Password != "SECRET-SMTP" {
+		t.Fatalf("rejected save must not change stored settings: %+v", n.Email)
+	}
+	form.Set("smtp_host", "h")
+	if resp, _ := e.post(t, c, "/alerts", form); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unchanged host: %d", resp.StatusCode)
+	}
+	if n := saved(); n.Email.Password != "SECRET-SMTP" {
+		t.Fatalf("blank password should keep the saved one: %+v", n.Email)
 	}
 }

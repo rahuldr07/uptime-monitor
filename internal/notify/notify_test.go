@@ -234,11 +234,11 @@ func TestMultiJoinsErrorsAndFromConfig(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "a: boom") {
 		t.Errorf("multi error: %v", err)
 	}
-	m := FromConfig(config.Notify{}, slog.Default(), true)
+	m := FromConfig(config.Notify{}, slog.Default(), true, false)
 	if len(m) != 1 || m[0].Name != "log" {
 		t.Errorf("empty config should give log notifier: %+v", m)
 	}
-	m = FromConfig(config.Notify{Telegram: &config.Telegram{BotToken: "t", ChatID: "c"}, Slack: &config.Slack{WebhookURL: "https://h"}}, nil, true)
+	m = FromConfig(config.Notify{Telegram: &config.Telegram{BotToken: "t", ChatID: "c"}, Slack: &config.Slack{WebhookURL: "https://h"}}, nil, true, false)
 	if len(m) != 2 || m[0].Name != "telegram" || m[1].Name != "slack" {
 		t.Errorf("from config: %+v", m)
 	}
@@ -254,19 +254,76 @@ func TestNotifiersGuarded(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Notify{Slack: &config.Slack{WebhookURL: srv.URL}}
 
-	err := FromConfig(cfg, slog.Default(), false).Notify(ctx, Event{Target: "x"})
+	err := FromConfig(cfg, slog.Default(), false, false).Notify(ctx, Event{Target: "x"})
 	if !errors.Is(err, netguard.ErrBlocked) || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("slack guarded: %v", err)
 	}
-	if err := FromConfig(cfg, slog.Default(), true).Notify(ctx, Event{Target: "x"}); err != nil {
+	if err := FromConfig(cfg, slog.Default(), true, false).Notify(ctx, Event{Target: "x"}); err != nil {
 		t.Fatalf("slack allowed: %v", err)
 	}
 
 	port, _, _ := fakeSMTPAt(t, "127.0.0.1", "250 8BITMIME")
 	mail := config.Notify{Email: &config.Email{SMTPHost: "127.0.0.1", SMTPPort: port,
 		From: "a@b.c", To: []string{"d@e.f"}}}
-	err = FromConfig(mail, slog.Default(), false).Notify(ctx, Event{Target: "x"})
+	err = FromConfig(mail, slog.Default(), false, false).Notify(ctx, Event{Target: "x"})
 	if !errors.Is(err, netguard.ErrBlocked) || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("email guarded: %v", err)
+	}
+}
+
+func TestRestrictedNoRedirects(t *testing.T) {
+	var hits int
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer second.Close()
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, second.URL, http.StatusTemporaryRedirect)
+	}))
+	defer first.Close()
+	cfg := config.Notify{Slack: &config.Slack{WebhookURL: first.URL}}
+
+	err := FromConfig(cfg, slog.Default(), true, true).Notify(context.Background(), Event{Target: "x"})
+	if err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("restricted: want status 307 error, got %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("restricted client followed the redirect (%d hits)", hits)
+	}
+	if err := FromConfig(cfg, slog.Default(), true, false).Notify(context.Background(), Event{Target: "x"}); err != nil {
+		t.Fatalf("unrestricted should follow the redirect: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("unrestricted hits = %d, want 1", hits)
+	}
+}
+
+func TestRequireTLS(t *testing.T) {
+	mk := func(port int, require bool) Email {
+		return Email{Host: "127.0.0.1", Port: port, From: "a@b", To: []string{"c@d"}, RequireTLS: require}
+	}
+	port, _, _ := fakeSMTPAt(t, "127.0.0.1", "250 8BITMIME")
+	err := mk(port, true).Notify(context.Background(), Event{Target: "x"})
+	if err == nil || !strings.Contains(err.Error(), "server does not offer STARTTLS") {
+		t.Fatalf("RequireTLS without STARTTLS: got %v", err)
+	}
+	port, got, _ := fakeSMTPAt(t, "127.0.0.1", "250 8BITMIME")
+	if err := mk(port, false).Notify(context.Background(), Event{Target: "x"}); err != nil {
+		t.Fatalf("without RequireTLS: %v", err)
+	}
+	<-got
+}
+
+func TestEmailSend(t *testing.T) {
+	var gotTo []string
+	var gotMsg string
+	e := Email{Host: "h", Port: 587, From: "a@b", To: []string{"ignored@x"},
+		SendMail: func(_ string, _ smtp.Auth, _ string, to []string, msg []byte) error {
+			gotTo, gotMsg = to, string(msg)
+			return nil
+		}}
+	if err := e.Send(context.Background(), []string{"u@x"}, "Hi", "body"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotTo) != 1 || gotTo[0] != "u@x" || !strings.Contains(gotMsg, "Subject: Hi") || !strings.HasSuffix(gotMsg, "body") {
+		t.Errorf("to=%v msg=%q", gotTo, gotMsg)
 	}
 }

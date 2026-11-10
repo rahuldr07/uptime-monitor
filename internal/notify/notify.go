@@ -128,6 +128,9 @@ type Email struct {
 	SendMail func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
 	// TLSConfig overrides the TLS settings, for tests.
 	TLSConfig *tls.Config
+	// RequireTLS refuses to send unless the connection is encrypted: on a
+	// port other than 465 the server must offer STARTTLS.
+	RequireTLS bool
 	// Dial opens the connection. Nil means an unguarded dialer.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
@@ -143,9 +146,14 @@ func (e Email) Notify(ctx context.Context, ev Event) error {
 	} else {
 		subject += "DOWN"
 	}
+	return e.Send(ctx, e.To, subject, ev.Message()+"\r\nAt: "+ev.At.UTC().Format(time.RFC3339)+"\r\n")
+}
+
+// Send delivers one plain-text message to the given recipients.
+func (e Email) Send(ctx context.Context, to []string, subject, body string) error {
 	msg := strings.Join([]string{
 		"From: " + headerValue(e.From),
-		"To: " + headerValue(strings.Join(e.To, ", ")),
+		"To: " + headerValue(strings.Join(to, ", ")),
 		"Subject: " + mime.QEncoding.Encode("utf-8", headerValue(subject)),
 		"Date: " + time.Now().Format(time.RFC1123Z),
 		"Message-ID: " + messageID(e.From),
@@ -153,9 +161,7 @@ func (e Email) Notify(ctx context.Context, ev Event) error {
 		"Content-Type: text/plain; charset=utf-8",
 		"Content-Transfer-Encoding: 8bit",
 		"",
-		ev.Message(),
-		"At: " + ev.At.UTC().Format(time.RFC3339),
-		"",
+		body,
 	}, "\r\n")
 	var auth smtp.Auth
 	if e.Username != "" {
@@ -163,9 +169,9 @@ func (e Email) Notify(ctx context.Context, ev Event) error {
 	}
 	var err error
 	if e.SendMail != nil {
-		err = e.SendMail(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), auth, e.From, e.To, []byte(msg))
+		err = e.SendMail(net.JoinHostPort(e.Host, strconv.Itoa(e.Port)), auth, e.From, to, []byte(msg))
 	} else {
-		err = e.send(ctx, auth, []byte(msg))
+		err = e.send(ctx, auth, to, []byte(msg))
 	}
 	if err != nil {
 		if errors.Is(err, netguard.ErrBlocked) {
@@ -176,7 +182,7 @@ func (e Email) Notify(ctx context.Context, ev Event) error {
 	return nil
 }
 
-func (e Email) send(ctx context.Context, auth smtp.Auth, msg []byte) error {
+func (e Email) send(ctx context.Context, auth smtp.Auth, to []string, msg []byte) error {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, emailTimeout)
@@ -220,6 +226,8 @@ func (e Email) send(ctx context.Context, auth smtp.Auth, msg []byte) error {
 			if err := c.StartTLS(tlsCfg); err != nil {
 				return err
 			}
+		} else if e.RequireTLS {
+			return errors.New("server does not offer STARTTLS")
 		}
 	}
 	if auth != nil {
@@ -233,8 +241,8 @@ func (e Email) send(ctx context.Context, auth smtp.Auth, msg []byte) error {
 	if err := c.Mail(e.From); err != nil {
 		return err
 	}
-	for _, to := range e.To {
-		if err := c.Rcpt(to); err != nil {
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
 			return err
 		}
 	}
@@ -271,10 +279,15 @@ func messageID(from string) string {
 	return "<" + hex.EncodeToString(b[:]) + "@" + domain + ">"
 }
 
-// FromConfig builds the configured notifiers. With none configured it
+// FromConfig builds the configured notifiers. With restricted set (non-operator
+// workspaces) webhooks do not follow redirects and email requires TLS. With none configured it
 // returns a single Log channel so alerts are never silently dropped.
-func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate bool) Multi {
+func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate, restricted bool) Multi {
 	client := netguard.Client(allowPrivate, 15*time.Second)
+	if restricted {
+		// A redirect could carry the request (and its token) elsewhere.
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	var m Multi
 	if t := cfg.Telegram; t != nil && t.BotToken != "" && !t.Disabled {
 		m = append(m, Named{"telegram", Telegram{Token: t.BotToken, ChatID: t.ChatID, Client: client}})
@@ -284,7 +297,7 @@ func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate bool) Multi
 	}
 	if e := cfg.Email; e != nil && e.SMTPHost != "" && !e.Disabled {
 		m = append(m, Named{"email", Email{Host: e.SMTPHost, Port: e.SMTPPort, Username: e.Username,
-			Password: e.Password, From: e.From, To: e.To,
+			Password: e.Password, From: e.From, To: e.To, RequireTLS: restricted,
 			Dial: netguard.Dialer(allowPrivate, 30*time.Second).DialContext}})
 	}
 	if len(m) == 0 {
