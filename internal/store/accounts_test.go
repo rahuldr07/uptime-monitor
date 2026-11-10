@@ -694,8 +694,8 @@ func TestResetPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
-		t.Fatal(err)
+	if u.VerifiedAt != nil {
+		t.Fatal("account should start unverified")
 	}
 	sess, err := s.CreateSession(ctx, u.ID, now)
 	if err != nil {
@@ -715,6 +715,9 @@ func TestResetPassword(t *testing.T) {
 	if err != nil || got.ID != u.ID || got.VerifiedAt == nil {
 		t.Fatalf("ResetPassword = %+v, %v", got, err)
 	}
+	if again, _ := s.UserByID(ctx, u.ID); again.VerifiedAt == nil {
+		t.Error("verified_at not stored")
+	}
 	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "new" {
 		t.Errorf("phc = %q", phc)
 	}
@@ -726,5 +729,28 @@ func TestResetPassword(t *testing.T) {
 	}
 	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "new" {
 		t.Errorf("reused token changed password: %q", phc)
+	}
+}
+
+func TestResetPasswordDisabledUser(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "old", WorkspaceName: "A", Slug: "a", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateToken(ctx, TokenReset, u.ID, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, now.UnixMilli(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResetPassword(ctx, raw, "new", now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("disabled user: %v", err)
+	}
+	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "old" {
+		t.Errorf("password changed: %q", phc)
 	}
 }

@@ -36,24 +36,25 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
 	tok, pw := r.FormValue("token"), r.FormValue("password")
-	if _, err := s.sys.PeekToken(ctx, store.TokenReset, tok, s.now()); errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		s.fail(w, err)
-		return
-	}
 	d := resetData{base: s.page(r, "Reset password · Uptime"), Token: tok}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "reset", d)
 	}
+	// Input checks come first, so a bad form never reaches the token lookup.
 	if err := password.CheckLength(pw); err != nil {
 		fail(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if pw != r.FormValue("confirm") {
 		fail(http.StatusUnprocessableEntity, msgMismatch)
+		return
+	}
+	if _, err := s.sys.PeekToken(ctx, store.TokenReset, tok, s.now()); errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		s.fail(w, err)
 		return
 	}
 	phc, err := s.hasher.Hash(ctx, pw)

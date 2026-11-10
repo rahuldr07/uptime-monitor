@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"uptimemon/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestResolveConfig(t *testing.T) {
@@ -57,5 +60,43 @@ func TestNewSetupLinkAfterSetup(t *testing.T) {
 	st.Close()
 	if _, err := newSetupLink(cfgPath); err == nil || err.Error() != "setup is already complete" {
 		t.Fatalf("after setup: %v", err)
+	}
+}
+
+func TestNewResetLink(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "t.db")
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"db":"`+dbPath+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	for _, e := range []string{"a@b.co", "gone@b.co"} {
+		if _, _, err := st.CreateAccount(ctx, store.AccountInput{Email: e, PasswordHash: "x", WorkspaceName: e, Slug: e[:1] + e[1:2], Now: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	if link, err := newResetLink(cfgPath, " A@B.co "); err != nil || !strings.Contains(link, "/reset?token=") {
+		t.Fatalf("known user: %q %v", link, err)
+	}
+	if _, err := newResetLink(cfgPath, "nobody@b.co"); err == nil || err.Error() != "no such user" {
+		t.Fatalf("unknown: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE users SET disabled_at = ? WHERE email = 'gone@b.co'`, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if _, err := newResetLink(cfgPath, "gone@b.co"); err == nil || err.Error() != "user is disabled" {
+		t.Fatalf("disabled: %v", err)
 	}
 }

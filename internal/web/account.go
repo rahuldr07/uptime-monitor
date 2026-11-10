@@ -3,6 +3,8 @@ package web
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"uptimemon/internal/password"
 )
@@ -11,6 +13,9 @@ const (
 	msgBadCurrent      = "Current password is incorrect."
 	msgPasswordChanged = "Password changed. Other sessions were signed out."
 	msgSignedOutAll    = "Signed out everywhere."
+
+	passwordCheckWindow = 15 * time.Minute
+	passwordCheckMax    = 5
 )
 
 type accountData struct {
@@ -38,14 +43,25 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		return
 	}
 	// An over-long current password cannot match, so it skips the hash.
-	_, phc, err := s.sys.UserByEmail(ctx, a.User.Email)
+	phc, err := s.sys.PasswordHash(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
+		return
+	}
+	// The slot is reserved before the hash and refunded unless the guess was
+	// wrong, so a user's own correct entries never lock them out.
+	key := strconv.FormatInt(a.User.ID, 10)
+	if ok, _ := s.passwordCheck.Take(key); !ok {
+		s.logger.Warn("password check throttled", "event", "password_check_throttled", "user_id", a.User.ID)
+		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
 	ok := false
 	if len(cur) <= 256 {
 		ok, err = s.hasher.Verify(ctx, phc, cur)
+	}
+	if err != nil || ok {
+		s.passwordCheck.Undo(key)
 	}
 	if errors.Is(err, password.ErrBusy) {
 		fail(http.StatusServiceUnavailable, msgBusy)

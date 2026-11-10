@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,6 +32,7 @@ func (e *env) status(t *testing.T, c *http.Client) int {
 func TestChangePassword(t *testing.T) {
 	e := newEnv(t)
 	other := e.signIn(t, opEmail, testSecret)
+	resetTok := e.resetToken(t)
 	resp, body := e.post(t, e.op, "/account/password", url.Values{"current": {"wrong wrong wrong"}, "new": {newSecretPW}, "confirm": {newSecretPW}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Current password is incorrect.") {
 		t.Fatalf("wrong current: %d %s", resp.StatusCode, body)
@@ -48,6 +50,9 @@ func TestChangePassword(t *testing.T) {
 	}
 	if e.status(t, other) != http.StatusUnauthorized {
 		t.Error("other session survived")
+	}
+	if _, err := e.st.PeekToken(context.Background(), store.TokenReset, resetTok, e.clock); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("reset token survived password change: %v", err)
 	}
 	if e.status(t, e.op) != http.StatusOK {
 		t.Error("current session was revoked")
@@ -142,5 +147,35 @@ func TestResetGetNeverConsumes(t *testing.T) {
 	_, body := e.get(t, e.client(t), "/reset?token=bogus")
 	if !strings.Contains(body, "This link is invalid or has expired.") || strings.Contains(body, `name="password"`) {
 		t.Errorf("bogus token page: %s", body)
+	}
+}
+
+func TestChangePasswordCurrentIsRateLimited(t *testing.T) {
+	e := newEnv(t)
+	bad := url.Values{"current": {"wrong wrong wrong"}, "new": {newSecretPW}, "confirm": {newSecretPW}}
+	for i := 1; i <= 5; i++ {
+		if resp, _ := e.post(t, e.op, "/account/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("attempt %d: %d", i, resp.StatusCode)
+		}
+	}
+	resp, body := e.post(t, e.op, "/account/password", bad)
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
+		t.Fatalf("6th: %d %s", resp.StatusCode, body)
+	}
+	// Even the right password is refused while limited.
+	good := url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}}
+	if resp, _ := e.post(t, e.op, "/account/password", good); resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("right password while limited: %d", resp.StatusCode)
+	}
+	// Another user has their own budget, and a correct entry is refunded.
+	c, _ := e.account(t, "other@example.com")
+	if resp, _ := e.post(t, c, "/account/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("other user: %d", resp.StatusCode)
+	}
+	for i := 0; i < 6; i++ {
+		g := url.Values{"current": {testSecret}, "new": {newSecretPW + "x"}, "confirm": {"mismatch mismatch"}}
+		if resp, _ := e.post(t, c, "/account/password", g); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("mismatch %d: %d", i, resp.StatusCode)
+		}
 	}
 }

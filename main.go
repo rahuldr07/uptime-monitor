@@ -282,6 +282,9 @@ func newResetLink(cfgPath, email string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if u.DisabledAt != nil {
+		return "", errors.New("user is disabled")
+	}
 	raw, err := st.CreateToken(ctx, store.TokenReset, u.ID, resetTokenTTL, time.Now())
 	if err != nil {
 		return "", err

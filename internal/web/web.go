@@ -50,6 +50,7 @@ type Server struct {
 	deviceKey     []byte // HMAC key for device cookies, fresh per process
 	statusLimiter *ratelimit.Limiter
 	setupLimiter  *ratelimit.Limiter
+	passwordCheck *ratelimit.Limiter // current-password checks, per user
 	pages         map[string]*template.Template
 	mux           *http.ServeMux
 
@@ -102,6 +103,8 @@ func New(o Options) (*Server, error) {
 	}
 	s.setupLimiter = ratelimit.New(setupWindow, setupMaxAttempts, 0)
 	s.setupLimiter.Now = now
+	s.passwordCheck = ratelimit.New(passwordCheckWindow, passwordCheckMax, 0)
+	s.passwordCheck.Now = now
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
 	s.statusLimiter.Now = now
 	s.statusCache.maxBytes = statusCacheMaxBytes

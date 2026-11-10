@@ -115,6 +115,16 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return u, err
 }
 
+// PasswordHash returns a user's password hash, or ErrNotFound.
+func (s *Store) PasswordHash(ctx context.Context, userID int64) (string, error) {
+	var phc string
+	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, userID).Scan(&phc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return phc, err
+}
+
 // IsUpgradedInstall reports whether this is a pre-accounts database: no users
 // yet, but workspace 1 already holds targets, settings or maintenance.
 func (s *Store) IsUpgradedInstall(ctx context.Context) (bool, error) {
@@ -274,7 +284,7 @@ func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, 
 
 // setPassword replaces a user's password hash, deletes all their sessions
 // except keepSessionHash (empty deletes all), and deletes their unused reset
-// tokens, inside tx.
+// and verify tokens, inside tx.
 func setPassword(ctx context.Context, tx querier, userID int64, phc, keepSessionHash string) error {
 	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, phc, userID)
 	if err != nil {
@@ -286,7 +296,7 @@ func setPassword(ctx context.Context, tx querier, userID int64, phc, keepSession
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepSessionHash); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind = 'reset' AND used_at IS NULL`, userID)
+	_, err = tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind IN ('reset', 'verify') AND used_at IS NULL`, userID)
 	return err
 }
 
