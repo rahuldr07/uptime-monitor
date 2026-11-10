@@ -834,6 +834,55 @@ func TestReloadProbesAtOnceWhenProbeConfigChanged(t *testing.T) {
 	waitFor(t, "probe after URL edit", func() bool { return count() == 3 })
 }
 
+// A second Reload that cancels the probe an edit triggered must not lose the
+// pending probe: the new runner still probes at once.
+func TestReprobeSurvivesCancelledProbe(t *testing.T) {
+	f := setup(t, 1)
+	var block atomic.Bool
+	entered := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if block.Swap(false) {
+			entered <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ws := f.st.Workspace(1)
+	cur, _ := f.st.TargetByID(ctx, f.target.ID)
+	cur.URL = srv.URL
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	waitFor(t, "first probe", func() bool { return count() == 1 })
+	block.Store(true)
+	cur.Keyword = ""
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-entered // the edit's probe is in flight
+	if err := ws.SetMuted(ctx, f.target.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after the second reload", func() bool { return count() == 2 })
+}
+
 func TestRemoveWorkspaceWaitsOnlyForItsOwnAlerts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 	defer srv.Close()

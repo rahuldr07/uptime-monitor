@@ -537,7 +537,6 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	// still fresh, unless the edit changed what is probed.
 	m.mu.Lock()
 	fresh := st.Last != nil && m.now().Sub(st.Last.CheckedAt) < interval && !st.reprobe
-	st.reprobe = false
 	m.mu.Unlock()
 	if !fresh {
 		m.CheckNow(ctx, id)
@@ -617,6 +616,12 @@ func (m *Monitor) checkClaimed(ctx context.Context, id int64, st *state) {
 	}
 	if err := m.store.InsertCheck(sctx, c); err != nil {
 		m.logger.Error("store check", "target", t.Name, "err", err)
+	} else {
+		// A probe of the current config is recorded; only now is the edit's
+		// pending probe done. A cancelled probe leaves the flag set.
+		m.mu.Lock()
+		st.reprobe = false
+		m.mu.Unlock()
 	}
 	m.apply(sctx, id, c)
 }

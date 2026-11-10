@@ -81,7 +81,7 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
 - **Plain HTTP.** With an https `base_url` the session cookie is `__Host-`
   and Secure, so signing in over plain HTTP (for example
   `http://<lan-ip>:8080`) silently fails. Use the https address.
-- **Links.** `base_url` is the external URL used in the setup and reset links.
+- **Links.** `base_url` is the external URL used in the setup, reset and invite links.
   Without it the links are built from `listen`.
 
 Rate limits are kept in memory, so they reset on restart; run one server
@@ -153,7 +153,8 @@ Fixed limits (in memory, reset on restart; all but the last row are for non-oper
 An edit, pause/resume or mute/unmute restarts the monitor. It probes straight
 away if the edit changed the URL, timeout, expected status or keyword. Otherwise
 it waits when the last check is still fresh (younger than its interval).
-When a limit is hit the response is a 429 with a `Retry-After` header.
+When a per-workspace limit is hit the response is a 429 with a `Retry-After`
+header. Sign-up throttling also returns 429, but without that header.
 
 ### Alert channels in other workspaces
 
@@ -171,11 +172,11 @@ it again.
 ### Deleting an account
 
 `/account` lets a user delete their account after confirming their password.
-Operators don't see the form; the server itself refuses only the last operator.
+Operators don't see the form; the server itself refuses the last operator.
 The user, their sessions and the workspace they alone belong to (monitors,
 checks, incidents, alert settings and status page) are removed, and its
-monitors stop; alerts already being delivered may still arrive. The last
-operator cannot delete their account, and workspace 1 is never deleted.
+monitors stop; alerts already being delivered may still arrive. Workspace 1 is
+never deleted.
 
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
 delete those files.
@@ -278,7 +279,7 @@ From a release before the production hardening:
 | `db` | `uptime.db` | SQLite file |
 | `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
-| `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup and reset links; an https value makes session cookies always Secure |
+| `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup, reset and invite links; an https value makes session cookies always Secure |
 | `signup` | `closed` | `closed` or `invite`; see Sign-up and invites. `open` and the `mail` key are rejected until a later release |
 | `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
@@ -352,7 +353,7 @@ deploy/               hardened systemd unit
    the server directly. Configure HSTS at the proxy if
    you want it.
 2. Set `base_url` to your https address (e.g. `"base_url": "https://status.example.com"`)
-   so session cookies are always Secure and the setup and reset links are
+   so session cookies are always Secure and the setup, reset and invite links are
    correct. The server warns at startup when `trust_proxy` is set without an
    https `base_url`.
 3. Back up the database on a schedule, e.g. daily from cron:
