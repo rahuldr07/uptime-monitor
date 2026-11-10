@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	maxRunning = 4
-	maxWaiters = 64
-	saltLen    = 16
-	keyLen     = 32
-	minRunes   = 10
-	maxBytes   = 256
+	defaultMemory = 19456 // KiB
+	maxRunning    = 4
+	maxWaiters    = 64
+	saltLen       = 16
+	keyLen        = 32
+	minRunes      = 10
+	maxBytes      = 256
 )
 
 var (
@@ -46,7 +47,7 @@ type Params struct {
 }
 
 // DefaultParams is the OWASP-recommended argon2id minimum (19 MiB, t=2, p=1).
-var DefaultParams = Params{Memory: 19456, Time: 2, Threads: 1}
+var DefaultParams = Params{Memory: defaultMemory, Time: 2, Threads: 1}
 
 // Hasher hashes and verifies passwords under a concurrency bound.
 type Hasher struct {
@@ -59,7 +60,13 @@ type Hasher struct {
 }
 
 // New returns a Hasher using p for new hashes.
+// It panics if p is outside what Verify accepts, since such hashes could never
+// be verified and VerifyDummy would no longer cost a real hash.
 func New(p Params) *Hasher {
+	if p.Memory == 0 || p.Memory > maxStoredMemory || p.Time == 0 || p.Time > maxStoredTime ||
+		p.Threads == 0 || p.Threads > maxStoredThreads {
+		panic("password: params exceed verify limits")
+	}
 	h := &Hasher{
 		params: p,
 		sem:    make(chan struct{}, maxRunning),
@@ -129,7 +136,7 @@ func (h *Hasher) Hash(ctx context.Context, pw string) (string, error) {
 // request a huge allocation or run for ages. Raise them together with
 // DefaultParams.
 const (
-	maxStoredMemory  = 4 * 19456 // KiB; 4 * DefaultParams.Memory
+	maxStoredMemory  = 4 * defaultMemory // KiB
 	maxStoredTime    = 10
 	maxStoredThreads = 4
 )

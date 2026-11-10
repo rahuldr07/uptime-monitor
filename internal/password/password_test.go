@@ -84,33 +84,67 @@ func TestLengthGuard(t *testing.T) {
 	}
 }
 
+func TestNewRejectsOutOfRangeParams(t *testing.T) {
+	New(DefaultParams) // must not panic
+	for _, p := range []Params{
+		{Memory: maxStoredMemory + 1, Time: 1, Threads: 1},
+		{Memory: 64, Time: maxStoredTime + 1, Threads: 1},
+		{Memory: 64, Time: 1, Threads: maxStoredThreads + 1},
+		{Memory: 0, Time: 1, Threads: 1},
+		{Memory: 64, Time: 0, Threads: 1},
+		{Memory: 64, Time: 1, Threads: 0},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("New(%+v) did not panic", p)
+				}
+			}()
+			New(p)
+		}()
+	}
+}
+
+type hashCall struct {
+	time, memory uint32
+	threads      uint8
+	keyLen       uint32
+}
+
 func TestVerifyDummy(t *testing.T) {
-	h := New(Params{Memory: 4096, Time: 2, Threads: 1})
-	phc, _ := h.Hash(context.Background(), "pw")
-	s := time.Now()
+	h := New(fast)
+	phc, err := h.Hash(context.Background(), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []hashCall
+	real := h.hashFn
+	h.hashFn = func(pw, salt []byte, tm, memory uint32, threads uint8, kl uint32) []byte {
+		calls = append(calls, hashCall{tm, memory, threads, kl})
+		return real(pw, salt, tm, memory, threads, kl)
+	}
 	if _, err := h.Verify(context.Background(), phc, "pw"); err != nil {
 		t.Fatal(err)
 	}
-	vd := time.Since(s)
-	s = time.Now()
 	if err := h.VerifyDummy(context.Background()); err != nil {
 		t.Fatalf("VerifyDummy = %v", err)
 	}
-	if dd := time.Since(s); dd < vd/4 || dd > vd*4 {
-		t.Errorf("VerifyDummy took %v, Verify %v", dd, vd)
+	if len(calls) != 2 || calls[0] != calls[1] {
+		t.Fatalf("hash calls = %+v, want two identical", calls)
 	}
 
 	// Saturated: returns ErrBusy like Verify would.
 	h.wait = 20 * time.Millisecond
 	started := make(chan struct{}, 4)
 	release := make(chan struct{})
-	h.hashFn = func(pw, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	h.hashFn = func(pw, salt []byte, tm, memory uint32, threads uint8, kl uint32) []byte {
 		started <- struct{}{}
 		<-release
-		return make([]byte, keyLen)
+		return make([]byte, kl)
 	}
+	done := make(chan error, 4)
 	for i := 0; i < 4; i++ {
-		go h.Hash(context.Background(), "pw")
+		go func() { _, err := h.Hash(context.Background(), "pw"); done <- err }()
 	}
 	for i := 0; i < 4; i++ {
 		<-started
@@ -119,6 +153,11 @@ func TestVerifyDummy(t *testing.T) {
 		t.Errorf("saturated VerifyDummy = %v, want ErrBusy", err)
 	}
 	close(release)
+	for i := 0; i < 4; i++ {
+		if err := <-done; err != nil {
+			t.Errorf("running hash err = %v", err)
+		}
+	}
 }
 
 func TestCheckLength(t *testing.T) {
