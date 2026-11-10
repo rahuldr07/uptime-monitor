@@ -644,3 +644,44 @@ func TestSessionTouchThrottle(t *testing.T) {
 		t.Fatalf("not touched: %d %v", ss, us)
 	}
 }
+
+func TestCompleteSetupConcurrentTokenAndPassword(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if _, err := s.Workspace(1).CreateTarget(ctx, Target{Name: "A", URL: "https://a", Interval: time.Minute, Timeout: time.Second}, now); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateToken(ctx, TokenSetup, 0, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := []SetupInput{
+		{Email: "a@example.com", PasswordHash: "phc", WorkspaceName: "W", SetupToken: raw, Now: now},
+		{Email: "b@example.com", PasswordHash: "phc", WorkspaceName: "W", PasswordUnlocked: true, Now: now},
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range ins {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errs[i] = s.CompleteSetup(ctx, ins[i])
+		}()
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for _, err := range errs {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrSetupDone) {
+			t.Fatal(err)
+		}
+	}
+	if n, _ := s.CountUsers(ctx); n != 1 || ok != 1 {
+		t.Fatalf("users = %d, successes = %d, errs = %v", n, ok, errs)
+	}
+}

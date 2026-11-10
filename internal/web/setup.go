@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -81,12 +82,12 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
 	key := clientKey(r, s.cfg.ProxyHops())
-	if ok, _ := s.setupLimiter.Allow(key); !ok {
+	ok, _ := s.setupLimiter.Take(key)
+	if !ok {
 		s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", key, "result", "rate_limited")
 		http.Error(w, msgTooMany, http.StatusTooManyRequests)
 		return
 	}
-	s.setupLimiter.Hit(key)
 	s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", key)
 
 	tok := r.FormValue("token")
@@ -106,6 +107,9 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 		d.Error = msgWorkspaceLen
 	}
 	if d.Error != "" {
+		if !d.Form() {
+			d.Hint = msgSetupLink
+		}
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "setup", d)
 		return
 	}
@@ -151,12 +155,14 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setupMode.Store(false)
+	// Seeding and the session must survive a client that disconnects now.
+	ctx = context.WithoutCancel(ctx)
 	if s.afterSetup != nil {
 		if err := s.afterSetup(ctx); err != nil {
 			s.logger.Error("setup: seeding failed", "err", err)
 		}
 	}
-	s.logger.Warn("setup complete", "event", "setup_complete", "ip", key, "user", u.ID)
+	s.logger.Warn("setup complete", "event", "setup_complete", "ip", key, "user_id", u.ID)
 	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)

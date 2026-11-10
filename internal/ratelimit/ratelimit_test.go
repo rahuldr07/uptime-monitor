@@ -119,3 +119,49 @@ func TestDefaultMaxKeys(t *testing.T) {
 		t.Fatalf("maxKeys = %d, want %d", l.maxKeys, DefaultMaxKeys)
 	}
 }
+
+func TestTake(t *testing.T) {
+	l, now := newTest(time.Minute, 2, 0)
+	for i := 0; i < 2; i++ {
+		if ok, _ := l.Take("a"); !ok {
+			t.Fatalf("take %d denied", i)
+		}
+	}
+	if ok, ra := l.Take("a"); ok || ra != time.Minute {
+		t.Fatalf("third take: ok=%v retryAfter=%v", ok, ra)
+	}
+	if ok, _ := l.Take("b"); !ok {
+		t.Fatal("other key must be allowed")
+	}
+	*now = time.Unix(61, 0)
+	if ok, _ := l.Take("a"); !ok {
+		t.Fatal("window passed, take must succeed")
+	}
+	// A denied take records nothing: one slot frees when the oldest leaves.
+	*now = time.Unix(122, 0)
+	if ok, _ := l.Take("a"); !ok {
+		t.Fatal("denied takes must not extend the block")
+	}
+}
+
+func TestTakeConcurrent(t *testing.T) {
+	l := New(time.Minute, 5, 0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	n := 0
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, _ := l.Take("k"); ok {
+				mu.Lock()
+				n++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if n != 5 {
+		t.Fatalf("%d takes succeeded, want 5", n)
+	}
+}

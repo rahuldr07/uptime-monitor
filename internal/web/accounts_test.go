@@ -241,16 +241,22 @@ func TestSetupValidation(t *testing.T) {
 }
 
 func TestSetupConcurrent(t *testing.T) {
-	e := newSetupEnv(t, false, "")
-	toks := []string{e.setupToken(t), e.setupToken(t)}
+	// Both credentials are valid, so only the in-transaction user check
+	// decides the winner.
+	e := newSetupEnv(t, true, setupAdminPW)
+	forms := []url.Values{
+		setupForm(url.Values{"token": {e.setupToken(t)}, "email": {"a@example.com"}}),
+		setupForm(url.Values{"admin_password": {setupAdminPW}, "email": {"b@example.com"}}),
+	}
 	codes := make([]int, 2)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := range toks {
+	for i := range forms {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := e.client(t).PostForm(e.ts.URL+"/setup", setupForm(url.Values{
-				"token": {toks[i]}, "email": {"u" + string(rune('a'+i)) + "@example.com"}}))
+			<-start
+			resp, err := e.client(t).PostForm(e.ts.URL+"/setup", forms[i])
 			if err != nil {
 				t.Error(err)
 				return
@@ -259,8 +265,48 @@ func TestSetupConcurrent(t *testing.T) {
 			codes[i] = resp.StatusCode
 		}()
 	}
+	close(start)
 	wg.Wait()
+	if !(codes[0] == 303 && codes[1] == 404 || codes[0] == 404 && codes[1] == 303) {
+		t.Fatalf("codes = %v, want one 303 and one 404", codes)
+	}
 	if n := e.userCount(t); n != 1 {
-		t.Fatalf("users = %d, codes %v", n, codes)
+		t.Fatalf("users = %d", n)
+	}
+}
+
+func TestSetupLimiterCountsSuccessAndSharesPaths(t *testing.T) {
+	e := newSetupEnv(t, true, setupAdminPW)
+	// Attempts 1-4 mix the token and password paths and fail; attempt 5
+	// succeeds. All five share one budget.
+	attempts := []url.Values{
+		setupForm(url.Values{"token": {"bogus"}}),
+		setupForm(url.Values{"admin_password": {"wrong"}}),
+		setupForm(url.Values{"token": {"bogus2"}}),
+		setupForm(url.Values{"admin_password": {"wrong2"}}),
+		setupForm(url.Values{"admin_password": {setupAdminPW}}),
+	}
+	for i, f := range attempts {
+		resp, _ := e.post(t, e.client(t), "/setup", f)
+		want := http.StatusNotFound
+		if i == 4 {
+			want = http.StatusSeeOther
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("attempt %d: %d, want %d", i+1, resp.StatusCode, want)
+		}
+	}
+	// Setup mode is off now, so /setup is a 404; the budget is what counts:
+	// the successful attempt used the fifth slot.
+	if ok, _ := e.srv.setupLimiter.Take("127.0.0.1"); ok {
+		t.Fatal("the successful POST did not count toward the limit")
+	}
+}
+
+func TestSetupValidationWithoutCredentialHasHint(t *testing.T) {
+	e := newSetupEnv(t, false, "")
+	resp, body := e.post(t, e.client(t), "/setup", setupForm(url.Values{"confirm": {"different password"}}))
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Open the setup link printed in the server log.") {
+		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
 }

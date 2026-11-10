@@ -89,11 +89,34 @@ func (l *Limiter) Allow(key string) (ok bool, retryAfter time.Duration) {
 	return false, e.times[0].Add(l.window).Sub(now)
 }
 
+// Take checks and records in one step: when key has fewer than max events in
+// the window it records one and returns true; otherwise it returns false with
+// the time until the oldest counted event leaves the window, recording nothing.
+func (l *Limiter) Take(key string) (ok bool, retryAfter time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if el, found := l.keys[key]; found {
+		e := el.Value.(*entry)
+		l.prune(e, now)
+		if len(e.times) >= l.max {
+			l.order.MoveToFront(el)
+			return false, e.times[0].Add(l.window).Sub(now)
+		}
+	}
+	l.record(key, now)
+	return true, 0
+}
+
 // Hit records one event for key at the current time.
 func (l *Limiter) Hit(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := l.now()
+	l.record(key, l.now())
+}
+
+// record appends an event for key; caller holds mu.
+func (l *Limiter) record(key string, now time.Time) {
 	el, found := l.keys[key]
 	if found {
 		l.order.MoveToFront(el)
