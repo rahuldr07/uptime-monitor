@@ -42,10 +42,10 @@ func (s *Server) notifyConfig(ctx context.Context) config.Notify {
 }
 
 func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request) {
-	s.renderAlerts(w, r, s.notifyConfig(r.Context()), "")
+	s.renderAlerts(w, r, http.StatusOK, s.notifyConfig(r.Context()), "")
 }
 
-func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, n config.Notify, errMsg string) {
+func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, code int, n config.Notify, errMsg string) {
 	d := alertsData{base: s.base(r, "alerts", "Alert channels"), Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold,
 		Saved: map[string]bool{}, Stored: map[string]bool{}}
 	d.Error = errMsg
@@ -77,7 +77,7 @@ func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, n config.N
 		d.Has[nn.Name] = true
 	}
 	d.Last, _ = s.store.LastAlerts(r.Context())
-	s.render(w, r, "alerts", d)
+	s.renderStatus(w, r, code, "alerts", d)
 }
 
 // parseNotifyForm builds notify settings from the alerts form. Secret
@@ -132,8 +132,7 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request) (config.Notify, bool) {
 	n := parseNotifyForm(r, s.notifyConfig(r.Context()))
 	if err := config.ValidateNotify(&n); err != nil {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.renderAlerts(w, r, n, err.Error())
+		s.renderAlerts(w, r, http.StatusUnprocessableEntity, n, err.Error())
 		return n, false
 	}
 	raw, _ := json.Marshal(n)
@@ -164,7 +163,7 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	if err := s.mon.SendTest(ctx, ch); err != nil {
 		s.logger.Warn("test alert failed", "channel", ch, "err", err)
 		w.WriteHeader(http.StatusBadGateway)
-		s.renderAlerts(w, r, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
+		s.renderAlerts(w, r, http.StatusOK, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
 		return
 	}
 	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")

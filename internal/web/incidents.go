@@ -35,26 +35,8 @@ func (s *Server) incidentsPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "incidents", d)
 }
 
-func (s *Server) loadIncident(w http.ResponseWriter, r *http.Request) (store.Incident, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return store.Incident{}, false
-	}
-	in, err := s.store.GetIncident(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return store.Incident{}, false
-	}
-	if err != nil {
-		s.fail(w, err)
-		return store.Incident{}, false
-	}
-	return in, true
-}
-
 func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
-	in, ok := s.loadIncident(w, r)
+	in, ok := loadByID(s, w, r, s.store.GetIncident)
 	if !ok {
 		return
 	}
@@ -70,7 +52,7 @@ func (s *Server) incidentAck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) incidentNote(w http.ResponseWriter, r *http.Request) {
-	in, ok := s.loadIncident(w, r)
+	in, ok := loadByID(s, w, r, s.store.GetIncident)
 	if !ok {
 		return
 	}

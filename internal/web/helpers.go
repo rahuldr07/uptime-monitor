@@ -2,17 +2,22 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"uptimemon/internal/store"
 )
 
 // ---- helpers ----
@@ -21,12 +26,41 @@ import (
 // The page is rendered into a buffer first so a template error becomes a
 // clean 500 instead of a half-written page.
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, data any) {
+	s.renderStatus(w, r, http.StatusOK, page, data)
+}
+
+// renderStatus is render with an explicit status code. The body is built
+// first, so a template error is a 500 rather than a 4xx with a broken page.
+func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, code int, page string, data any) {
 	b, err := s.renderBytes(r, page, data)
 	if err != nil {
 		s.fail(w, fmt.Errorf("render %s: %w", page, err))
 		return
 	}
-	writeHTML(w, b)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	w.Write(b)
+}
+
+// loadByID parses the {id} path value and loads it with get. A bad id or
+// store.ErrNotFound is a 404, any other error a 500; both report false.
+func loadByID[T any](s *Server, w http.ResponseWriter, r *http.Request, get func(context.Context, int64) (T, error)) (T, bool) {
+	var zero T
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return zero, false
+	}
+	v, err := get(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return zero, false
+	}
+	if err != nil {
+		s.fail(w, err)
+		return zero, false
+	}
+	return v, true
 }
 
 func (s *Server) renderBytes(r *http.Request, page string, data any) ([]byte, error) {

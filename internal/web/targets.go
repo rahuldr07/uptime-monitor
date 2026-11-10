@@ -1,7 +1,6 @@
 package web
 
 import (
-	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -178,8 +177,7 @@ func (s *Server) targetCreate(w http.ResponseWriter, r *http.Request) {
 		d := monitorsData{base: s.base(r, "monitors", "Monitors")}
 		d.Error = err.Error()
 		d.Rows, _ = s.views(r.Context(), viewOpts{})
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, r, "monitors", d)
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "monitors", d)
 		return
 	}
 	if err := s.mon.Reload(r.Context(), t); err != nil {
@@ -285,21 +283,11 @@ func (s *Server) targetData(r *http.Request, t store.Target, st monitor.State) (
 }
 
 func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request) (store.Target, monitor.State, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
+	t, ok := loadByID(s, w, r, s.store.GetTarget)
+	if !ok {
 		return store.Target{}, monitor.State{}, false
 	}
-	t, err := s.store.GetTarget(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return store.Target{}, monitor.State{}, false
-	}
-	if err != nil {
-		s.fail(w, err)
-		return store.Target{}, monitor.State{}, false
-	}
-	st, ok := s.mon.Get(id)
+	st, ok := s.mon.Get(t.ID)
 	if !ok {
 		st = monitor.State{Target: t}
 	}
@@ -341,8 +329,7 @@ func (s *Server) targetUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.Form, d.Error = f, err.Error()
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, r, "target", d)
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "target", d)
 		return
 	}
 	if err := s.mon.Reload(r.Context(), nt); err != nil {

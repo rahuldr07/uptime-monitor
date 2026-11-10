@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -655,5 +656,39 @@ func TestMaintenanceWindows(t *testing.T) {
 func TestNewRequiresDependencies(t *testing.T) {
 	if _, err := New(Options{}); err == nil {
 		t.Fatal("New must reject missing Config, Store and Monitor")
+	}
+}
+
+func TestLoadByID(t *testing.T) {
+	e := newEnv(t, "")
+	s, _ := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon})
+	boom := errors.New("boom")
+	get := func(_ context.Context, id int64) (string, error) {
+		switch id {
+		case 1:
+			return "one", nil
+		case 2:
+			return "", boom
+		}
+		return "", store.ErrNotFound
+	}
+	for _, tc := range []struct {
+		id   string
+		code int
+		want string
+		ok   bool
+	}{
+		{"1", 200, "one", true}, {"abc", 404, "", false}, {"7", 404, "", false}, {"2", 500, "", false},
+	} {
+		r := httptest.NewRequest("GET", "/x/"+tc.id, nil)
+		r.SetPathValue("id", tc.id)
+		w := httptest.NewRecorder()
+		got, ok := loadByID(s, w, r, get)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("id %q: got (%q, %v), want (%q, %v)", tc.id, got, ok, tc.want, tc.ok)
+		}
+		if !tc.ok && w.Code != tc.code {
+			t.Errorf("id %q: status %d, want %d", tc.id, w.Code, tc.code)
+		}
 	}
 }

@@ -62,8 +62,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	key := clientKey(r, s.cfg.ProxyHops())
 	if ok, _ := s.limiter.Allow(key); !ok {
 		d.Error = "Too many failed attempts. Wait a minute and try again."
-		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, r, "login", d)
+		s.renderStatus(w, r, http.StatusTooManyRequests, "login", d)
 		return
 	}
 	if passwordEqual(r.FormValue("password"), s.cfg.AdminPassword) {
@@ -73,8 +72,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.limiter.Hit(key)
 	d.Error = "Wrong password."
-	w.WriteHeader(http.StatusUnauthorized)
-	s.render(w, r, "login", d)
+	s.renderStatus(w, r, http.StatusUnauthorized, "login", d)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

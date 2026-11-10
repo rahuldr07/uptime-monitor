@@ -123,8 +123,7 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.Error = err.Error()
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, r, "maintenance", d)
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "maintenance", d)
 		return
 	}
 	s.mon.Events.Publish(monitor.Event{Kind: "maintenance"})
@@ -136,27 +135,9 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/maintenance", msg)
 }
 
-func (s *Server) loadMaintenance(w http.ResponseWriter, r *http.Request) (store.Maintenance, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return store.Maintenance{}, false
-	}
-	m, err := s.store.GetMaintenance(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return store.Maintenance{}, false
-	}
-	if err != nil {
-		s.fail(w, err)
-		return store.Maintenance{}, false
-	}
-	return m, true
-}
-
 // maintenanceEnd closes an active window now so alerting resumes at once.
 func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
-	m, ok := s.loadMaintenance(w, r)
+	m, ok := loadByID(s, w, r, s.store.GetMaintenance)
 	if !ok {
 		return
 	}
@@ -170,7 +151,7 @@ func (s *Server) maintenanceEnd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) maintenanceDelete(w http.ResponseWriter, r *http.Request) {
-	m, ok := s.loadMaintenance(w, r)
+	m, ok := loadByID(s, w, r, s.store.GetMaintenance)
 	if !ok {
 		return
 	}
