@@ -979,3 +979,55 @@ func TestSetupGate(t *testing.T) {
 		}
 	}
 }
+
+func TestOversizedPasswordFailsLikeAnyOther(t *testing.T) {
+	e := newEnv(t)
+	long := strings.Repeat("x", 300)
+	var bodies []string
+	for _, email := range []string{opEmail, "nobody@example.com"} {
+		resp, body := e.post(t, e.client(t), "/login", url.Values{"email": {email}, "password": {long}})
+		if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, msgBadLogin) {
+			t.Fatalf("%s: %d", email, resp.StatusCode)
+		}
+		bodies = append(bodies, strings.ReplaceAll(body, email, ""))
+	}
+	if bodies[0] != bodies[1] {
+		t.Fatal("responses differ between known and unknown emails")
+	}
+	// Both attempts counted: three more failures reach the limit of five.
+	var last int
+	for i := 0; i < 4; i++ {
+		resp, _ := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {"x"}})
+		last = resp.StatusCode
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("oversized attempts must count toward the limiter, got %d", last)
+	}
+}
+
+func TestPlainCookieIgnoredOverHTTPS(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	raw, err := e.st.CreateSession(context.Background(), 1, e.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/api/status", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("planted plain cookie over HTTPS: %d, want 401", resp.StatusCode)
+	}
+	req.Header.Del("Cookie")
+	req.AddCookie(&http.Cookie{Name: hostSessionCookie, Value: raw})
+	resp, _ = http.DefaultClient.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("__Host- cookie: %d, want 200", resp.StatusCode)
+	}
+}

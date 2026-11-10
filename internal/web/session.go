@@ -17,11 +17,10 @@ const (
 
 // authCtx is the identity a signed-in request runs as.
 type authCtx struct {
-	User        store.User
-	WS          *store.WS
-	Workspace   store.Workspace
-	IsOperator  bool
-	sessionHash string
+	User       store.User
+	WS         *store.WS
+	Workspace  store.Workspace
+	IsOperator bool
 }
 
 type authKey struct{}
@@ -43,13 +42,12 @@ func (s *Server) cookieName(r *http.Request) string {
 	return sessionCookie
 }
 
-// sessionToken returns the raw session token the request carries, under
-// either cookie name.
-func sessionToken(r *http.Request) string {
-	for _, name := range []string{hostSessionCookie, sessionCookie} {
-		if c, err := r.Cookie(name); err == nil && c.Value != "" {
-			return c.Value
-		}
+// sessionToken returns the raw session token under the one cookie name this
+// request may use. Over HTTPS only the __Host- cookie counts, so a plain
+// cookie planted from a sibling subdomain is ignored.
+func (s *Server) sessionToken(r *http.Request) string {
+	if c, err := r.Cookie(s.cookieName(r)); err == nil {
+		return c.Value
 	}
 	return ""
 }
@@ -65,7 +63,7 @@ func (s *Server) currentAuth(r *http.Request) (*authCtx, bool) {
 }
 
 func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
-	raw := sessionToken(r)
+	raw := s.sessionToken(r)
 	if raw == "" {
 		return nil, false
 	}
@@ -74,7 +72,7 @@ func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
 		return nil, false
 	}
 	return &authCtx{User: au.User, WS: au.WS, Workspace: au.Workspace,
-		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash}, true
+		IsOperator: au.User.IsOperator}, true
 }
 
 // withAuthCache installs the per-request cache that currentAuth fills.

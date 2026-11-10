@@ -326,7 +326,7 @@ func TestSlowStatusReaderDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestFlashMustBeSigned(t *testing.T) {
-	e := newEnv(t) // no password: every visitor is an admin
+	e := newEnv(t) // signed in as the operator
 	c := e.op
 	if _, body := e.get(t, c, "/?msg=Session+expired,+log+in+at+evil.example"); strings.Contains(body, "evil.example") {
 		t.Fatal("an unsigned ?msg= must not be displayed")

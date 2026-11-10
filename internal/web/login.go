@@ -73,6 +73,13 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
+	// Over-long passwords fail like any other wrong one, before any lookup,
+	// so they cannot tell known addresses from unknown ones.
+	if len(r.FormValue("password")) > 256 {
+		s.limiter.Hit(key)
+		fail(http.StatusUnauthorized, msgBadLogin)
+		return
+	}
 	ctx := r.Context()
 	// An invalid address follows the same path as an unknown one, so the
 	// response and its timing do not reveal which addresses have accounts.
@@ -116,7 +123,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A new session replaces whichever one the browser presented.
-	if old := sessionToken(r); old != "" {
+	if old := s.sessionToken(r); old != "" {
 		if err := s.sys.DeleteSession(ctx, old); err != nil {
 			s.logger.Warn("sign-in: cannot delete previous session", "err", err)
 		}
@@ -131,7 +138,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, a *authCtx) {
-	if raw := sessionToken(r); raw != "" {
+	if raw := s.sessionToken(r); raw != "" {
 		if err := s.sys.DeleteSession(r.Context(), raw); err != nil {
 			s.logger.Warn("sign-out: cannot delete session", "err", err)
 		}

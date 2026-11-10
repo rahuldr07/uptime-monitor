@@ -154,7 +154,7 @@ func New(o Options) (*Server, error) {
 }
 
 // Handler returns the root handler.
-func (s *Server) Handler() http.Handler { return s.setupGate(s.securityHeaders(withAuthCache(s.mux))) }
+func (s *Server) Handler() http.Handler { return s.securityHeaders(s.setupGate(withAuthCache(s.mux))) }
 
 // healthz reports ok only when the database answers, so an orchestrator
 // restarts the process if storage is wedged.
