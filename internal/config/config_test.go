@@ -123,7 +123,6 @@ func TestAccountsConfigKeys(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"signup open", `{"signup":"open"}`, "not supported yet"},
 		{"mail", `{"mail":{}}`, "mail is not supported yet"},
-		{"limits", `{"limits":{}}`, "limits is not supported yet"},
 		{"path", `{"base_url":"https://x/y"}`, "base_url must be"},
 		{"scheme", `{"base_url":"ftp://x"}`, "base_url must be"},
 		{"relative", `{"base_url":"status.example.com"}`, "base_url must be"},
@@ -168,6 +167,81 @@ func TestAccountsConfigKeys(t *testing.T) {
 		}
 		if got := c.LinkBase(); got != want || c.HTTPSBase() {
 			t.Errorf("LinkBase(%q) = %q, want %q", listen, got, want)
+		}
+	}
+}
+
+func TestSignupModes(t *testing.T) {
+	if _, err := Parse([]byte(`{"signup":"invite","base_url":"https://status.example.com"}`)); err != nil {
+		t.Errorf("invite: %v", err)
+	}
+	for _, mode := range []string{"open", "bogus"} {
+		_, err := Parse([]byte(`{"signup":"` + mode + `","base_url":"https://status.example.com"}`))
+		if err == nil || !strings.Contains(err.Error(), `signup "`+mode+`" is not supported yet`) {
+			t.Errorf("%s: err = %v, want not supported yet", mode, err)
+		}
+	}
+}
+
+func TestLimitsDefaults(t *testing.T) {
+	c, err := Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Limits
+	if l.MaxMonitors == nil || *l.MaxMonitors != 20 || l.MaxWorkspaces == nil || *l.MaxWorkspaces != 0 ||
+		l.SignupsPerHour == nil || *l.SignupsPerHour != 100 || l.HostRequestsPerSecond == nil || *l.HostRequestsPerSecond != 1 ||
+		l.MailPerHour == nil || *l.MailPerHour != 500 || l.MinInterval.Duration != 30*time.Second {
+		t.Errorf("defaults = %+v", l)
+	}
+	c, err = Parse([]byte(`{"limits":{"max_monitors":0,"min_interval":"1m","max_workspaces":5,"signups_per_hour":7,"host_requests_per_second":0.5}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l = c.Limits
+	if *l.MaxMonitors != 0 || l.MinInterval.Duration != time.Minute || *l.MaxWorkspaces != 5 || *l.SignupsPerHour != 7 || *l.HostRequestsPerSecond != 0.5 {
+		t.Errorf("explicit = %+v", l)
+	}
+}
+
+func TestLimitsValidation(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"max_monitors", `{"limits":{"max_monitors":-1}}`, "limits.max_monitors"},
+		{"max_workspaces", `{"limits":{"max_workspaces":-1}}`, "limits.max_workspaces"},
+		{"signups_per_hour", `{"limits":{"signups_per_hour":-1}}`, "limits.signups_per_hour"},
+		{"host_requests_per_second", `{"limits":{"host_requests_per_second":-1}}`, "limits.host_requests_per_second"},
+		{"min_interval", `{"limits":{"min_interval":"500ms"}}`, "limits.min_interval"},
+		{"mail_per_hour", `{"limits":{"mail_per_hour":10}}`, "limits.mail_per_hour is not supported yet"},
+		{"mail_per_hour zero", `{"limits":{"mail_per_hour":0}}`, "limits.mail_per_hour is not supported yet"},
+	} {
+		if _, err := Parse([]byte(tc.in)); err == nil || !strings.Contains(err.Error(), "config: ") || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want containing %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestSignupNeedsBaseURL(t *testing.T) {
+	for _, tc := range []struct {
+		base string
+		ok   bool
+	}{
+		{"", false},
+		{"http://status.example.com", false},
+		{"http://localhost:8080", true},
+		{"http://127.0.0.1:8080", true},
+		{"http://[::1]:8080", true},
+		{"https://status.example.com", true},
+	} {
+		in := `{"signup":"invite"`
+		if tc.base != "" {
+			in += `,"base_url":"` + tc.base + `"`
+		}
+		_, err := Parse([]byte(in + `}`))
+		if tc.ok && err != nil {
+			t.Errorf("%q: %v", tc.base, err)
+		}
+		if !tc.ok && (err == nil || !strings.Contains(err.Error(), "config: ")) {
+			t.Errorf("%q: err = %v, want config error", tc.base, err)
 		}
 	}
 }

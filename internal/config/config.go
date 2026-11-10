@@ -93,9 +93,20 @@ type Config struct {
 	Notify              Notify   `json:"notify"`
 
 	BaseURL string          `json:"base_url"` // public origin for links; empty derives one from listen
-	Signup  string          `json:"signup"`   // only "closed" is supported yet
+	Signup  string          `json:"signup"`   // closed (default) or invite; open arrives with mail
 	Mail    json.RawMessage `json:"mail"`     // rejected until supported
-	Limits  json.RawMessage `json:"limits"`   // rejected until supported
+	Limits  Limits          `json:"limits"`
+}
+
+// Limits caps what accounts may do. Pointer fields tell "not given" (default)
+// from an explicit 0; applyDefaults makes every one non-nil.
+type Limits struct {
+	MaxMonitors           *int     `json:"max_monitors"`             // per workspace; 0 is unlimited (default 20)
+	MinInterval           Duration `json:"min_interval"`             // per workspace (default 30s)
+	MaxWorkspaces         *int     `json:"max_workspaces"`           // 0 is unlimited (default)
+	SignupsPerHour        *int     `json:"signups_per_hour"`         // across the instance (default 100)
+	HostRequestsPerSecond *float64 `json:"host_requests_per_second"` // per target host (default 1)
+	MailPerHour           *int     `json:"mail_per_hour"`            // rejected until mail is supported
 }
 
 // Load reads a JSON config file. Environment variables in the form $VAR or
@@ -224,24 +235,32 @@ func (c *Config) applyDefaults() error {
 	default:
 		return errors.New(`config: allow_private_targets must be "none", "operator" or "all"`)
 	}
-	if c.Signup == "" {
-		c.Signup = "closed"
-	}
-	if c.Signup != "closed" {
-		return fmt.Errorf("config: signup %q is not supported yet", c.Signup)
-	}
-	if isSet(c.Mail) {
-		return errors.New("config: mail is not supported yet")
-	}
-	if isSet(c.Limits) {
-		return errors.New("config: limits is not supported yet")
-	}
 	if c.BaseURL != "" {
 		base, ok := normalizeBaseURL(c.BaseURL)
 		if !ok {
 			return errors.New("config: base_url must be an absolute http(s) URL with no path")
 		}
 		c.BaseURL = base
+	}
+	if c.Signup == "" {
+		c.Signup = "closed"
+	}
+	if c.Signup != "closed" && c.Signup != "invite" {
+		return fmt.Errorf("config: signup %q is not supported yet", c.Signup)
+	}
+	if isSet(c.Mail) {
+		return errors.New("config: mail is not supported yet")
+	}
+	if c.Signup != "closed" {
+		if c.BaseURL == "" {
+			return fmt.Errorf("config: signup %q needs base_url", c.Signup)
+		}
+		if u, err := url.Parse(c.BaseURL); err != nil || (u.Scheme == "http" && !isLoopbackHost(u.Hostname())) {
+			return fmt.Errorf("config: signup %q needs an https base_url (http is allowed only for localhost)", c.Signup)
+		}
+	}
+	if err := c.Limits.applyDefaults(); err != nil {
+		return err
 	}
 	if c.FailureThreshold <= 0 {
 		c.FailureThreshold = 2
@@ -348,4 +367,51 @@ func normalizeBaseURL(raw string) (string, bool) {
 		}
 	}
 	return scheme + "://" + u.Host, true
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (l *Limits) applyDefaults() error {
+	if l.MailPerHour != nil {
+		return errors.New("config: limits.mail_per_hour is not supported yet")
+	}
+	defInt := func(name string, p **int, def int) error {
+		if *p == nil {
+			*p = &def
+		} else if **p < 0 {
+			return fmt.Errorf("config: limits.%s must not be negative", name)
+		}
+		return nil
+	}
+	if err := defInt("max_monitors", &l.MaxMonitors, 20); err != nil {
+		return err
+	}
+	if err := defInt("max_workspaces", &l.MaxWorkspaces, 0); err != nil {
+		return err
+	}
+	if err := defInt("signups_per_hour", &l.SignupsPerHour, 100); err != nil {
+		return err
+	}
+	if l.HostRequestsPerSecond == nil {
+		one := 1.0
+		l.HostRequestsPerSecond = &one
+	} else if *l.HostRequestsPerSecond < 0 {
+		return errors.New("config: limits.host_requests_per_second must not be negative")
+	}
+	if l.MinInterval.Duration == 0 {
+		l.MinInterval.Duration = 30 * time.Second
+	} else if l.MinInterval.Duration < time.Second {
+		return errors.New("config: limits.min_interval must be at least 1s")
+	}
+	// Mail is not supported yet, so its limit is fixed at the default.
+	mail := 500
+	l.MailPerHour = &mail
+	return nil
 }

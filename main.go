@@ -116,6 +116,9 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if cfg.InsecureNoAuth {
 		logger.Warn("insecure_no_auth has no effect; sign-in is always required")
 	}
+	if cfg.AllowPrivateTargets == "all" && cfg.Signup != "closed" {
+		logger.Warn(`allow_private_targets is "all" while sign-up is open to others`)
+	}
 	if cfg.TrustProxy && !cfg.HTTPSBase() {
 		logger.Warn("trust_proxy is set without an https base_url: set base_url to your https address so session cookies are always Secure")
 	}
