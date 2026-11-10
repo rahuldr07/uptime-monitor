@@ -25,7 +25,7 @@ build step for the frontend.
 - Target detail with latency chart (24h/7d/30d), incidents and recent checks
 - Targets and alert channels editable in the browser, no restart needed
 - Public status page with 90-day history
-- Optional admin password with rate-limited login
+- Accounts: sign in with email and password, database-backed sessions, rate-limited sign-in
 - JSON API for scripting
 - State is restored on restart, so an ongoing incident is not re-alerted
 
@@ -33,15 +33,53 @@ build step for the frontend.
 
 ```bash
 cp config.example.json config.json
-# edit targets; set UPTIME_ADMIN_PASSWORD or put a password in the file
-UPTIME_ADMIN_PASSWORD='a-long-random-password' go run . -config config.json
+# edit targets, then:
+go run . -config config.json
 ```
 
 Open http://localhost:8080. The public status page is at `/s/default`; `/status` redirects to it.
 
-The server refuses to start with an empty password unless it listens on a
-loopback address (`127.0.0.1:8080`), so an unset `UPTIME_ADMIN_PASSWORD`
-cannot silently expose the dashboard.
+### Accounts
+
+Sign in with email and password. On first run there are no users, and the
+server logs a setup link at WARN (`setup required: open …/setup?token=…`).
+Open it to create the operator account. If you missed it, run
+`uptime-monitor -setup-link` for a fresh link. Only one setup token is valid
+at a time, and it expires after 24 hours. Setup adopts workspace 1 and renames
+it; the config's `targets` and `notify` are seeded into it afterwards.
+
+- **Passwords** are at least 10 characters and at most 256 bytes, hashed with argon2id.
+- **Sessions** are stored in the database. They expire 30 days after sign-in
+  or after 7 days idle, and a user has at most 20. "Sign out everywhere" on
+  `/account` revokes them all. Changing the password keeps only the current
+  session. A password reset signs the user out everywhere, then signs them back in.
+- **Cookies.** The session cookie is `uptime_session`, or `__Host-uptime_session`
+  (Secure) when the request is HTTPS or `base_url` is https. A device cookie,
+  `uptime_device` (`__Host-uptime_device` under the same rule), lasts 90 days
+  and exempts a browser that has signed in before from the per-email slowdown
+  below. Its HMAC key is created per process, so a restart invalidates device
+  cookies (sessions are in the database and survive a restart).
+- **Lost password.** `uptime-monitor -reset-password you@example.com` prints a
+  link that works for 1 hour. It refuses unknown and disabled users.
+- **Links.** `base_url` is the external URL used in the setup and reset links.
+  Without it the links are built from `listen`.
+
+Rate limits are kept in memory, so they reset on restart; run one server
+process only. IPv6 clients are grouped by /64.
+
+| What | Limit |
+|---|---|
+| Sign-in failures | 5 per minute per address; 10 per 15 minutes per email and address |
+| Sign-in slowdown | after 20 failures in 15 minutes for one email, at most 1 attempt every 5 seconds. This slows sign-in down but never locks the account |
+| Setup unlock | 5 per 15 minutes per address |
+| Current-password checks | 5 per 15 minutes per user |
+| JSON API | 120 per minute per session |
+| Live updates | 5 streams per user |
+| Status pages | 120 per minute per address, at most 2 rebuilds at once |
+| Password hashing | 4 at once, 64 waiting; a request that waits more than 2 seconds gets 503 |
+
+Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
+delete those files. Account deletion arrives in a later release.
 
 With Docker:
 
@@ -59,6 +97,18 @@ proxy on the same host fronts it, publish the port as `127.0.0.1:8080:8080`
 (see the comment in `docker-compose.yml`).
 
 ## Upgrading
+
+From a release with an admin password:
+
+- **Setup mode.** An existing install with data enters setup mode on the first
+  start. Monitoring keeps running.
+- **Unlock.** Open the setup link from the log (or `-setup-link`), or unlock
+  setup with the old `admin_password` (upgraded installs only). Setup adopts
+  all existing data into workspace 1 and you become the operator.
+- **After setup** `admin_password` is ignored and a WARN is logged. Remove it.
+- **`insecure_no_auth` is removed.** If it is still set, a WARN is logged.
+- **LAN monitoring keeps working**, because the operator owns workspace 1 and
+  `allow_private_targets` defaults to `operator`.
 
 From a release before workspaces:
 
@@ -118,9 +168,11 @@ From a release before the production hardening:
 |---|---|---|
 | `listen` | `:8080` | address to serve on |
 | `db` | `uptime.db` | SQLite file |
-| `admin_password` | empty | protects everything except status pages (`/s/{slug}`, `/status`) and `/healthz`; empty means no login and is only allowed on a loopback `listen` |
-| `insecure_no_auth` | `false` | allow an empty password on a non-loopback address (not recommended) |
-| `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
+| `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
+| `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
+| `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup and reset links; an https value makes session cookies always Secure |
+| `signup` | `closed` | only `closed` is accepted for now; `mail` and `limits` are rejected until later releases |
+| `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
 | `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until accounts exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
@@ -142,6 +194,8 @@ Command-line flags:
 | `-config path` | config file (default: the first that exists of `./config.json`, `/etc/uptime-monitor/config.json`, `/etc/uptime-monitor.json`) |
 | `-log-format text\|json` | log output format (default `text`; the Docker image uses `json`) |
 | `-backup path` | write a consistent copy of the database to `path` (which must not exist) and exit; safe while the monitor is running; fails if the configured database does not exist |
+| `-setup-link` | during first-run setup, print a fresh setup link (replacing the previous one) and exit; fails once setup is complete |
+| `-reset-password email` | print a password reset link, valid for 1 hour, for that user and exit; fails for unknown and disabled users |
 | `-version` | print the version and exit |
 
 Targets in the config file are added to the database on first start. After
@@ -151,7 +205,7 @@ with that name does not already exist. Config targets and alert settings are add
 
 ## API
 
-All endpoints need the admin session cookie when a password is set.
+All endpoints need a signed-in session cookie.
 
 - `GET /s/{slug}` (public) the public status page (`/status` redirects to `/s/default`)
 - `GET /api/status` current state and uptime for every target
@@ -170,14 +224,15 @@ internal/store        SQLite schema and queries
 internal/monitor      scheduler, HTTP probe, state machine, alert dispatch
 internal/netguard     blocks internal destinations for monitors, Test URL and alert channels
 internal/notify       Telegram, Slack, email, log channels
-internal/web          handlers, templates, auth, SVG charts
+internal/web          handlers, templates, sessions, sign-in, SVG charts
+internal/password     argon2id hashing under a concurrency bound
 deploy/               hardened systemd unit
 ```
 
 ## Running in production
 
 1. Run behind a TLS-terminating reverse proxy (Caddy, nginx, Traefik) and set
-   `"trust_proxy": true` so secure cookies and per-client login and status
+   `"trust_proxy": true` so per-client sign-in and status
    page rate limiting work (without it, all visitors share one status page
    limit). The proxy must append the client address to `X-Forwarded-For` (Caddy
    and Traefik do by default; in nginx use
@@ -186,8 +241,10 @@ deploy/               hardened systemd unit
    through is not safe with `trust_proxy`. Do not set it if clients can reach
    the server directly. Configure HSTS at the proxy if
    you want it.
-2. Use a long random admin password, passed through the environment
-   (`UPTIME_ADMIN_PASSWORD`), not written in the config file.
+2. Set `base_url` to your https address (e.g. `"base_url": "https://status.example.com"`)
+   so session cookies are always Secure and the setup and reset links are
+   correct. The server warns at startup when `trust_proxy` is set without an
+   https `base_url`.
 3. Back up the database on a schedule, e.g. daily from cron:
 
    ```bash
@@ -221,11 +278,11 @@ go vet ./...
 
 - SQLite runs in WAL mode through a pure-Go driver, so the binary cross-compiles without cgo.
 - Secrets saved from the Alerts page are stored in the database in plain text. The database (and backups) are created with mode `0600`; keep them private. Saved secrets are never sent back to the browser: the Alerts page shows them as "Saved", a blank field keeps the stored value, and "Remove these settings" deletes a channel.
-- Login sessions are random tokens kept in memory for 30 days; a restart logs everyone out and logout revokes the token immediately.
+- Sessions are random tokens; only a hash is stored in the database, so a restart does not sign anyone out and revoking a session takes effect immediately.
 - State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts even with no password set. Request bodies are capped at 1 MB.
 - Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public status page (`/s/{slug}`) may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
 - Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
 - Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
 - The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.
-- The admin password is compared in constant time, and failed logins are rate limited per client address.
+- Passwords are hashed with argon2id, and failed sign-ins are rate limited per address and per email. Secrets are never logged, except the setup and reset links, which are printed on purpose.
 - Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.

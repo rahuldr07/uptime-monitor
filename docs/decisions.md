@@ -401,3 +401,16 @@ Full design:
   - Slug derivation and editing, `CountTargets`, workspace deletion and Check-now coalescing move to M1e, where they are first used. The static allow-list test for the unscoped store moves to M1d.
   - Because workspace 1 always exists, it no longer marks an upgraded install. `/status` always redirects to `/s/default`, which supersedes §5.1's "404 on fresh installs". M1d's setup mode is "no users exist", and the admin_password unlock must decide "upgraded install" another way, for example by whether workspace 1 holds any targets, settings or maintenance from before setup.
 - **Why:** Before M1d there is no setup page, so a fresh install would otherwise have no workspace and nothing would work. With one workspace always present, every step stays releasable and the setup flow stays simpler.
+
+### D-124: M1d scope and security refinements
+- **Status:** Accepted (amends §3.1, §8.2, §12 and the M1d row of the spec's delivery table)
+- **Decision:**
+  - Setup adopts workspace 1. An "upgraded install" means no users exist and workspace 1 has data. Config is not seeded in setup mode. `CompleteSetup` needs an explicit `PasswordUnlocked` and re-checks the upgraded condition inside the transaction.
+  - There is no `BEGIN IMMEDIATE`, because the single connection already serialises.
+  - `password.Hasher` is an injected type. `VerifyDummy` returns an error (this departs from the §3.1 signature) so that a busy hasher gives the same 503 for known and unknown emails. `Verify` caps stored parameters: m ≤ 4×default, t ≤ 10, p ≤ 4, salt 16 bytes, key 32 bytes. `New` panics above those caps.
+  - Sign-in limits reserve a slot with `ratelimit.Take` and give it back with `Undo` on success, busy or error, so a burst cannot exceed the hard limits. Passwords over 256 bytes fail the same way as any wrong password.
+  - On HTTPS only the `__Host-` cookies are read, which prevents cookie tossing. The device cookie follows the same rule.
+  - A per-user limit on current-password checks: 5 per 15 minutes. This is not in §8.2.
+  - `/reset` is a guest route for now. Handling sign-in as a different user moves to M2, together with `/forgot`. An unverified sign-in gives a generic 401 until M2. The operator route class comes in M3. Account deletion comes in M1e.
+  - Under §12, the reset link printed by `-reset-password` is a second deliberate exception to "secrets are never printed", next to the setup link.
+- **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.

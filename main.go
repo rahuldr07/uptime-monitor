@@ -116,6 +116,9 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if cfg.InsecureNoAuth {
 		logger.Warn("insecure_no_auth has no effect; sign-in is always required")
 	}
+	if cfg.TrustProxy && !cfg.HTTPSBase() {
+		logger.Warn("trust_proxy is set without an https base_url: set base_url to your https address so session cookies are always Secure")
+	}
 	logger.Info("starting", "version", version, "config", cfgPath, "listen", cfg.Listen, "db", cfg.DB)
 	st, err := store.Open(cfg.DB)
 	if err != nil {

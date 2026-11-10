@@ -1,6 +1,8 @@
 {
   "listen": ":8080",
   "db": "uptime.db",
+  "base_url": "",
+  "signup": "closed",
   "admin_password": "${UPTIME_ADMIN_PASSWORD}",
   "failure_threshold": 2,
   "interval": "30s",
