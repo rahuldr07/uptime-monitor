@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -446,5 +448,31 @@ func TestProbeBlockedHidesAddress(t *testing.T) {
 	}
 	if c := New(Options{Store: st, AllowPrivate: true}).Test(context.Background(), tg); !c.OK {
 		t.Fatalf("want ok with AllowPrivate, got %+v", c)
+	}
+}
+
+func TestProbeStaysOnHTTP1AgainstHTTP2Server(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Proto))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := New(Options{Store: st, AllowPrivate: true})
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	tr := m.client.Transport.(*http.Transport)
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.RootCAs = pool
+	c := m.Test(context.Background(), store.Target{URL: srv.URL, Timeout: 5 * time.Second, Keyword: "HTTP/1.1"})
+	if !c.OK {
+		t.Fatalf("want ok over HTTP/1.1, got %+v", c)
 	}
 }

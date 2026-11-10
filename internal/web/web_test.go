@@ -714,7 +714,10 @@ func TestPrivateTargetsBlockedWhenNone(t *testing.T) {
 		t.Fatalf("operator create: %d %s", resp.StatusCode, body)
 	}
 	e.cfg.AllowPrivateTargets = "none"
-	tgs, _ := e.st.ListTargets(context.Background())
+	tgs, err := e.st.ListTargets(context.Background())
+	if err != nil || len(tgs) == 0 {
+		t.Fatalf("list targets: %v (n=%d)", err, len(tgs))
+	}
 	resp, body = e.post(t, c, "/targets/"+strconv.FormatInt(tgs[0].ID, 10), url.Values{"name": {"y"}, "url": {"http://127.0.0.1:9/"}})
 	if resp.StatusCode != 422 || !strings.Contains(body, msg) {
 		t.Fatalf("update: %d %s", resp.StatusCode, body)

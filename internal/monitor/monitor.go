@@ -145,7 +145,13 @@ func New(o Options) *Monitor {
 		tr.MaxIdleConnsPerHost = 2
 		tr.IdleConnTimeout = 90 * time.Second
 		tr.DisableKeepAlives = true
-		tr.ForceAttemptHTTP2 = false // probes stay on HTTP/1.1 as before
+		// Probes stay on HTTP/1.1: ForceAttemptHTTP2=false alone still leaves
+		// "h2" in the cloned TLS config's ALPN, so an h2 server would be
+		// negotiated and then spoken to in HTTP/1.1 (EOF). Clear both.
+		tr.ForceAttemptHTTP2 = false
+		if tr.TLSClientConfig != nil {
+			tr.TLSClientConfig.NextProtos = nil
+		}
 		o.Client = c
 	}
 	if o.Now == nil {
