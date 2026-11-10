@@ -91,19 +91,33 @@ func (s *Store) LatestCheck(ctx context.Context, targetID int64) (Check, error) 
 
 // RecentChecks returns up to limit checks, newest first.
 func (s *Store) RecentChecks(ctx context.Context, targetID int64, limit int) ([]Check, error) {
-	return s.queryChecks(ctx,
-		`SELECT `+checkCols+` FROM checks WHERE target_id = ? ORDER BY checked_at DESC, id DESC LIMIT ?`, targetID, limit)
+	return s.Workspace(legacyWorkspaceID).RecentChecks(ctx, targetID, limit)
+}
+
+// RecentChecks returns up to limit of the workspace's checks, newest first.
+// A targetID of 0 covers all of the workspace's targets.
+func (w *WS) RecentChecks(ctx context.Context, targetID int64, limit int) ([]Check, error) {
+	cond, args := w.scope(targetID)
+	return w.queryChecks(ctx,
+		`SELECT `+checkCols+` FROM checks WHERE `+cond+` ORDER BY checked_at DESC, id DESC LIMIT ?`, append(args, limit)...)
 }
 
 // ChecksSince returns checks at or after since, oldest first.
 func (s *Store) ChecksSince(ctx context.Context, targetID int64, since time.Time) ([]Check, error) {
-	return s.queryChecks(ctx,
-		`SELECT `+checkCols+` FROM checks WHERE target_id = ? AND checked_at >= ? ORDER BY checked_at ASC, id ASC`,
-		targetID, since.UnixMilli())
+	return s.Workspace(legacyWorkspaceID).ChecksSince(ctx, targetID, since)
 }
 
-func (s *Store) queryChecks(ctx context.Context, q string, args ...any) ([]Check, error) {
-	rows, err := s.db.QueryContext(ctx, q, args...)
+// ChecksSince returns the workspace's checks at or after since, oldest first.
+// A targetID of 0 covers all of the workspace's targets.
+func (w *WS) ChecksSince(ctx context.Context, targetID int64, since time.Time) ([]Check, error) {
+	cond, args := w.scope(targetID)
+	return w.queryChecks(ctx,
+		`SELECT `+checkCols+` FROM checks WHERE `+cond+` AND checked_at >= ? ORDER BY checked_at ASC, id ASC`,
+		append(args, since.UnixMilli())...)
+}
+
+func (w *WS) queryChecks(ctx context.Context, q string, args ...any) ([]Check, error) {
+	rows, err := w.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,16 +137,20 @@ func (s *Store) queryChecks(ctx context.Context, q string, args ...any) ([]Check
 // 0 aggregates across all targets. Checks made during maintenance windows
 // are left out, as are they from every other uptime aggregate below.
 func (s *Store) Stats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
+	return s.Workspace(legacyWorkspaceID).Stats(ctx, targetID, since)
+}
+
+// Stats aggregates the workspace's checks since the given time. A targetID of
+// 0 aggregates across all of its targets. Maintenance checks are left out.
+func (w *WS) Stats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
+	cond, args := w.scope(targetID)
 	var st Stats
 	var avg sql.NullFloat64
-	q := `SELECT COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
-	      FROM checks WHERE maint = 0 AND checked_at >= ?`
-	args := []any{since.UnixMilli()}
-	if targetID != 0 {
-		q += ` AND target_id = ?`
-		args = append(args, targetID)
-	}
-	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&st.Total, &st.OKCount, &avg); err != nil {
+	err := w.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
+		 FROM checks WHERE maint = 0 AND checked_at >= ? AND `+cond, append([]any{since.UnixMilli()}, args...)...).
+		Scan(&st.Total, &st.OKCount, &avg)
+	if err != nil {
 		return Stats{}, err
 	}
 	if avg.Valid {
@@ -144,9 +162,17 @@ func (s *Store) Stats(ctx context.Context, targetID int64, since time.Time) (Sta
 // DailyUptime returns per-day (UTC) stats for the last days days, oldest
 // first, from the rollups. Days with no checks have Total 0.
 func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, days int) ([]Stats, error) {
+	return s.Workspace(legacyWorkspaceID).DailyUptime(ctx, targetID, now, days)
+}
+
+// DailyUptime is the workspace-scoped form of the store method; a targetID of
+// 0 sums all of the workspace's targets per day.
+func (w *WS) DailyUptime(ctx context.Context, targetID int64, now time.Time, days int) ([]Stats, error) {
 	start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT day, total, ok, lat_sum FROM daily WHERE target_id = ? AND day >= ?`, targetID, start.UnixMilli()/dayMS)
+	cond, args := w.scope(targetID)
+	rows, err := w.db.QueryContext(ctx,
+		`SELECT day, SUM(total), SUM(ok), SUM(lat_sum) FROM daily WHERE day >= ? AND `+cond+` GROUP BY day`,
+		append([]any{start.UnixMilli() / dayMS}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,15 +204,18 @@ func (s *Store) DailyUptime(ctx context.Context, targetID int64, now time.Time, 
 // retention; the first day is counted in full, so the window can be up to a
 // day longer than asked. A targetID of 0 aggregates across all targets.
 func (s *Store) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
-	q := `SELECT COALESCE(SUM(total), 0), COALESCE(SUM(ok), 0), COALESCE(SUM(lat_sum), 0) FROM daily WHERE day >= ?`
-	args := []any{since.UnixMilli() / dayMS}
-	if targetID != 0 {
-		q += ` AND target_id = ?`
-		args = append(args, targetID)
-	}
+	return s.Workspace(legacyWorkspaceID).RollupStats(ctx, targetID, since)
+}
+
+// RollupStats is the workspace-scoped form of the store method.
+func (w *WS) RollupStats(ctx context.Context, targetID int64, since time.Time) (Stats, error) {
+	cond, args := w.scope(targetID)
 	var st Stats
 	var latSum int64
-	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&st.Total, &st.OKCount, &latSum); err != nil {
+	err := w.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(total), 0), COALESCE(SUM(ok), 0), COALESCE(SUM(lat_sum), 0) FROM daily WHERE day >= ? AND `+cond,
+		append([]any{since.UnixMilli() / dayMS}, args...)...).Scan(&st.Total, &st.OKCount, &latSum)
+	if err != nil {
 		return Stats{}, err
 	}
 	if st.OKCount > 0 {
@@ -198,13 +227,15 @@ func (s *Store) RollupStats(ctx context.Context, targetID int64, since time.Time
 // Latencies returns the latencies of successful checks since the given
 // time, sorted ascending. A targetID of 0 covers all targets.
 func (s *Store) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
-	q := `SELECT latency_ms FROM checks WHERE maint = 0 AND ok = 1 AND checked_at >= ?`
-	args := []any{since.UnixMilli()}
-	if targetID != 0 {
-		q += ` AND target_id = ?`
-		args = append(args, targetID)
-	}
-	rows, err := s.db.QueryContext(ctx, q+` ORDER BY latency_ms ASC`, args...)
+	return s.Workspace(legacyWorkspaceID).Latencies(ctx, targetID, since)
+}
+
+// Latencies is the workspace-scoped form of the store method.
+func (w *WS) Latencies(ctx context.Context, targetID int64, since time.Time) ([]int64, error) {
+	cond, args := w.scope(targetID)
+	rows, err := w.db.QueryContext(ctx,
+		`SELECT latency_ms FROM checks WHERE maint = 0 AND ok = 1 AND checked_at >= ? AND `+cond+` ORDER BY latency_ms ASC`,
+		append([]any{since.UnixMilli()}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -238,10 +269,17 @@ func Percentile(sorted []int64, p float64) int64 {
 // HourlyUptime returns per-hour stats for the last hours hours ending at
 // now, oldest first.
 func (s *Store) HourlyUptime(ctx context.Context, targetID int64, now time.Time, hours int) ([]Stats, error) {
+	return s.Workspace(legacyWorkspaceID).HourlyUptime(ctx, targetID, now, hours)
+}
+
+// HourlyUptime is the workspace-scoped form of the store method.
+func (w *WS) HourlyUptime(ctx context.Context, targetID int64, now time.Time, hours int) ([]Stats, error) {
 	start := now.UTC().Truncate(time.Hour).Add(-time.Duration(hours-1) * time.Hour)
-	rows, err := s.db.QueryContext(ctx,
+	cond, args := w.scope(targetID)
+	rows, err := w.db.QueryContext(ctx,
 		`SELECT (checked_at / 3600000) AS hr, COUNT(*), COALESCE(SUM(ok), 0), AVG(CASE WHEN ok = 1 THEN latency_ms END)
-		 FROM checks WHERE maint = 0 AND target_id = ? AND checked_at >= ? GROUP BY hr`, targetID, start.UnixMilli())
+		 FROM checks WHERE maint = 0 AND checked_at >= ? AND `+cond+` GROUP BY hr`,
+		append([]any{start.UnixMilli()}, args...)...)
 	if err != nil {
 		return nil, err
 	}

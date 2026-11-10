@@ -61,7 +61,12 @@ func scanIncident(sc scanner) (Incident, error) {
 
 // GetIncident returns one incident by id.
 func (s *Store) GetIncident(ctx context.Context, id int64) (Incident, error) {
-	in, err := scanIncident(s.db.QueryRowContext(ctx, incidentQuery+` WHERE i.id = ?`, id))
+	return s.Workspace(legacyWorkspaceID).GetIncident(ctx, id)
+}
+
+// GetIncident returns one of the workspace's incidents by id.
+func (w *WS) GetIncident(ctx context.Context, id int64) (Incident, error) {
+	in, err := scanIncident(w.db.QueryRowContext(ctx, incidentQuery+` WHERE i.id = ? AND i.`+inWS, id, w.id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Incident{}, ErrNotFound
 	}
@@ -70,7 +75,13 @@ func (s *Store) GetIncident(ctx context.Context, id int64) (Incident, error) {
 
 // AcknowledgeIncident marks an incident as seen by a human.
 func (s *Store) AcknowledgeIncident(ctx context.Context, id int64, at time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE incidents SET acked_at = ? WHERE id = ? AND acked_at IS NULL`, at.UnixMilli(), id)
+	return s.Workspace(legacyWorkspaceID).AcknowledgeIncident(ctx, id, at)
+}
+
+// AcknowledgeIncident marks one of the workspace's incidents as seen.
+func (w *WS) AcknowledgeIncident(ctx context.Context, id int64, at time.Time) error {
+	res, err := w.db.ExecContext(ctx,
+		`UPDATE incidents SET acked_at = ? WHERE id = ? AND acked_at IS NULL AND `+inWS, at.UnixMilli(), id, w.id)
 	if err != nil {
 		return err
 	}
@@ -79,7 +90,12 @@ func (s *Store) AcknowledgeIncident(ctx context.Context, id int64, at time.Time)
 
 // SetIncidentNote stores a free-text note on an incident.
 func (s *Store) SetIncidentNote(ctx context.Context, id int64, note string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE incidents SET note = ? WHERE id = ?`, note, id)
+	return s.Workspace(legacyWorkspaceID).SetIncidentNote(ctx, id, note)
+}
+
+// SetIncidentNote stores a note on one of the workspace's incidents.
+func (w *WS) SetIncidentNote(ctx context.Context, id int64, note string) error {
+	res, err := w.db.ExecContext(ctx, `UPDATE incidents SET note = ? WHERE id = ? AND `+inWS, note, id, w.id)
 	if err != nil {
 		return err
 	}
@@ -88,8 +104,14 @@ func (s *Store) SetIncidentNote(ctx context.Context, id int64, note string) erro
 
 // CountUnacknowledged counts ongoing incidents nobody has acknowledged.
 func (s *Store) CountUnacknowledged(ctx context.Context) (int, error) {
+	return s.Workspace(legacyWorkspaceID).CountUnacknowledged(ctx)
+}
+
+// CountUnacknowledged counts the workspace's ongoing unacknowledged incidents.
+func (w *WS) CountUnacknowledged(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM incidents WHERE ended_at IS NULL AND acked_at IS NULL`).Scan(&n)
+	err := w.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM incidents WHERE ended_at IS NULL AND acked_at IS NULL AND `+inWS, w.id).Scan(&n)
 	return n, err
 }
 
@@ -132,8 +154,13 @@ type IncidentFilter struct {
 
 // ListIncidents returns incidents newest first.
 func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, error) {
-	q := incidentQuery + ` WHERE 1=1`
-	var args []any
+	return s.Workspace(legacyWorkspaceID).ListIncidents(ctx, f)
+}
+
+// ListIncidents returns the workspace's incidents newest first.
+func (w *WS) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, error) {
+	q := incidentQuery + ` WHERE i.` + inWS
+	args := []any{w.id}
 	if f.TargetID != 0 {
 		q += ` AND i.target_id = ?`
 		args = append(args, f.TargetID)
@@ -151,7 +178,7 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	}
 	q += ` ORDER BY i.started_at DESC, i.id DESC LIMIT ?`
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := w.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +196,12 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 
 // CountIncidents counts incidents started since the given time.
 func (s *Store) CountIncidents(ctx context.Context, since time.Time) (int, error) {
+	return s.Workspace(legacyWorkspaceID).CountIncidents(ctx, since)
+}
+
+// CountIncidents counts the workspace's incidents started since the given time.
+func (w *WS) CountIncidents(ctx context.Context, since time.Time) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM incidents WHERE started_at >= ?`, since.UnixMilli()).Scan(&n)
+	err := w.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM incidents WHERE started_at >= ? AND `+inWS, since.UnixMilli(), w.id).Scan(&n)
 	return n, err
 }
