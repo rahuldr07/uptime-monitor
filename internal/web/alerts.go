@@ -40,7 +40,13 @@ func (s *Server) notifyConfig(ctx context.Context, ws *store.WS) config.Notify {
 
 func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request) {
 	ws := s.ws(r)
-	s.renderAlerts(w, r, ws, http.StatusOK, s.notifyConfig(r.Context(), ws), "")
+	n, err := ws.Notify(r.Context())
+	errMsg := ""
+	if err != nil {
+		s.logger.Warn("read alert channels", "workspace", ws.ID(), "err", err)
+		errMsg = "Stored alert settings could not be read; saving this form will replace them."
+	}
+	s.renderAlerts(w, r, ws, http.StatusOK, n, errMsg)
 }
 
 func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, ws *store.WS, code int, n config.Notify, errMsg string) {

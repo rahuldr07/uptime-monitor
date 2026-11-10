@@ -399,4 +399,5 @@ Full design:
   - Schema v2 creates workspace 1 ("Default", `/s/default`) on every database, fresh or upgraded. In M1d, setup adopts it instead of creating a workspace. The pre-migration backup is still written only when data exists.
   - Until M1d adds users, workspace 1 is the operator's workspace.
   - Slug derivation and editing, `CountTargets`, workspace deletion and Check-now coalescing move to M1e, where they are first used. The static allow-list test for the unscoped store moves to M1d.
+  - Because workspace 1 always exists, it no longer marks an upgraded install. `/status` always redirects to `/s/default`, which supersedes §5.1's "404 on fresh installs". M1d's setup mode is "no users exist", and the admin_password unlock must decide "upgraded install" another way, for example by whether workspace 1 holds any targets, settings or maintenance from before setup.
 - **Why:** Before M1d there is no setup page, so a fresh install would otherwise have no workspace and nothing would work. With one workspace always present, every step stays releasable and the setup flow stays simpler.

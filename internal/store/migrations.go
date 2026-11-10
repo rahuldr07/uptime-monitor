@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -112,7 +113,16 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 		if err != nil {
 			return err
 		}
+		var existing []string
 		if has {
+			existing, err = filepath.Glob(path + ".pre-accounts-*.bak")
+			if err != nil {
+				return err
+			}
+		}
+		if len(existing) > 0 {
+			slog.Info("pre-migration backup already exists", "backup", existing[0])
+		} else if has {
 			dest := path + ".pre-accounts-" + time.Now().Format("20060102-150405") + ".bak"
 			// A migration that failed and is retried within the same second
 			// finds its earlier backup in the way; keep both.

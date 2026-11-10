@@ -69,6 +69,11 @@ From a release before workspaces:
 - **Status page.** `/status` now redirects to `/s/default`. Existing links
   keep working.
 - **Alert settings** saved in the browser now belong to the workspace.
+- **Status page rate limit.** Status pages (`/s/{slug}`) allow 120 requests
+  per minute per client address, and at most 2 page rebuilds run at once.
+  The client address comes from `X-Forwarded-For` only when `trust_proxy` is
+  set. Behind a reverse proxy without it, every visitor shares one limit, so
+  proxied installs should set `trust_proxy`.
 
 From a release before the production hardening:
 
@@ -115,7 +120,7 @@ From a release before the production hardening:
 | `db` | `uptime.db` | SQLite file |
 | `admin_password` | empty | protects everything except status pages (`/s/{slug}`, `/status`) and `/healthz`; empty means no login and is only allowed on a loopback `listen` |
 | `insecure_no_auth` | `false` | allow an empty password on a non-loopback address (not recommended) |
-| `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login rate limiting) and `X-Forwarded-Proto` (secure cookies) |
+| `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (login and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
 | `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. Until accounts exist everything belongs to the operator, so only `none` changes anything: it blocks all internal destinations. |
 | `failure_threshold` | `2` | consecutive failures before a target is down |
@@ -172,8 +177,9 @@ deploy/               hardened systemd unit
 ## Running in production
 
 1. Run behind a TLS-terminating reverse proxy (Caddy, nginx, Traefik) and set
-   `"trust_proxy": true` so secure cookies and per-client login rate limiting
-   work. The proxy must append the client address to `X-Forwarded-For` (Caddy
+   `"trust_proxy": true` so secure cookies and per-client login and status
+   page rate limiting work (without it, all visitors share one status page
+   limit). The proxy must append the client address to `X-Forwarded-For` (Caddy
    and Traefik do by default; in nginx use
    `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). A proxy
    that only sets `X-Real-IP` and passes the client's own `X-Forwarded-For`
@@ -220,6 +226,6 @@ go vet ./...
 - Every response carries a strict Content-Security-Policy (no inline scripts) and `nosniff`. Admin pages refuse to be framed; the public status page (`/s/{slug}`) may be embedded in other sites (a framed page is always the anonymous view, because the session cookie is not sent to cross-site frames). HSTS is left to the reverse proxy.
 - Flash messages in `?msg=` are signed by the server, so a crafted link cannot show attacker-chosen text in the admin UI.
 - Static assets are linked with a content hash (`app.js?v=…`), so browsers pick up new code immediately after an upgrade.
-- The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy, so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.
+- The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. Admins always see live data.
 - The admin password is compared in constant time, and failed logins are rate limited per client address.
 - Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.

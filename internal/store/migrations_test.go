@@ -337,6 +337,37 @@ func TestMigrateV2FailureRollsBack(t *testing.T) {
 	}
 }
 
+func TestMigrateRetryReusesBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	openV1(t, path)
+
+	orig := steps
+	t.Cleanup(func() { steps = orig })
+	steps = append([]migration{}, orig...)
+	steps[1].run = func(ctx context.Context, tx *sql.Tx) error {
+		if err := v2(ctx, tx); err != nil {
+			return err
+		}
+		return errors.New("boom")
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Open err = %v, want boom", err)
+	}
+	steps = orig
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	baks, err := filepath.Glob(path + ".pre-accounts-*.bak")
+	if err != nil || len(baks) != 1 {
+		t.Fatalf("backups = %v, %v; want exactly one", baks, err)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+}
+
 func TestTwoWorkspacesSameTargetName(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

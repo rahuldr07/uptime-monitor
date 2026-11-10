@@ -151,58 +151,116 @@ func TestWSIsolation(t *testing.T) {
 	if err != nil || !m.EndsAt.Equal(fa.maint.EndsAt) {
 		t.Fatalf("a's maintenance changed: %v %+v", err, m)
 	}
-	if cs, _ := a.RecentChecks(ctx, fa.target.ID, 10); len(cs) != 2 {
+	cs, err := a.RecentChecks(ctx, fa.target.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 2 {
 		t.Fatalf("a's checks lost: %d", len(cs))
 	}
 
 	// Reads of a's target through b are empty.
 	since := now.Add(-24 * time.Hour)
-	if cs, _ := b.RecentChecks(ctx, fa.target.ID, 10); len(cs) != 0 {
+	cs, err = b.RecentChecks(ctx, fa.target.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 0 {
 		t.Errorf("RecentChecks leaked %d", len(cs))
 	}
-	if cs, _ := b.ChecksSince(ctx, fa.target.ID, since); len(cs) != 0 {
+	cs, err = b.ChecksSince(ctx, fa.target.ID, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 0 {
 		t.Errorf("ChecksSince leaked %d", len(cs))
 	}
-	if ls, _ := b.Latencies(ctx, fa.target.ID, since); len(ls) != 0 {
+	ls, err := b.Latencies(ctx, fa.target.ID, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ls) != 0 {
 		t.Errorf("Latencies leaked %d", len(ls))
 	}
-	if st, _ := b.Stats(ctx, fa.target.ID, since); st.Total != 0 {
+	st, err := b.Stats(ctx, fa.target.ID, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Total != 0 {
 		t.Errorf("Stats(a's target) leaked %+v", st)
 	}
-	if st, _ := b.RollupStats(ctx, fa.target.ID, since); st.Total != 0 {
+	st, err = b.RollupStats(ctx, fa.target.ID, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Total != 0 {
 		t.Errorf("RollupStats(a's target) leaked %+v", st)
 	}
-	days, _ := b.DailyUptime(ctx, fa.target.ID, now, 3)
-	hours, _ := b.HourlyUptime(ctx, fa.target.ID, now, 3)
+	days, err := b.DailyUptime(ctx, fa.target.ID, now, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hours, err := b.HourlyUptime(ctx, fa.target.ID, now, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, st := range append(days, hours...) {
 		if st.Total != 0 {
 			t.Errorf("uptime series leaked %+v", st)
 		}
 	}
-	if is, _ := b.ListIncidents(ctx, IncidentFilter{TargetID: fa.target.ID}); len(is) != 0 {
+	is, err := b.ListIncidents(ctx, IncidentFilter{TargetID: fa.target.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(is) != 0 {
 		t.Errorf("ListIncidents(a's target) leaked %d", len(is))
 	}
-	if is, _ := b.ListIncidents(ctx, IncidentFilter{}); len(is) != 1 || is[0].ID != fb.incident {
+	is, err = b.ListIncidents(ctx, IncidentFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(is) != 1 || is[0].ID != fb.incident {
 		t.Errorf("ListIncidents sees %+v", is)
 	}
-	if ts, _ := b.ListTargets(ctx); len(ts) != 1 || ts[0].ID != fb.target.ID {
+	ts, err := b.ListTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 1 || ts[0].ID != fb.target.ID {
 		t.Errorf("ListTargets sees %+v", ts)
 	}
-	if ms, _ := b.ActiveMaintenance(ctx, now); len(ms) != 1 || ms[0].ID != fb.maint.ID {
+	ms, err := b.ActiveMaintenance(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 1 || ms[0].ID != fb.maint.ID {
 		t.Errorf("ActiveMaintenance sees %+v", ms)
 	}
 
 	// InMaintenance only honours b's own windows.
-	if _, ok, _ := b.InMaintenance(ctx, "", now); !ok {
+	_, ok, err := b.InMaintenance(ctx, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
 		t.Error("b should be in maintenance via its own window")
 	}
 	if err := b.DeleteMaintenance(ctx, fb.maint.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := b.InMaintenance(ctx, "", now); ok {
+	_, ok, err = b.InMaintenance(ctx, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
 		t.Error("b must not be in maintenance through a's window")
 	}
-	if _, ok, _ := a.InMaintenance(ctx, "", now); !ok {
+	_, ok, err = a.InMaintenance(ctx, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
 		t.Error("a's window should still be active")
 	}
 
@@ -226,7 +284,11 @@ func TestWSIsolation(t *testing.T) {
 	if err != nil || made.WorkspaceID != ws2.ID {
 		t.Fatalf("CreateTarget: %v %+v", err, made)
 	}
-	if got, _ := b.GetTarget(ctx, made.ID); got.WorkspaceID != ws2.ID {
+	got, err := b.GetTarget(ctx, made.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceID != ws2.ID {
 		t.Fatalf("stored WorkspaceID = %d", got.WorkspaceID)
 	}
 

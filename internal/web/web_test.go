@@ -318,6 +318,17 @@ func TestNewEndpoints(t *testing.T) {
 	}
 }
 
+func TestAlertsPageCorruptNotify(t *testing.T) {
+	e := newEnv(t, "")
+	if err := e.st.Workspace(1).SetSetting(context.Background(), "notify", "{bad"); err != nil {
+		t.Fatal(err)
+	}
+	resp, body := e.get(t, e.client(t), "/alerts")
+	if resp.StatusCode != 200 || !strings.Contains(body, "could not be read") {
+		t.Fatalf("status %d, body lacks the error banner", resp.StatusCode)
+	}
+}
+
 func TestAlertsSettings(t *testing.T) {
 	e := newEnv(t, "")
 	c := e.client(t)
