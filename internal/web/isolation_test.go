@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -317,8 +318,18 @@ func testIsolationDelete(t *testing.T) {
 	bob, bws := e.account(t, "b@example.com")
 	a := seedA(t, e)
 	b := seedWorkspace(t, e, bws, "B-target-zz", "B-maint-zz")
+	// A second A target on a short interval, so its runner is seen working
+	// without any manual check. It is made after the snapshot's counterpart
+	// is taken below, so the snapshot's target list stays as seeded.
 	before := snapshotWS(t, e.opWS, a)
-	checks := e.countChecks(t, a.target)
+	live, err := e.opWS.CreateTarget(context.Background(), store.Target{Name: "A-live", URL: isoURL, Interval: time.Second, Timeout: time.Second, ExpectStatus: 200}, e.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mon.Reload(context.Background(), live.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor10s(t, "A's live target first check", func() bool { return e.countChecks(t, live.ID) > 0 })
 	users := e.userCount(t)
 
 	resp, body := e.post(t, bob, "/account/delete", url.Values{"current": {testSecret}})
@@ -331,19 +342,56 @@ func testIsolationDelete(t *testing.T) {
 	if _, ok := e.mon.Get(bws.ID(), b.target); ok {
 		t.Error("B's runner survived B's deletion")
 	}
-	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
+	before.Targets = nil // the live target was added after the snapshot
+	after := snapshotWS(t, e.opWS, a)
+	after.Targets = nil
+	if !reflect.DeepEqual(before, after) {
 		t.Errorf("B's deletion changed A's data:\nbefore %+v\nafter  %+v", before, after)
 	}
 	if _, ok := e.mon.Get(e.opWS.ID(), a.target); !ok {
 		t.Fatal("A's runner was removed by B's deletion")
 	}
-	// A's runner still works: a manual check records a new row.
-	e.mon.CheckNow(context.Background(), a.target)
-	waitFor10s(t, "A's runner to record a check", func() bool { return e.countChecks(t, a.target) > checks })
+	// A's runner keeps probing on its own interval; no manual check is made.
+	n := e.countChecks(t, live.ID)
+	waitFor10s(t, "A's runner to record a check after B's deletion", func() bool { return e.countChecks(t, live.ID) > n })
 	e.signIn(t, opEmail, testSecret) // A can still sign in
 	if resp, body := e.get(t, e.client(t), "/s/default"); resp.StatusCode != http.StatusOK || !strings.Contains(body, isoTarget) {
 		t.Errorf("A's status page after B's deletion: %d", resp.StatusCode)
 	}
+}
+
+// userRow reads a user's credentials, creation time and memberships as raw
+// text, so any rewrite of the row shows up byte for byte.
+func (e *env) userRow(t *testing.T, email string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var id int64
+	var hash, created string
+	if err := db.QueryRow(`SELECT id, password_hash, CAST(created_at AS TEXT) FROM users WHERE email = ?`, email).Scan(&id, &hash, &created); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`SELECT workspace_id, role FROM memberships WHERE user_id = ? ORDER BY workspace_id`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := strconv.FormatInt(id, 10) + "|" + hash + "|" + created
+	for rows.Next() {
+		var ws int64
+		var role string
+		if err := rows.Scan(&ws, &role); err != nil {
+			t.Fatal(err)
+		}
+		out += "|" + strconv.FormatInt(ws, 10) + ":" + role
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // testIsolationInvite: an invite bound to A's email cannot create a second
@@ -355,20 +403,29 @@ func testIsolationInvite(t *testing.T) {
 	before := snapshotWS(t, e.opWS, a)
 	users := e.userCount(t)
 	raw := e.invite(t, opEmail)
+	userBefore := e.userRow(t, opEmail)
+	// The attack uses a password that is not A's, so a rewrite of A's row
+	// cannot hide behind a hash of the same password.
+	attack := func(email string) url.Values {
+		f := signupForm(raw, email)
+		f.Set("password", "attacker-pw-zz")
+		f.Set("confirm", "attacker-pw-zz")
+		return f
+	}
 
 	// Anonymous, with A's own email: the duplicate path.
-	resp, body := e.post(t, e.client(t), "/signup", signupForm(raw, opEmail))
+	resp, body := e.post(t, e.client(t), "/signup", attack(opEmail))
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgEmailTaken) {
 		t.Errorf("anonymous, A's email: %d %s", resp.StatusCode, body)
 	}
 	// Anonymous, with a different email: the invite is bound.
-	resp, body = e.post(t, e.client(t), "/signup", signupForm(raw, "evil@example.com"))
+	resp, body = e.post(t, e.client(t), "/signup", attack("evil@example.com"))
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgInviteEmail) {
 		t.Errorf("anonymous, other email: %d %s", resp.StatusCode, body)
 	}
 	// Signed in as B: guests only, so B is sent home and nothing is created.
 	for _, em := range []string{opEmail, "evil@example.com"} {
-		resp, _ = e.post(t, bob, "/signup", signupForm(raw, em))
+		resp, _ = e.post(t, bob, "/signup", attack(em))
 		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 			t.Errorf("B signing up with %s: %d %q", em, resp.StatusCode, resp.Header.Get("Location"))
 		}
@@ -376,7 +433,15 @@ func testIsolationInvite(t *testing.T) {
 	if got := e.userCount(t); got != users {
 		t.Errorf("users = %d, want %d: a second account was created", got, users)
 	}
-	e.signIn(t, opEmail, testSecret) // A can still sign in
+	if after := e.userRow(t, opEmail); after != userBefore {
+		t.Errorf("A's user row changed:\nbefore %s\nafter  %s", userBefore, after)
+	}
+	if resp, _ := e.post(t, e.client(t), "/login", url.Values{"email": {opEmail}, "password": {"attacker-pw-zz"}}); resp.StatusCode == http.StatusSeeOther {
+		t.Error("the attacker's password signs in as A")
+	}
+	if resp, body := e.get(t, e.signIn(t, opEmail, testSecret), "/"); resp.StatusCode != http.StatusOK || !strings.Contains(body, isoTarget) {
+		t.Errorf("A's sign-in no longer lands in A's workspace: %d", resp.StatusCode)
+	}
 	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
 		t.Errorf("sign-up attempts changed A's data:\nbefore %+v\nafter  %+v", before, after)
 	}
