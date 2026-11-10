@@ -4,8 +4,140 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 )
+
+// OperatorWorkspaceID is the workspace that always exists (D-123): it holds
+// the data of a pre-accounts install and is the operator's own workspace.
+// Public instances treat it specially: its targets are exempt from the
+// workspace limits and from the host-rate check (D-124), and it backs the
+// /status redirect (D-125).
+const OperatorWorkspaceID int64 = 1
+
+var (
+	// ErrInvalidSlug is returned for a slug that breaks the slug rules.
+	ErrInvalidSlug = errors.New("The address must be 3-40 characters: lowercase letters, digits and hyphens, not starting or ending with a hyphen.")
+	// ErrSlugTaken is returned when another workspace already has the slug.
+	ErrSlugTaken = errors.New("That address is already taken.")
+)
+
+// ValidSlug reports whether s is 3-40 characters of [a-z0-9-] with no leading
+// or trailing hyphen.
+func ValidSlug(s string) bool {
+	if len(s) < 3 || len(s) > 40 || s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// isSlugTaken reports whether err is the workspaces.slug UNIQUE violation.
+func isSlugTaken(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: workspaces.slug")
+}
+
+// DeriveSlug builds an unused slug from a workspace name: lowercase, runs of
+// other characters become "-", ends trimmed, cut to 40; a result under 3
+// characters becomes "ws-" plus 6 random base32 characters; on a collision
+// "-2", "-3" and so on are appended, shortening the base to fit.
+func DeriveSlug(ctx context.Context, q querier, name string) (string, error) {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			dash = false
+			b.WriteRune(r)
+		} else {
+			dash = true
+		}
+	}
+	base := strings.TrimRight(truncate(b.String(), 40), "-")
+	if len(base) < 3 {
+		base = "ws-" + randomBase32(6)
+	}
+	for n := 1; n <= 1000; n++ {
+		cand := base
+		if n > 1 {
+			suffix := "-" + strconv.Itoa(n)
+			cand = strings.TrimRight(truncate(base, 40-len(suffix)), "-") + suffix
+		}
+		var taken bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = ?)`, cand).Scan(&taken); err != nil {
+			return "", err
+		}
+		if !taken {
+			return cand, nil
+		}
+	}
+	return "", errors.New("store: no free slug")
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// SetSlug changes the workspace's public address.
+func (w *WS) SetSlug(ctx context.Context, slug string) error {
+	if !ValidSlug(slug) {
+		return ErrInvalidSlug
+	}
+	res, err := w.db.ExecContext(ctx, `UPDATE workspaces SET slug = ? WHERE id = ?`, slug, w.id)
+	if isSlugTaken(err) {
+		return ErrSlugTaken
+	}
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// Rename changes the workspace's name.
+func (w *WS) Rename(ctx context.Context, name string) error {
+	res, err := w.db.ExecContext(ctx, `UPDATE workspaces SET name = ? WHERE id = ?`, name, w.id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// CountTargets returns the number of targets in the workspace.
+func (w *WS) CountTargets(ctx context.Context) (int, error) {
+	var n int
+	err := w.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM targets WHERE workspace_id = ?`, w.id).Scan(&n)
+	return n, err
+}
+
+// CountWorkspaces returns the number of workspaces.
+func (s *Store) CountWorkspaces(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspaces`).Scan(&n)
+	return n, err
+}
+
+// TargetsInOtherWorkspaces returns the targets of every workspace except
+// exceptWS and the operator's, for the host-rate check.
+func (s *Store) TargetsInOtherWorkspaces(ctx context.Context, exceptWS int64) ([]Target, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+targetCols+` FROM targets WHERE workspace_id <> ? AND workspace_id <> ? ORDER BY id`,
+		exceptWS, OperatorWorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return scanTargets(rows)
+}
 
 // inWS restricts a query on a table with a target_id column (checks,
 // incidents, alerts, daily) to the targets of one workspace. It takes one

@@ -16,6 +16,8 @@ var (
 	ErrSetupDone = errors.New("setup is already complete")
 	// ErrEmailTaken is returned when an email is already registered.
 	ErrEmailTaken = errors.New("email is already registered")
+	// ErrInviteEmail is returned when an invite is bound to another address.
+	ErrInviteEmail = errors.New("This invite is for a different email address.")
 	// ErrInvalidEmail is returned by NormalizeEmail.
 	ErrInvalidEmail = errors.New("Enter a valid email address.")
 )
@@ -244,8 +246,12 @@ func (s *Store) CompleteSetup(ctx context.Context, in SetupInput) (User, error) 
 // AccountInput describes a new user with a workspace of their own.
 type AccountInput struct {
 	Email, PasswordHash, WorkspaceName, Slug string
-	Operator                                 bool
-	Now                                      time.Time
+	// InviteToken, when set, is consumed in the same transaction.
+	InviteToken string
+	Operator    bool
+	// Verified marks the address verified at creation.
+	Verified bool
+	Now      time.Time
 }
 
 // CreateAccount creates a user, a new workspace and the owner membership in
@@ -256,11 +262,39 @@ func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, 
 		return User{}, nil, err
 	}
 	defer tx.Rollback()
-	u, err := insertUser(ctx, tx, in.Email, in.PasswordHash, in.Operator, false, in.Now)
+	if in.InviteToken != "" {
+		email, err := NormalizeEmail(in.Email)
+		if err != nil {
+			return User{}, nil, err
+		}
+		t, err := peekToken(ctx, tx, TokenInvite, in.InviteToken, in.Now)
+		if err != nil {
+			return User{}, nil, err
+		}
+		if t.Email != "" && t.Email != email {
+			return User{}, nil, ErrInviteEmail
+		}
+	}
+	u, err := insertUser(ctx, tx, in.Email, in.PasswordHash, in.Operator, in.Verified, in.Now)
 	if err != nil {
 		return User{}, nil, err
 	}
-	ws, err := createWorkspace(ctx, tx, in.WorkspaceName, in.Slug, in.Now)
+	if in.InviteToken != "" {
+		t, err := consumeToken(ctx, tx, TokenInvite, in.InviteToken, in.Now)
+		if err != nil {
+			return User{}, nil, err
+		}
+		if t.Email != "" && t.Email != u.Email {
+			return User{}, nil, ErrInviteEmail
+		}
+	}
+	slug := in.Slug
+	if slug == "" {
+		if slug, err = DeriveSlug(ctx, tx, in.WorkspaceName); err != nil {
+			return User{}, nil, err
+		}
+	}
+	ws, err := createWorkspace(ctx, tx, in.WorkspaceName, slug, in.Now)
 	if err != nil {
 		return User{}, nil, err
 	}

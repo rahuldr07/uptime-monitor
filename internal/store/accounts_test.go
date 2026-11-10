@@ -776,3 +776,386 @@ func userWorkspace(s *Store, userID int64) (*WS, Workspace, error) {
 	}
 	return s.Workspace(ws.ID), ws, nil
 }
+
+func TestInviteTokens(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	ttl := 7 * 24 * time.Hour
+
+	bound, err := s.CreateInvite(ctx, "  New@X.Co ", ttl, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open1, err := s.CreateInvite(ctx, "", ttl, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Creating the second invite deleted nothing.
+	tok, err := s.PeekToken(ctx, TokenInvite, bound, now)
+	if err != nil || tok.Email != "new@x.co" || tok.UserID != 0 || tok.Kind != TokenInvite {
+		t.Fatalf("bound: %v %+v", err, tok)
+	}
+	tok, err = s.PeekToken(ctx, TokenInvite, open1, now)
+	if err != nil || tok.Email != "" {
+		t.Fatalf("unbound: %v %+v", err, tok)
+	}
+	if _, err := s.CreateInvite(ctx, "not an email", ttl, now); err == nil {
+		t.Fatal("invalid email accepted")
+	}
+	// Expiry after 7 days.
+	if _, err := s.PeekToken(ctx, TokenInvite, bound, now.Add(ttl-time.Second)); err != nil {
+		t.Fatalf("before expiry: %v", err)
+	}
+	if _, err := s.PeekToken(ctx, TokenInvite, bound, now.Add(ttl+time.Second)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after expiry: %v", err)
+	}
+	// Single use.
+	if _, err := consumeToken(ctx, s.db, TokenInvite, open1, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := consumeToken(ctx, s.db, TokenInvite, open1, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second consume: %v", err)
+	}
+	if _, err := s.PeekToken(ctx, TokenInvite, bound, now); err != nil {
+		t.Fatalf("other invite lost: %v", err)
+	}
+}
+
+func TestCreateAccountWithInvite(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	ttl := 7 * 24 * time.Hour
+	userCount := func() int { n, _ := s.CountUsers(ctx); return n }
+
+	inv, _ := s.CreateInvite(ctx, "", ttl, now)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", InviteToken: inv, Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.VerifiedAt == nil {
+		t.Fatal("Verified: true did not set VerifiedAt")
+	}
+	got, _ := userByID(s, u.ID)
+	if got.VerifiedAt == nil {
+		t.Fatal("verified_at not stored")
+	}
+	if _, err := s.PeekToken(ctx, TokenInvite, inv, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("invite not consumed: %v", err)
+	}
+
+	// Without Verified the user is unverified.
+	u2, _, err := s.CreateAccount(ctx, AccountInput{Email: "u@x.co", PasswordHash: "x", WorkspaceName: "U", Slug: "u", Now: now})
+	if err != nil || u2.VerifiedAt != nil {
+		t.Fatalf("unverified: %v %+v", err, u2)
+	}
+
+	// Duplicate email: invite stays unused and a retry succeeds.
+	inv2, _ := s.CreateInvite(ctx, "", ttl, now)
+	_, _, err = s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A2", Slug: "a2", InviteToken: inv2, Now: now})
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("dup: %v", err)
+	}
+	if _, err := s.PeekToken(ctx, TokenInvite, inv2, now); err != nil {
+		t.Fatalf("invite consumed by failed create: %v", err)
+	}
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "c@x.co", PasswordHash: "x", WorkspaceName: "C", Slug: "c", InviteToken: inv2, Now: now}); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	// Email mismatch writes nothing and leaves the invite unused.
+	before := userCount()
+	inv3, _ := s.CreateInvite(ctx, "a@x.co", ttl, now)
+	_, _, err = s.CreateAccount(ctx, AccountInput{Email: "b@x.co", PasswordHash: "x", WorkspaceName: "B", Slug: "b", InviteToken: inv3, Now: now})
+	if !errors.Is(err, ErrInviteEmail) {
+		t.Fatalf("mismatch: %v", err)
+	}
+	if userCount() != before {
+		t.Fatal("mismatch wrote a user")
+	}
+	if _, err := s.WorkspaceBySlug(ctx, "b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mismatch wrote a workspace: %v", err)
+	}
+	if _, err := s.PeekToken(ctx, TokenInvite, inv3, now); err != nil {
+		t.Fatalf("invite consumed by mismatch: %v", err)
+	}
+	// A matching email (case-insensitive) works.
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "A@X.co", PasswordHash: "x", WorkspaceName: "A3", Slug: "a3", InviteToken: inv3, Now: now}); !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("matching email on taken address: %v", err)
+	}
+
+	// Unknown invite creates nothing.
+	before = userCount()
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "z@x.co", PasswordHash: "x", WorkspaceName: "Z", Slug: "z", InviteToken: "bogus", Now: now}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bogus invite: %v", err)
+	}
+	if userCount() != before {
+		t.Fatal("bogus invite wrote a user")
+	}
+
+	// Concurrent use of one invite creates exactly one user.
+	inv4, _ := s.CreateInvite(ctx, "", ttl, now)
+	before = userCount()
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e := []string{"p@x.co", "q@x.co"}[i]
+			_, _, errs[i] = s.CreateAccount(ctx, AccountInput{Email: e, PasswordHash: "x", WorkspaceName: "W" + e, Slug: "w" + e[:1], InviteToken: inv4, Now: now})
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, err := range errs {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrNotFound) {
+			t.Fatal(err)
+		}
+	}
+	if ok != 1 || userCount() != before+1 {
+		t.Fatalf("successes = %d, users added = %d", ok, userCount()-before)
+	}
+}
+
+func TestDeriveSlug(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+
+	got, err := DeriveSlug(ctx, s.db, "My Team!")
+	if err != nil || got != "my-team" {
+		t.Fatalf("my team: %q %v", got, err)
+	}
+	for _, name := range []string{"  ---  ", "é", "ab"} {
+		got, err := DeriveSlug(ctx, s.db, name)
+		if err != nil || !strings.HasPrefix(got, "ws-") || len(got) != 9 || !ValidSlug(got) {
+			t.Fatalf("%q: %q %v", name, got, err)
+		}
+		for _, r := range got[3:] {
+			if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyz234567", r) {
+				t.Fatalf("%q: %q not base32", name, got)
+			}
+		}
+	}
+	got, err = DeriveSlug(ctx, s.db, strings.Repeat("abcdefghi ", 6))
+	if err != nil || len(got) > 40 || !ValidSlug(got) {
+		t.Fatalf("long: %q %v", got, err)
+	}
+
+	if _, err := createWorkspace(ctx, s.db, "My Team", "my-team", now); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = DeriveSlug(ctx, s.db, "My Team!")
+	if got != "my-team-2" {
+		t.Fatalf("collision: %q", got)
+	}
+	if _, err := createWorkspace(ctx, s.db, "My Team", got, now); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = DeriveSlug(ctx, s.db, "My Team!")
+	if got != "my-team-3" {
+		t.Fatalf("second collision: %q", got)
+	}
+
+	long := strings.Repeat("a", 40)
+	if _, err := createWorkspace(ctx, s.db, "L", long, now); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = DeriveSlug(ctx, s.db, long)
+	if got != strings.Repeat("a", 38)+"-2" || len(got) != 40 {
+		t.Fatalf("long collision: %q", got)
+	}
+
+	// CreateAccount derives a slug when none is given.
+	_, ws, err := s.CreateAccount(ctx, AccountInput{Email: "d@x.co", PasswordHash: "x", WorkspaceName: "My Team", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := ws.Info(ctx)
+	if info.Slug != "my-team-3" {
+		t.Fatalf("derived slug: %q", info.Slug)
+	}
+}
+
+func TestValidSlug(t *testing.T) {
+	for s, want := range map[string]bool{
+		"abc": true, "a-b": true, "my-team-2": true, strings.Repeat("a", 40): true,
+		"ab": false, "": false, "-ab": false, "ab-": false, "Abc": false, "a_b": false, "a b": false,
+		strings.Repeat("a", 41): false, "é-é": false,
+	} {
+		if ValidSlug(s) != want {
+			t.Errorf("ValidSlug(%q) = %v", s, !want)
+		}
+	}
+}
+
+func TestSetSlugAndRename(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	_, a, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "alpha", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "b@x.co", PasswordHash: "x", WorkspaceName: "B", Slug: "beta", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "ab", "-abc", "abc-", "ABC", "a_c", strings.Repeat("a", 41)} {
+		if err := a.SetSlug(ctx, bad); !errors.Is(err, ErrInvalidSlug) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	if err := a.SetSlug(ctx, "beta"); !errors.Is(err, ErrSlugTaken) {
+		t.Fatalf("taken: %v", err)
+	}
+	if err := a.SetSlug(ctx, "gamma"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetSlug(ctx, "gamma"); err != nil {
+		t.Fatalf("same slug on itself: %v", err)
+	}
+	if err := a.Rename(ctx, "Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := a.Info(ctx)
+	if info.Slug != "gamma" || info.Name != "Renamed" {
+		t.Fatalf("info: %+v", info)
+	}
+	if _, err := s.WorkspaceBySlug(ctx, "alpha"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old slug: %v", err)
+	}
+}
+
+func TestCounts(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if OperatorWorkspaceID != 1 {
+		t.Fatal("operator workspace is not 1")
+	}
+	if n, err := s.CountWorkspaces(ctx); err != nil || n != 1 {
+		t.Fatalf("workspaces: %d %v", n, err)
+	}
+	_, a, _ := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "alpha", Now: now})
+	_, b, _ := s.CreateAccount(ctx, AccountInput{Email: "b@x.co", PasswordHash: "x", WorkspaceName: "B", Slug: "beta", Now: now})
+	if n, _ := s.CountWorkspaces(ctx); n != 3 {
+		t.Fatalf("workspaces = %d", n)
+	}
+	mk := func(w *WS, name string) {
+		t.Helper()
+		if _, err := w.CreateTarget(ctx, Target{Name: name, URL: "https://" + name, Interval: time.Minute, Timeout: time.Second}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(s.Workspace(1), "op1")
+	mk(a, "a1")
+	mk(a, "a2")
+	mk(b, "b1")
+	if n, err := a.CountTargets(ctx); err != nil || n != 2 {
+		t.Fatalf("a targets: %d %v", n, err)
+	}
+	if n, _ := s.Workspace(1).CountTargets(ctx); n != 1 {
+		t.Fatalf("op targets: %d", n)
+	}
+	others, err := s.TargetsInOtherWorkspaces(ctx, a.ID())
+	if err != nil || len(others) != 1 || others[0].Name != "b1" {
+		t.Fatalf("others: %v %+v", err, others)
+	}
+	others, _ = s.TargetsInOtherWorkspaces(ctx, 999)
+	if len(others) != 3 {
+		t.Fatalf("others of none = %d", len(others))
+	}
+}
+
+func TestDeleteAccount(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	op, err := s.CompleteSetup(ctx, func() SetupInput {
+		raw, _ := s.CreateToken(ctx, TokenSetup, 0, time.Hour, now)
+		return SetupInput{Email: "op@x.co", PasswordHash: "x", WorkspaceName: "Op", SetupToken: raw, Now: now}
+	}())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opWS := s.Workspace(1)
+	seedWS(t, s, opWS, "opsite", now)
+
+	ub, wsB, err := s.CreateAccount(ctx, AccountInput{Email: "b@x.co", PasswordHash: "x", WorkspaceName: "B", Slug: "beta", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := seedWS(t, s, wsB, "bsite", now)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO daily (target_id, day, total, ok, lat_sum) VALUES (?, 1, 1, 1, 1)`, fx.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateSession(ctx, ub.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateToken(ctx, TokenReset, ub.ID, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	// A workspace shared with another member survives.
+	uc, wsC, _ := s.CreateAccount(ctx, AccountInput{Email: "c@x.co", PasswordHash: "x", WorkspaceName: "C", Slug: "gamma", Now: now})
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, 'viewer', ?)`, ub.ID, wsC.ID(), now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	_ = uc
+
+	deleted, err := s.DeleteAccount(ctx, ub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != wsB.ID() {
+		t.Fatalf("deleted = %v", deleted)
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, tbl := range []string{"checks", "incidents", "alerts", "daily"} {
+		if n := count(`SELECT COUNT(*) FROM `+tbl+` WHERE target_id = ?`, fx.target.ID); n != 0 {
+			t.Errorf("%s rows left: %d", tbl, n)
+		}
+	}
+	for q, args := range map[string][]any{
+		`SELECT COUNT(*) FROM workspaces WHERE id = ?`:          {wsB.ID()},
+		`SELECT COUNT(*) FROM targets WHERE workspace_id=?`:     {wsB.ID()},
+		`SELECT COUNT(*) FROM maintenance WHERE workspace_id=?`: {wsB.ID()},
+		`SELECT COUNT(*) FROM settings WHERE workspace_id=?`:    {wsB.ID()},
+		`SELECT COUNT(*) FROM users WHERE id = ?`:               {ub.ID},
+		`SELECT COUNT(*) FROM sessions WHERE user_id = ?`:       {ub.ID},
+		`SELECT COUNT(*) FROM tokens WHERE user_id = ?`:         {ub.ID},
+		`SELECT COUNT(*) FROM memberships WHERE user_id = ?`:    {ub.ID},
+	} {
+		if n := count(q, args...); n != 0 {
+			t.Errorf("%s = %d", q, n)
+		}
+	}
+	if n := count(`SELECT COUNT(*) FROM workspaces WHERE id = ?`, wsC.ID()); n != 1 {
+		t.Error("shared workspace deleted")
+	}
+	if _, err := s.DeleteAccount(ctx, ub.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+
+	// The only operator cannot be deleted and nothing changes.
+	before := countsOf(t, opWS, now)
+	if _, err := s.DeleteAccount(ctx, op.ID); !errors.Is(err, ErrLastOperator) {
+		t.Fatalf("operator: %v", err)
+	}
+	if after := countsOf(t, opWS, now); after != before {
+		t.Fatalf("operator data changed: %+v -> %+v", before, after)
+	}
+	if n := count(`SELECT COUNT(*) FROM users WHERE id = ?`, op.ID); n != 1 {
+		t.Fatal("operator deleted")
+	}
+}
