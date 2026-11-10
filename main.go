@@ -206,7 +206,7 @@ func loadNotifiers(ctx context.Context, st *store.Store, cfg *config.Config, log
 	if err == nil {
 		var n config.Notify
 		if jerr := json.Unmarshal([]byte(raw), &n); jerr == nil {
-			return notify.FromConfig(n, logger), nil
+			return notify.FromConfig(n, logger, cfg.AllowPrivate(true)), nil
 		}
 		logger.Warn("stored notify settings are invalid; using config file")
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -217,7 +217,7 @@ func loadNotifiers(ctx context.Context, st *store.Store, cfg *config.Config, log
 			return nil, err
 		}
 	}
-	return notify.FromConfig(cfg.Notify, logger), nil
+	return notify.FromConfig(cfg.Notify, logger, cfg.AllowPrivate(true)), nil
 }
 
 func pruneLoop(ctx context.Context, st *store.Store, retention time.Duration, logger *slog.Logger) {

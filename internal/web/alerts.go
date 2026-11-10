@@ -140,7 +140,7 @@ func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request) (config.Noti
 		s.fail(w, err)
 		return n, false
 	}
-	s.mon.SetNotifiers(notify.FromConfig(n, s.logger))
+	s.mon.SetNotifiers(notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(true)))
 	return n, true
 }
 

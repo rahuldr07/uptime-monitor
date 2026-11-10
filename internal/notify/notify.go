@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"uptimemon/internal/config"
+	"uptimemon/internal/netguard"
 )
 
 // Event describes a state change for a target.
@@ -127,6 +128,8 @@ type Email struct {
 	SendMail func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
 	// TLSConfig overrides the TLS settings, for tests.
 	TLSConfig *tls.Config
+	// Dial opens the connection. Nil means an unguarded dialer.
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // emailTimeout bounds one delivery attempt when the caller's context has no
@@ -165,6 +168,9 @@ func (e Email) Notify(ctx context.Context, ev Event) error {
 		err = e.send(ctx, auth, []byte(msg))
 	}
 	if err != nil {
+		if errors.Is(err, netguard.ErrBlocked) {
+			return fmt.Errorf("email: %w", netguard.ErrBlocked)
+		}
 		return fmt.Errorf("email: %w", err)
 	}
 	return nil
@@ -176,8 +182,11 @@ func (e Email) send(ctx context.Context, auth smtp.Auth, msg []byte) error {
 		ctx, cancel = context.WithTimeout(ctx, emailTimeout)
 		defer cancel()
 	}
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(e.Host, strconv.Itoa(e.Port)))
+	dial := e.Dial
+	if dial == nil {
+		dial = netguard.Dialer(true, 0).DialContext
+	}
+	conn, err := dial(ctx, "tcp", net.JoinHostPort(e.Host, strconv.Itoa(e.Port)))
 	if err != nil {
 		return err
 	}
@@ -264,8 +273,8 @@ func messageID(from string) string {
 
 // FromConfig builds the configured notifiers. With none configured it
 // returns a single Log channel so alerts are never silently dropped.
-func FromConfig(cfg config.Notify, logger *slog.Logger) Multi {
-	client := &http.Client{Timeout: 15 * time.Second}
+func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate bool) Multi {
+	client := netguard.Client(allowPrivate, 15*time.Second)
 	var m Multi
 	if t := cfg.Telegram; t != nil && t.BotToken != "" && !t.Disabled {
 		m = append(m, Named{"telegram", Telegram{Token: t.BotToken, ChatID: t.ChatID, Client: client}})
@@ -275,7 +284,8 @@ func FromConfig(cfg config.Notify, logger *slog.Logger) Multi {
 	}
 	if e := cfg.Email; e != nil && e.SMTPHost != "" && !e.Disabled {
 		m = append(m, Named{"email", Email{Host: e.SMTPHost, Port: e.SMTPPort, Username: e.Username,
-			Password: e.Password, From: e.From, To: e.To}})
+			Password: e.Password, From: e.From, To: e.To,
+			Dial: netguard.Dialer(allowPrivate, 30*time.Second).DialContext}})
 	}
 	if len(m) == 0 {
 		m = append(m, Named{"log", Log{Logger: logger}})
@@ -285,7 +295,7 @@ func FromConfig(cfg config.Notify, logger *slog.Logger) Multi {
 
 func postJSON(ctx context.Context, client *http.Client, url string, body any, name string) error {
 	if client == nil {
-		client = http.DefaultClient
+		client = netguard.Client(true, 15*time.Second)
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -301,6 +311,9 @@ func postJSON(ctx context.Context, client *http.Client, url string, body any, na
 		var ue *neturl.Error
 		if errors.As(err, &ue) {
 			err = ue.Err // drop the URL, which may carry a token
+		}
+		if errors.Is(err, netguard.ErrBlocked) {
+			return fmt.Errorf("%s: %w", name, netguard.ErrBlocked)
 		}
 		return fmt.Errorf("%s: %w", name, err)
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"uptimemon/internal/config"
+	"uptimemon/internal/netguard"
 )
 
 func TestMessage(t *testing.T) {
@@ -233,11 +234,11 @@ func TestMultiJoinsErrorsAndFromConfig(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "a: boom") {
 		t.Errorf("multi error: %v", err)
 	}
-	m := FromConfig(config.Notify{}, slog.Default())
+	m := FromConfig(config.Notify{}, slog.Default(), true)
 	if len(m) != 1 || m[0].Name != "log" {
 		t.Errorf("empty config should give log notifier: %+v", m)
 	}
-	m = FromConfig(config.Notify{Telegram: &config.Telegram{BotToken: "t", ChatID: "c"}, Slack: &config.Slack{WebhookURL: "https://h"}}, nil)
+	m = FromConfig(config.Notify{Telegram: &config.Telegram{BotToken: "t", ChatID: "c"}, Slack: &config.Slack{WebhookURL: "https://h"}}, nil, true)
 	if len(m) != 2 || m[0].Name != "telegram" || m[1].Name != "slack" {
 		t.Errorf("from config: %+v", m)
 	}
@@ -246,3 +247,26 @@ func TestMultiJoinsErrorsAndFromConfig(t *testing.T) {
 type notifierFunc func() error
 
 func (f notifierFunc) Notify(context.Context, Event) error { return f() }
+
+func TestNotifiersGuarded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	ctx := context.Background()
+	cfg := config.Notify{Slack: &config.Slack{WebhookURL: srv.URL}}
+
+	err := FromConfig(cfg, slog.Default(), false).Notify(ctx, Event{Target: "x"})
+	if !errors.Is(err, netguard.ErrBlocked) || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("slack guarded: %v", err)
+	}
+	if err := FromConfig(cfg, slog.Default(), true).Notify(ctx, Event{Target: "x"}); err != nil {
+		t.Fatalf("slack allowed: %v", err)
+	}
+
+	port, _, _ := fakeSMTPAt(t, "127.0.0.1", "250 8BITMIME")
+	mail := config.Notify{Email: &config.Email{SMTPHost: "127.0.0.1", SMTPPort: port,
+		From: "a@b.c", To: []string{"d@e.f"}}}
+	err = FromConfig(mail, slog.Default(), false).Notify(ctx, Event{Target: "x"})
+	if !errors.Is(err, netguard.ErrBlocked) || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("email guarded: %v", err)
+	}
+}
