@@ -56,7 +56,7 @@ func TestSecurityHeaders(t *testing.T) {
 
 func TestForwardedProtoNeedsTrustProxy(t *testing.T) {
 	login := func(e *env) *http.Cookie {
-		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader("password=pw"))
+		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("password=pw"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-Proto", "https")
 		resp, err := e.client(t).Do(req)
@@ -149,7 +149,7 @@ func TestStatusCacheNotBypassedByPartialHeader(t *testing.T) {
 	ctx := context.Background()
 	e.st.SetSetting(ctx, "status_title", "Old title")
 	get := func() string {
-		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/status", nil)
+		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/status", nil)
 		req.Header.Set("X-Partial", "1")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

@@ -8,11 +8,7 @@ import (
 
 func testRoutes(t *testing.T, e *env) []route {
 	t.Helper()
-	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s.routeTable()
+	return e.srv.routeTable()
 }
 
 func TestRouteTableIsComplete(t *testing.T) {
@@ -59,7 +55,7 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 	for _, r := range testRoutes(t, e) {
 		path := strings.ReplaceAll(strings.Replace(r.pattern, "/{$}", "/", 1), "{id}", "1")
 		if r.class == classAdmin {
-			req, _ := http.NewRequest(r.method, e.srv.URL+path, nil)
+			req, _ := http.NewRequest(r.method, e.ts.URL+path, nil)
 			if r.method == "POST" {
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			}
@@ -75,7 +71,7 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 			}
 		}
 		if r.method == "POST" {
-			req, _ := http.NewRequest("POST", e.srv.URL+path, nil)
+			req, _ := http.NewRequest("POST", e.ts.URL+path, nil)
 			req.Header.Set("Origin", "https://evil.example")
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			resp, err := c.Do(req)

@@ -82,20 +82,6 @@ INSERT INTO daily (target_id, day, total, ok, lat_sum)
 	FROM checks WHERE maint = 0 GROUP BY target_id, checked_at / 86400000;
 `
 
-// querier is satisfied by *sql.DB and *sql.Tx. The store uses a single
-// connection, so code running inside a transaction must query through the
-// transaction, never the DB.
-type querier interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-var (
-	_ querier = (*sql.DB)(nil)
-	_ querier = (*sql.Tx)(nil)
-)
-
 // steps are the numbered schema migrations; step N brings PRAGMA user_version
 // to N. Append new steps, never edit existing ones.
 var steps = []func(context.Context, *sql.Tx) error{v1}

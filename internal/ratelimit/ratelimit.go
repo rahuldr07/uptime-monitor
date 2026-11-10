@@ -11,7 +11,7 @@ import (
 // DefaultMaxKeys is the key cap used when New is given a maxKeys of 0 or less.
 const DefaultMaxKeys = 100_000
 
-// Limiter allows fewer than max events per key in any sliding window. It is
+// Limiter allows at most max events per key in any sliding window. It is
 // safe for concurrent use.
 type Limiter struct {
 	// Now returns the current time; nil means time.Now. Set it only before

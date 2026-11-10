@@ -21,7 +21,8 @@ import (
 )
 
 type env struct {
-	srv   *httptest.Server
+	ts    *httptest.Server
+	srv   *Server
 	st    *store.Store
 	mon   *monitor.Monitor
 	cfg   *config.Config
@@ -50,8 +51,9 @@ func newEnv(t *testing.T, password string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv = httptest.NewServer(s.Handler())
-	t.Cleanup(e.srv.Close)
+	e.srv = s
+	e.ts = httptest.NewServer(s.Handler())
+	t.Cleanup(e.ts.Close)
 	return e
 }
 
@@ -62,7 +64,7 @@ func (e *env) client(t *testing.T) *http.Client {
 
 func (e *env) get(t *testing.T, c *http.Client, path string) (*http.Response, string) {
 	t.Helper()
-	resp, err := c.Get(e.srv.URL + path)
+	resp, err := c.Get(e.ts.URL + path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func (e *env) get(t *testing.T, c *http.Client, path string) (*http.Response, st
 
 func (e *env) post(t *testing.T, c *http.Client, path string, form url.Values) (*http.Response, string) {
 	t.Helper()
-	resp, err := c.PostForm(e.srv.URL+path, form)
+	resp, err := c.PostForm(e.ts.URL+path, form)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 	if _, body := e.get(t, c, "/"); !strings.Contains(body, "All systems operational") || !strings.Contains(body, "Site") {
 		t.Fatal("dashboard should list target as up")
 	}
-	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/", nil)
 	req.Header.Set("X-Partial", "1")
 	if resp, err := c.Do(req); err != nil || resp.StatusCode != 200 {
 		t.Fatal("partial request failed")
@@ -200,7 +202,7 @@ func TestNewEndpoints(t *testing.T) {
 	defer up.Close()
 
 	// Test URL probe without saving.
-	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/targets/test", strings.NewReader(url.Values{"url": {up.URL}, "keyword": {"fine"}}.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/targets/test", strings.NewReader(url.Values{"url": {up.URL}, "keyword": {"fine"}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.Do(req)
@@ -217,7 +219,7 @@ func TestNewEndpoints(t *testing.T) {
 	}
 
 	// JSON create via the slide-over.
-	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/targets", strings.NewReader(url.Values{"url": {"example.org/x"}, "name": {"Ex"}, "interval": {"1h"}, "timeout": {"5s"}, "group": {"Core"}}.Encode()))
+	req, _ = http.NewRequest(http.MethodPost, e.ts.URL+"/targets", strings.NewReader(url.Values{"url": {"example.org/x"}, "name": {"Ex"}, "interval": {"1h"}, "timeout": {"5s"}, "group": {"Core"}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, _ = c.Do(req)
@@ -250,7 +252,7 @@ func TestNewEndpoints(t *testing.T) {
 	if _, body := e.get(t, c, "/incidents"); !strings.Contains(body, "Acknowledge") || !strings.Contains(body, "1 ongoing and unacknowledged") {
 		t.Fatal("incidents page should offer acknowledge")
 	}
-	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/incidents/"+strconv.FormatInt(id, 10)+"/ack", nil)
+	req, _ = http.NewRequest(http.MethodPost, e.ts.URL+"/incidents/"+strconv.FormatInt(id, 10)+"/ack", nil)
 	req.Header.Set("Accept", "application/json")
 	resp, _ = c.Do(req)
 	b, _ = io.ReadAll(resp.Body)
@@ -277,7 +279,7 @@ func TestNewEndpoints(t *testing.T) {
 	}
 
 	// Theme cookie is reflected on <html>.
-	req, _ = http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+	req, _ = http.NewRequest(http.MethodGet, e.ts.URL+"/", nil)
 	req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
 	resp, _ = c.Do(req)
 	b, _ = io.ReadAll(resp.Body)
@@ -289,7 +291,7 @@ func TestNewEndpoints(t *testing.T) {
 	// SSE stream delivers an event when a check runs.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, e.srv.URL+"/events", nil)
+	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, e.ts.URL+"/events", nil)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -419,19 +421,19 @@ func TestSafeNextAndCSRF(t *testing.T) {
 	}
 	e := newEnv(t, "")
 	c := e.client(t)
-	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/targets", strings.NewReader("name=x&url=https://x"))
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/targets", strings.NewReader("name=x&url=https://x"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://evil.example")
 	resp, _ := c.Do(req)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-site origin should be rejected, got %d", resp.StatusCode)
 	}
-	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/logout", nil)
+	req, _ = http.NewRequest(http.MethodPost, e.ts.URL+"/logout", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	if resp, _ = c.Do(req); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-site fetch metadata should be rejected, got %d", resp.StatusCode)
 	}
-	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/logout", nil)
+	req, _ = http.NewRequest(http.MethodPost, e.ts.URL+"/logout", nil)
 	req.Header.Set("Origin", "http://"+req.Host)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	if resp, _ = c.Do(req); resp.StatusCode != http.StatusSeeOther {
@@ -453,7 +455,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 		t.Fatal("no session cookie issued")
 	}
 	e.post(t, c, "/logout", nil)
-	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/status", nil)
+	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/api/status", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
 	if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("old cookie should be revoked after logout, got %d", r.StatusCode)
@@ -502,7 +504,7 @@ func TestLoginLimiterNotBypassedBySpoofedXFF(t *testing.T) {
 	e.cfg.TrustProxy = true
 	var last int
 	for i := 0; i < 8; i++ {
-		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader("password=wrong"))
+		req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("password=wrong"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i)+", 9.9.9.9")
 		resp, err := e.client(t).Do(req)
@@ -521,14 +523,14 @@ func TestReviewRegressions(t *testing.T) {
 	c := e.client(t)
 	// Programmatic requests get 401, not a redirect.
 	for _, h := range [][2]string{{"X-Partial", "1"}, {"Accept", "application/json"}, {"Accept", "text/event-stream"}} {
-		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/", nil)
+		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/", nil)
 		req.Header.Set(h[0], h[1])
 		if r, _ := c.Do(req); r.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("%s=%s should give 401, got %d", h[0], h[1], r.StatusCode)
 		}
 	}
 	// Origin: null is cross-site.
-	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader("password=pw"))
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/login", strings.NewReader("password=pw"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "null")
 	if r, _ := c.Do(req); r.StatusCode != http.StatusForbidden {
@@ -661,10 +663,7 @@ func TestNewRequiresDependencies(t *testing.T) {
 
 func TestLoadByID(t *testing.T) {
 	e := newEnv(t, "")
-	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := e.srv
 	boom := errors.New("boom")
 	get := func(_ context.Context, id int64) (string, error) {
 		switch id {
