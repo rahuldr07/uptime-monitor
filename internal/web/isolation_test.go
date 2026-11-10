@@ -306,6 +306,106 @@ func TestIsolationSuite(t *testing.T) {
 	t.Run("aggregates", testIsolationAggregates)
 	t.Run("live", testIsolationLive)
 	t.Run("status", testIsolationStatus)
+	t.Run("delete", testIsolationDelete)
+	t.Run("invite", testIsolationInvite)
+	t.Run("slug", testIsolationSlug)
+}
+
+// testIsolationDelete: B deleting their own account removes only B.
+func testIsolationDelete(t *testing.T) {
+	e := newEnv(t)
+	bob, bws := e.account(t, "b@example.com")
+	a := seedA(t, e)
+	b := seedWorkspace(t, e, bws, "B-target-zz", "B-maint-zz")
+	before := snapshotWS(t, e.opWS, a)
+	checks := e.countChecks(t, a.target)
+	users := e.userCount(t)
+
+	resp, body := e.post(t, bob, "/account/delete", url.Values{"current": {testSecret}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login?") {
+		t.Fatalf("B's delete: %d %q %s", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
+	if got := e.userCount(t); got != users-1 {
+		t.Errorf("users after delete = %d, want %d", got, users-1)
+	}
+	if _, ok := e.mon.Get(bws.ID(), b.target); ok {
+		t.Error("B's runner survived B's deletion")
+	}
+	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
+		t.Errorf("B's deletion changed A's data:\nbefore %+v\nafter  %+v", before, after)
+	}
+	if _, ok := e.mon.Get(e.opWS.ID(), a.target); !ok {
+		t.Fatal("A's runner was removed by B's deletion")
+	}
+	// A's runner still works: a manual check records a new row.
+	e.mon.CheckNow(context.Background(), a.target)
+	waitFor10s(t, "A's runner to record a check", func() bool { return e.countChecks(t, a.target) > checks })
+	e.signIn(t, opEmail, testSecret) // A can still sign in
+	if resp, body := e.get(t, e.client(t), "/s/default"); resp.StatusCode != http.StatusOK || !strings.Contains(body, isoTarget) {
+		t.Errorf("A's status page after B's deletion: %d", resp.StatusCode)
+	}
+}
+
+// testIsolationInvite: an invite bound to A's email cannot create a second
+// account for that address, whoever presents it.
+func testIsolationInvite(t *testing.T) {
+	e := newSignupEnv(t, `{"signup":"invite","base_url":"http://localhost:8080"}`)
+	bob, _ := e.account(t, "b@example.com")
+	a := seedA(t, e)
+	before := snapshotWS(t, e.opWS, a)
+	users := e.userCount(t)
+	raw := e.invite(t, opEmail)
+
+	// Anonymous, with A's own email: the duplicate path.
+	resp, body := e.post(t, e.client(t), "/signup", signupForm(raw, opEmail))
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgEmailTaken) {
+		t.Errorf("anonymous, A's email: %d %s", resp.StatusCode, body)
+	}
+	// Anonymous, with a different email: the invite is bound.
+	resp, body = e.post(t, e.client(t), "/signup", signupForm(raw, "evil@example.com"))
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgInviteEmail) {
+		t.Errorf("anonymous, other email: %d %s", resp.StatusCode, body)
+	}
+	// Signed in as B: guests only, so B is sent home and nothing is created.
+	for _, em := range []string{opEmail, "evil@example.com"} {
+		resp, _ = e.post(t, bob, "/signup", signupForm(raw, em))
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
+			t.Errorf("B signing up with %s: %d %q", em, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+	if got := e.userCount(t); got != users {
+		t.Errorf("users = %d, want %d: a second account was created", got, users)
+	}
+	e.signIn(t, opEmail, testSecret) // A can still sign in
+	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
+		t.Errorf("sign-up attempts changed A's data:\nbefore %+v\nafter  %+v", before, after)
+	}
+}
+
+// testIsolationSlug: B cannot take A's status page address.
+func testIsolationSlug(t *testing.T) {
+	e := newEnv(t)
+	bob, bws := e.account(t, "b@example.com")
+	a := seedA(t, e)
+	before := snapshotWS(t, e.opWS, a)
+	if before.Slug != "default" {
+		t.Fatalf("A's slug = %q, want default", before.Slug)
+	}
+	resp, body := e.post(t, bob, "/status/settings", url.Values{"slug": {"default"}, "name": {"Attacker"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "That address is taken.") {
+		t.Fatalf("B taking default: %d %s", resp.StatusCode, body)
+	}
+	if after := snapshotWS(t, e.opWS, a); !reflect.DeepEqual(before, after) {
+		t.Errorf("A changed:\nbefore %+v\nafter  %+v", before, after)
+	}
+	info, err := bws.Info(context.Background())
+	if err != nil || info.Slug != "b" {
+		t.Errorf("B's slug = %q, %v; want b", info.Slug, err)
+	}
+	resp, page := e.get(t, e.client(t), "/s/default")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(page, isoTarget) || strings.Contains(page, "Attacker") {
+		t.Errorf("A's page: %d", resp.StatusCode)
+	}
 }
 
 // attackRoutes sends B's request for every workspace route at A's objects.
