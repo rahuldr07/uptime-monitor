@@ -151,6 +151,14 @@ func TestAccountsConfigKeys(t *testing.T) {
 		{"relative", `{"base_url":"status.example.com"}`, "base_url must be"},
 		{"query", `{"base_url":"https://x?a=1"}`, "base_url must be"},
 		{"fragment", `{"base_url":"https://x#f"}`, "base_url must be"},
+		{"user", `{"base_url":"https://user@host"}`, "base_url must be"},
+		{"userpass", `{"base_url":"https://u:p@host"}`, "base_url must be"},
+		{"spoof", `{"base_url":"https://status.example.com@evil.example"}`, "base_url must be"},
+		{"noHost", `{"base_url":"https://:443"}`, "base_url must be"},
+		{"emptyPort", `{"base_url":"https://x:"}`, "base_url must be"},
+		{"bigPort", `{"base_url":"https://x:99999"}`, "base_url must be"},
+		{"emptyFrag", `{"base_url":"https://x#"}`, "base_url must be"},
+		{"emptyQuery", `{"base_url":"https://x?"}`, "base_url must be"},
 	} {
 		if _, err := Parse([]byte(tc.in)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want containing %q", tc.name, err, tc.want)
@@ -163,12 +171,18 @@ func TestAccountsConfigKeys(t *testing.T) {
 	if c.BaseURL != "https://status.example.com" || !c.HTTPSBase() || c.LinkBase() != "https://status.example.com" {
 		t.Errorf("base_url = %q https=%v link=%q", c.BaseURL, c.HTTPSBase(), c.LinkBase())
 	}
+	c, err = Parse([]byte(`{"base_url":"HTTPS://Status.Example.com/"}`))
+	if err != nil || c.BaseURL != "https://Status.Example.com" || !c.HTTPSBase() {
+		t.Errorf("mixed-case base_url: %v %q", err, c.BaseURL)
+	}
 	for listen, want := range map[string]string{
-		":8080":       "http://localhost:8080",
-		"127.0.0.1:9": "http://127.0.0.1:9",
-		"0.0.0.0:80":  "http://localhost:80",
-		"[::]:81":     "http://localhost:81",
-		"[::1]:82":    "http://[::1]:82",
+		":8080":                "http://localhost:8080",
+		"127.0.0.1:9":          "http://127.0.0.1:9",
+		"0.0.0.0:80":           "http://localhost:80",
+		"[::]:81":              "http://localhost:81",
+		"[0:0:0:0:0:0:0:0]:80": "http://localhost:80",
+		"[fe80::1%eth0]:80":    "http://[fe80::1%25eth0]:80",
+		"[::1]:82":             "http://[::1]:82",
 	} {
 		c, err := Parse([]byte(`{"listen":"` + listen + `"}`))
 		if err != nil {

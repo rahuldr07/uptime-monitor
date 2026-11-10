@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -170,9 +171,10 @@ func (c *Config) LinkBase() string {
 	if err != nil {
 		return "http://" + c.Listen
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
 		host = "localhost"
 	}
+	host = strings.ReplaceAll(host, "%", "%25") // IPv6 zone, as a URL needs it
 	return "http://" + net.JoinHostPort(host, port)
 }
 
@@ -259,12 +261,11 @@ func (c *Config) applyDefaults() error {
 		return errors.New("config: limits is not supported yet")
 	}
 	if c.BaseURL != "" {
-		u, err := url.Parse(c.BaseURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		base, ok := normalizeBaseURL(c.BaseURL)
+		if !ok {
 			return errors.New("config: base_url must be an absolute http(s) URL with no path")
 		}
-		c.BaseURL = strings.TrimSuffix(c.BaseURL, "/")
+		c.BaseURL = base
 	}
 	if c.FailureThreshold <= 0 {
 		c.FailureThreshold = 2
@@ -349,4 +350,26 @@ func ValidateNotify(n *Notify) error {
 // isSet reports whether an optional raw JSON key was given (and not null).
 func isSet(m json.RawMessage) bool {
 	return len(m) > 0 && string(m) != "null"
+}
+
+// normalizeBaseURL strictly validates a base_url and returns scheme://host
+// with the scheme lowercased and any trailing slash dropped.
+func normalizeBaseURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || strings.ContainsAny(raw, "?#") || u.User != nil || u.Hostname() == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" || (u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return "", false
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return "", false
+		}
+	}
+	return scheme + "://" + u.Host, true
 }
