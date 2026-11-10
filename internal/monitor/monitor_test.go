@@ -215,13 +215,11 @@ func TestPauseResumeAndRemove(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	f.target.Paused = true
 	f.st.SetPaused(ctx, f.target.ID, true)
 	f.mon.Reload(ctx, f.target.ID)
 	if s, _ := f.mon.Get(1, f.target.ID); s.Status != Paused {
 		t.Fatalf("want paused: %+v", s)
 	}
-	f.target.Paused = false
 	f.st.SetPaused(ctx, f.target.ID, false)
 	f.mon.Reload(ctx, f.target.ID)
 	if s, _ := f.mon.Get(1, f.target.ID); s.Status == Paused {
@@ -262,7 +260,6 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	if !in.StartedAt.Equal(s.Since) {
 		t.Fatalf("incident start %v should equal Since %v", in.StartedAt, s.Since)
 	}
-	f.target.Paused = true
 	f.st.SetPaused(ctx, f.target.ID, true)
 	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
@@ -270,7 +267,6 @@ func TestPauseClosesIncidentAndResumeIsClean(t *testing.T) {
 	if _, err := f.st.OngoingIncident(ctx, f.target.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("pausing should close the incident: %v", err)
 	}
-	f.target.Paused = false
 	f.st.SetPaused(ctx, f.target.ID, false)
 	f.mon.Reload(ctx, f.target.ID)
 	s, _ = f.mon.Get(1, f.target.ID)
@@ -339,7 +335,6 @@ func TestPauseWaitsForInFlightCheck(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.mon.CheckNow(ctx, f.target.ID); close(done) }()
 	time.Sleep(50 * time.Millisecond) // probe is in flight
-	f.target.Paused = true
 	f.st.SetPaused(ctx, f.target.ID, true)
 	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
 		t.Fatal(err)
@@ -478,6 +473,10 @@ func TestProbeStaysOnHTTP1AgainstHTTP2Server(t *testing.T) {
 	m := New(Options{Store: st, PrivateAllowed: allowAll})
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
+	gtr := m.client.Transport.(*http.Transport)
+	if gtr.ForceAttemptHTTP2 || (gtr.TLSClientConfig != nil && gtr.TLSClientConfig.NextProtos != nil) {
+		t.Fatalf("guarded client must stay on HTTP/1.1: %+v", gtr)
+	}
 	tr := m.openClient.Transport.(*http.Transport)
 	if tr.TLSClientConfig == nil {
 		tr.TLSClientConfig = &tls.Config{}
@@ -570,22 +569,32 @@ func TestMonitorScopedByWorkspace(t *testing.T) {
 	before, before2 := count(t1.ID), count(t2.ID)
 	m.CheckAsync(2, t1.ID)
 	m.CheckAsync(1, t2.ID)
-	m.CheckAsync(2, t2.ID) // legitimate check, to know the others had time to run
-	waitFor(t, "ws2 check", func() bool { return count(t2.ID) > before2 })
+	time.Sleep(200 * time.Millisecond) // a wrongly accepted call would have probed by now
 	if after := count(t1.ID); after != before {
-		t.Fatalf("cross-workspace CheckAsync recorded checks: %d -> %d", before, after)
+		t.Fatalf("CheckAsync(2, ws1 target) recorded checks: %d -> %d", before, after)
 	}
+	if after := count(t2.ID); after != before2 {
+		t.Fatalf("CheckAsync(1, ws2 target) recorded checks: %d -> %d", before2, after)
+	}
+	m.CheckAsync(2, t2.ID) // legitimate check proves the scoped path still works
+	waitFor(t, "ws2 check", func() bool { return count(t2.ID) > before2 })
 	want := map[int64]int64{t1.ID: 1, t2.ID: 2}
-	for {
+	seen := map[int64]int{}
+	deadline := time.After(5 * time.Second)
+	for len(seen) < len(want) {
 		select {
 		case ev := <-evs:
-			if w, ok := want[ev.TargetID]; ok && ev.WorkspaceID != w {
+			w, ok := want[ev.TargetID]
+			if !ok {
+				continue
+			}
+			if ev.WorkspaceID != w {
 				t.Fatalf("event %+v has wrong workspace, want %d", ev, w)
 			}
-			continue
-		default:
+			seen[ev.TargetID]++
+		case <-deadline:
+			t.Fatalf("did not see events for both targets: %v", seen)
 		}
-		break
 	}
 	cancel()
 	m.Wait()
