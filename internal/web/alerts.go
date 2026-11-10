@@ -162,8 +162,7 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.mon.SendTest(ctx, ch); err != nil {
 		s.logger.Warn("test alert failed", "channel", ch, "err", err)
-		w.WriteHeader(http.StatusBadGateway)
-		s.renderAlerts(w, r, http.StatusOK, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
+		s.renderAlerts(w, r, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
 		return
 	}
 	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")

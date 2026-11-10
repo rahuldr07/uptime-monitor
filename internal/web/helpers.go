@@ -37,9 +37,7 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, code int, 
 		s.fail(w, fmt.Errorf("render %s: %w", page, err))
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(code)
-	w.Write(b)
+	writeHTML(w, code, b)
 }
 
 // loadByID parses the {id} path value and loads it with get. A bad id or
@@ -75,8 +73,9 @@ func (s *Server) renderBytes(r *http.Request, page string, data any) ([]byte, er
 	return buf.Bytes(), nil
 }
 
-func writeHTML(w http.ResponseWriter, b []byte) {
+func writeHTML(w http.ResponseWriter, code int, b []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
 	w.Write(b)
 }
 

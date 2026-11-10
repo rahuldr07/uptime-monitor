@@ -163,7 +163,7 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeHTML(w, body)
+	writeHTML(w, http.StatusOK, body)
 }
 
 func (s *Server) statusData(r *http.Request) (statusData, error) {

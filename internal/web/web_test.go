@@ -661,7 +661,10 @@ func TestNewRequiresDependencies(t *testing.T) {
 
 func TestLoadByID(t *testing.T) {
 	e := newEnv(t, "")
-	s, _ := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon})
+	s, err := New(Options{Config: e.cfg, Store: e.st, Monitor: e.mon})
+	if err != nil {
+		t.Fatal(err)
+	}
 	boom := errors.New("boom")
 	get := func(_ context.Context, id int64) (string, error) {
 		switch id {
