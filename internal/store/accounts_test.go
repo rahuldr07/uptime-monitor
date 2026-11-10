@@ -256,7 +256,7 @@ func TestSetPasswordRevokes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+	if err := markVerified(s, u.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetPassword(ctx, u.ID, "newer", hashSecret(keep)); err != nil {
@@ -281,11 +281,11 @@ func TestCreateAccountAndDuplicate(t *testing.T) {
 	if u.ID == 0 || ws == nil || ws.ID() == 1 {
 		t.Fatalf("u=%+v ws=%v", u, ws)
 	}
-	w2, info, err := s.UserWorkspace(ctx, u.ID)
+	w2, info, err := userWorkspace(s, u.ID)
 	if err != nil || w2.ID() != ws.ID() || info.Name != "A" || info.Slug != "a" {
 		t.Fatalf("UserWorkspace: %v %+v", err, info)
 	}
-	if got, err := s.UserByID(ctx, u.ID); err != nil || got.Email != "a@b.co" {
+	if got, err := userByID(s, u.ID); err != nil || got.Email != "a@b.co" {
 		t.Fatalf("UserByID: %v %+v", err, got)
 	}
 	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "h", WorkspaceName: "B", Slug: "b", Now: now}); !errors.Is(err, ErrEmailTaken) {
@@ -295,16 +295,16 @@ func TestCreateAccountAndDuplicate(t *testing.T) {
 	if _, err := s.WorkspaceBySlug(ctx, "b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("orphan workspace: %v", err)
 	}
-	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+	if err := markVerified(s, u.ID, now); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.UserByID(ctx, u.ID)
+	got, _ := userByID(s, u.ID)
 	if got.VerifiedAt == nil || !got.VerifiedAt.Equal(now) {
 		t.Fatalf("verified: %+v", got.VerifiedAt)
 	}
 	later := now.Add(time.Hour)
-	_ = s.MarkVerified(ctx, u.ID, later)
-	got, _ = s.UserByID(ctx, u.ID)
+	_ = markVerified(s, u.ID, later)
+	got, _ = userByID(s, u.ID)
 	if !got.VerifiedAt.Equal(now) {
 		t.Fatal("MarkVerified overwrote verified_at")
 	}
@@ -356,7 +356,7 @@ func TestCompleteSetupExplicitAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgraded: %v", err)
 	}
-	if got, _ := s.UserByID(ctx, u.ID); !got.CreatedAt.Equal(u.CreatedAt) || !got.VerifiedAt.Equal(*u.VerifiedAt) {
+	if got, _ := userByID(s, u.ID); !got.CreatedAt.Equal(u.CreatedAt) || !got.VerifiedAt.Equal(*u.VerifiedAt) {
 		t.Fatalf("times differ: %+v vs %+v", got, u)
 	}
 }
@@ -369,7 +369,7 @@ func TestEmailNormalizedInStore(t *testing.T) {
 	if err != nil || u.Email != "a@x.co" {
 		t.Fatalf("%v %+v", err, u)
 	}
-	if got, err := s.UserByID(ctx, u.ID); err != nil || got.Email != "a@x.co" || !got.CreatedAt.Equal(u.CreatedAt) {
+	if got, err := userByID(s, u.ID); err != nil || got.Email != "a@x.co" || !got.CreatedAt.Equal(u.CreatedAt) {
 		t.Fatalf("%v %+v vs %+v", err, got, u)
 	}
 	if _, _, err := s.UserByEmail(ctx, "A@X.CO"); err != nil {
@@ -422,7 +422,7 @@ func newVerified(t *testing.T, s *Store, now time.Time) User {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkVerified(ctx, u.ID, now); err != nil {
+	if err := markVerified(s, u.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	return u
@@ -433,7 +433,7 @@ func TestSessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	u := newVerified(t, s, now)
-	ws, _, err := s.UserWorkspace(ctx, u.ID)
+	ws, _, err := userWorkspace(s, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +715,7 @@ func TestResetPassword(t *testing.T) {
 	if err != nil || got.ID != u.ID || got.VerifiedAt == nil {
 		t.Fatalf("ResetPassword = %+v, %v", got, err)
 	}
-	if again, _ := s.UserByID(ctx, u.ID); again.VerifiedAt == nil {
+	if again, _ := userByID(s, u.ID); again.VerifiedAt == nil {
 		t.Error("verified_at not stored")
 	}
 	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "new" {
@@ -753,4 +753,26 @@ func TestResetPasswordDisabledUser(t *testing.T) {
 	if _, phc, _ := s.UserByEmail(ctx, "a@b.co"); phc != "old" {
 		t.Errorf("password changed: %q", phc)
 	}
+}
+
+// Test helpers: SQL stand-ins for store methods the application does not need.
+
+func markVerified(s *Store, userID int64, now time.Time) error {
+	_, err := s.db.Exec(`UPDATE users SET verified_at = ? WHERE id = ? AND verified_at IS NULL`, now.UnixMilli(), userID)
+	return err
+}
+
+func userByID(s *Store, id int64) (User, error) {
+	return scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+func userWorkspace(s *Store, userID int64) (*WS, Workspace, error) {
+	ws, err := scanWorkspace(s.db.QueryRow(
+		`SELECT w.id, w.name, w.slug, w.created_at FROM workspaces w
+		 JOIN memberships m ON m.workspace_id = w.id
+		 WHERE m.user_id = ? AND m.role = 'owner' ORDER BY w.id LIMIT 1`, userID))
+	if err != nil {
+		return nil, Workspace{}, err
+	}
+	return s.Workspace(ws.ID), ws, nil
 }

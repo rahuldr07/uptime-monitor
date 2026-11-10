@@ -416,4 +416,7 @@ Full design:
   - Startup logs a WARN when `trust_proxy` is set without an https `base_url`: a plain-HTTP origin still accepts the `uptime_session` cookie, which allows login CSRF there.
   - `-reset-password` refuses disabled users.
   - If stored hashes ever use params above the `Verify` caps, raise the caps together with `DefaultParams`.
+  - The per-email slow gate can be occupied by many attacker addresses after a restart, because the device key is per process. Accepted for M1d: there is one operator, sessions survive restarts, and `-reset-password` bypasses the gate. Persisting the device key is deferred.
+  - The `password_check_throttled` event (the per-user current-password limit) is logged but is not in §12.
+  - Session revocation on a password change or reset is covered by the `password_changed` and `password_reset` events; no separate `sessions_revoked` event is logged for those.
 - **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.

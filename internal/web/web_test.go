@@ -124,7 +124,12 @@ func (e *env) account(t *testing.T, email string) (*http.Client, *store.WS) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.MarkVerified(context.Background(), u.ID, e.clock); err != nil {
+	// A reset link proves ownership of the address, which verifies it.
+	tok, err := e.st.CreateToken(context.Background(), store.TokenReset, u.ID, time.Hour, e.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.ResetPassword(context.Background(), tok, phc, e.clock); err != nil {
 		t.Fatal(err)
 	}
 	return e.signIn(t, email, testSecret), ws

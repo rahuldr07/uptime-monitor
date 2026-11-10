@@ -20,7 +20,7 @@ const (
 	msgBadLogin = "Email or password is incorrect."
 	msgDisabled = "This account is disabled."
 	msgBusy     = "The server is busy, please try again."
-	msgTooMany  = "Too many attempts. Wait a minute and try again."
+	msgTooMany  = "Too many attempts. Wait a few minutes and try again."
 )
 
 // safeNext only allows plain local paths as post-login redirect targets.
@@ -115,18 +115,19 @@ type loginData struct {
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.URL.Query().Get("next"))}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next"))}
 	d.Flash = flashFrom(r)
 	s.render(w, r, "login", d)
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in · Uptime"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email"))}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email"))}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "login", d)
 	}
 	addr := clientKey(r, s.cfg.ProxyHops())
+	ip := clientIP(r, s.cfg.ProxyHops())
 	// An invalid address is keyed by its text, so it is limited like any other
 	// and nothing depends on whether the account exists.
 	email, emailErr := store.NormalizeEmail(d.Email)
@@ -139,7 +140,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	pairKey := emailKey + "|" + addr
 	throttled := func() {
-		s.logger.Warn("sign-in throttled", "event", "login_throttled", "ip", addr)
+		s.logger.Warn("sign-in throttled", "event", "login_throttled", "ip", ip)
 		fail(http.StatusTooManyRequests, msgTooMany)
 	}
 	// failed keeps the address and pair reservations (they are the hit),
@@ -150,9 +151,9 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		refund = false
 		s.loginByEmail.Hit(emailKey)
 		if userID != 0 {
-			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "user_id", userID)
+			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", ip, "user_id", userID)
 		} else {
-			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", addr, "email_hash", emailHash(emailKey))
+			s.logger.Warn("sign-in failed", "event", "login_failed", "ip", ip, "email_hash", emailHash(emailKey))
 		}
 	}
 	// Every refusal happens before any hash. The address and pair slots are
@@ -248,7 +249,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, raw)
 	s.setDeviceCookie(w, r, u.ID)
-	s.logger.Info("sign-in ok", "event", "login_ok", "user_id", u.ID, "ip", addr)
+	s.logger.Info("sign-in ok", "event", "login_ok", "user_id", u.ID, "ip", ip)
 	http.Redirect(w, r, d.Next, http.StatusSeeOther)
 }
 

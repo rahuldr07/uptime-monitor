@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// clientKey returns the client IP used for login rate limiting. With
-// proxyHops > 0 (trust_proxy), the address is taken from X-Forwarded-For,
-// counting proxyHops entries from the right. Each proxy appends the address
-// it received the request from, so only the rightmost entries are
-// trustworthy; anything to their left was sent by the client and taking it
-// would let an attacker pick a fresh "IP" for every guess.
-func clientKey(r *http.Request, proxyHops int) string {
+// clientIP returns the client address. With proxyHops > 0 (trust_proxy), the
+// address is taken from X-Forwarded-For, counting proxyHops entries from the
+// right. Each proxy appends the address it received the request from, so only
+// the rightmost entries are trustworthy; anything to their left was sent by
+// the client and taking it would let an attacker pick a fresh "IP" for every
+// guess. Use it for logs; limiter keys use clientKey.
+func clientIP(r *http.Request, proxyHops int) string {
 	if proxyHops > 0 {
 		var parts []string
 		for _, h := range r.Header.Values("X-Forwarded-For") {
@@ -25,17 +25,23 @@ func clientKey(r *http.Request, proxyHops int) string {
 				i = 0 // fewer entries than hops: the leftmost was added by our first proxy
 			}
 			if ip := parseAddr(parts[i]); ip != nil {
-				return groupAddr(ip.String())
+				return ip.String()
 			}
 		} else if ip := parseAddr(r.Header.Get("X-Real-IP")); ip != nil {
-			return groupAddr(ip.String())
+			return ip.String()
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
-	return groupAddr(host)
+	return host
+}
+
+// clientKey returns the client address used for rate limiting: clientIP with
+// an IPv6 address reduced to its /64.
+func clientKey(r *http.Request, proxyHops int) string {
+	return groupAddr(clientIP(r, proxyHops))
 }
 
 // groupAddr reduces an IPv6 address to its /64 prefix, since one subscriber

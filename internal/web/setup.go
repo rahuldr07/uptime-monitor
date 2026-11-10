@@ -54,7 +54,7 @@ func (s *Server) passwordUnlock() bool { return s.upgraded && s.cfg.AdminPasswor
 
 func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	d := setupData{base: s.page(r, "Set up · Uptime")}
+	d := setupData{base: s.page(r, "Set up")}
 	ws, err := s.sys.Workspace(1).Info(r.Context())
 	if err != nil {
 		s.fail(w, err)
@@ -62,6 +62,7 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 	}
 	d.WorkspaceName = ws.Name
 	if tok := r.URL.Query().Get("token"); tok != "" {
+		s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", clientIP(r, s.cfg.ProxyHops()))
 		if _, err := s.sys.PeekToken(r.Context(), store.TokenSetup, tok, s.now()); err == nil {
 			d.Token = tok
 		} else if !errors.Is(err, store.ErrNotFound) {
@@ -81,17 +82,21 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
-	key := clientKey(r, s.cfg.ProxyHops())
-	ok, _ := s.setupLimiter.Take(key)
-	if !ok {
-		s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", key, "result", "rate_limited")
-		http.Error(w, msgTooMany, http.StatusTooManyRequests)
+	ip := clientIP(r, s.cfg.ProxyHops())
+	tok := r.FormValue("token")
+	if ok, _ := s.setupLimiter.Take(clientKey(r, s.cfg.ProxyHops())); !ok {
+		s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", ip, "result", "rate_limited")
+		d := setupData{base: s.page(r, "Set up"), Token: tok, AskPassword: tok == "" && s.passwordUnlock()}
+		d.Error = msgTooMany
+		if !d.Form() {
+			d.Hint = msgSetupLink
+		}
+		s.renderStatus(w, r, http.StatusTooManyRequests, "setup", d)
 		return
 	}
-	s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", key)
+	s.logger.Warn("setup attempt", "event", "setup_attempt", "ip", ip)
 
-	tok := r.FormValue("token")
-	d := setupData{base: s.page(r, "Set up · Uptime"), Token: tok, AskPassword: tok == "" && s.passwordUnlock(),
+	d := setupData{base: s.page(r, "Set up"), Token: tok, AskPassword: tok == "" && s.passwordUnlock(),
 		Email: strings.TrimSpace(r.FormValue("email")), WorkspaceName: strings.TrimSpace(r.FormValue("workspace"))}
 	pw := r.FormValue("password")
 	email, emailErr := store.NormalizeEmail(d.Email)
@@ -162,7 +167,7 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("setup: seeding failed", "err", err)
 		}
 	}
-	s.logger.Warn("setup complete", "event", "setup_complete", "ip", key, "user_id", u.ID)
+	s.logger.Warn("setup complete", "event", "setup_complete", "ip", ip, "user_id", u.ID)
 	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)

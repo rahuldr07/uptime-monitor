@@ -666,3 +666,36 @@ func TestLoginLogEvents(t *testing.T) {
 		}
 	}
 }
+
+// An IPv6 client is logged with its full address while the address limit is
+// still shared across its /64.
+func TestLoginLogsFullIPv6AndSharesLimit(t *testing.T) {
+	e := newEnv(t)
+	e.cfg.TrustProxy = true
+	var buf syncBuf
+	e.srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	const badPW = "not-the-password-xyz"
+	for i := 0; i < 5; i++ {
+		e.loginFrom(t, "2001:db8::1", opEmail, badPW)
+	}
+	resp, _ := e.loginFrom(t, "2001:db8::ffff", opEmail, badPW)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("same /64 should share the limit: %d", resp.StatusCode)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"ip":"2001:db8::1"`) || !strings.Contains(out, `"ip":"2001:db8::ffff"`) || strings.Contains(out, "/64") {
+		t.Errorf("logs should carry the full address: %s", out)
+	}
+}
+
+func TestClientIPUngrouped(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/login", nil)
+	r.RemoteAddr = "[2001:db8::5]:4444"
+	if got := clientIP(r, 0); got != "2001:db8::5" {
+		t.Errorf("direct: %s", got)
+	}
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, [2001:db8::7]:443")
+	if got := clientIP(r, 1); got != "2001:db8::7" {
+		t.Errorf("forwarded: %s", got)
+	}
+}

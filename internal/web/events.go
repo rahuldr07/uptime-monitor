@@ -12,6 +12,9 @@ const maxStreamsPerUser = 5
 // eventsRecheck is how often an open stream re-validates its session.
 var eventsRecheck = 60 * time.Second
 
+// sseWriteTimeout bounds each write to a stream.
+const sseWriteTimeout = 30 * time.Second
+
 // openStream reserves one of the user's stream slots.
 func (s *Server) openStream(userID int64) bool {
 	s.streamsMu.Lock()
@@ -35,8 +38,7 @@ func (s *Server) closeStream(userID int64) {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, a *authCtx) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
+	if _, ok := w.(http.Flusher); !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -49,17 +51,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
-	// The server's WriteTimeout would otherwise cut this long-lived stream.
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
-		s.logger.Warn("sse: cannot clear write deadline", "err", err)
+	// The server's WriteTimeout would otherwise cut this long-lived stream, so
+	// each write gets its own deadline instead: a stalled client then fails
+	// the write and releases its slot.
+	rc := http.NewResponseController(w)
+	write := func(format string, args ...any) error {
+		if err := rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)); err != nil {
+			s.logger.Warn("sse: cannot set write deadline", "err", err)
+		}
+		if _, err := fmt.Fprintf(w, format, args...); err != nil {
+			return err
+		}
+		return rc.Flush()
 	}
 	wsID := a.WS.ID()
 	ch, unsub := s.mon.Events.Subscribe()
 	defer unsub()
-	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
+	if err := write("retry: 3000\n\n"); err != nil {
 		return
 	}
-	fl.Flush()
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
 	recheck := time.NewTicker(eventsRecheck)
@@ -79,15 +89,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, a *authCtx) {
 				continue
 			}
 			b, _ := json.Marshal(ev)
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			if err := write("data: %s\n\n", b); err != nil {
 				return
 			}
-			fl.Flush()
 		case <-ping.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			if err := write(": ping\n\n"); err != nil {
 				return
 			}
-			fl.Flush()
 		}
 	}
 }

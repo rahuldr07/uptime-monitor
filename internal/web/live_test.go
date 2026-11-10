@@ -55,11 +55,13 @@ func TestEventsClosesOnRevoke(t *testing.T) {
 
 func TestEventsStreamCap(t *testing.T) {
 	e := newEnv(t)
+	var open []*http.Response
 	for i := 0; i < 5; i++ {
 		resp := e.openEvents(t)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("stream %d: %d", i+1, resp.StatusCode)
 		}
+		open = append(open, resp)
 	}
 	req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/events", nil)
 	e.authorize(req)
@@ -70,6 +72,26 @@ func TestEventsStreamCap(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("6th stream: %d", resp.StatusCode)
+	}
+	// Closing one stream must release its slot.
+	open[0].Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		req, _ := http.NewRequest(http.MethodGet, e.ts.URL+"/events", nil)
+		e.authorize(req)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := resp.StatusCode
+		resp.Body.Close()
+		if code == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot not released after closing a stream: %d", code)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

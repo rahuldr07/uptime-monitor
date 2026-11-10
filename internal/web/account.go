@@ -23,12 +23,12 @@ type accountData struct {
 }
 
 func (s *Server) accountPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
-	s.render(w, r, "account", accountData{base: s.base(r, a, "account", "Account · Uptime")})
+	s.render(w, r, "account", accountData{base: s.base(r, a, "account", "Account")})
 }
 
 func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
-	d := accountData{base: s.base(r, a, "account", "Account · Uptime")}
+	d := accountData{base: s.base(r, a, "account", "Account")}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "account", d)
@@ -42,7 +42,6 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		fail(http.StatusUnprocessableEntity, msgMismatch)
 		return
 	}
-	// An over-long current password cannot match, so it skips the hash.
 	phc, err := s.sys.PasswordHash(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -57,6 +56,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		return
 	}
 	ok := false
+	// An over-long current password cannot match, so it skips the hash.
 	if len(cur) <= 256 {
 		ok, err = s.hasher.Verify(ctx, phc, cur)
 	}
@@ -88,7 +88,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		s.fail(w, err)
 		return
 	}
-	s.logger.Info("password changed", "event", "password_changed", "user_id", a.User.ID, "ip", clientKey(r, s.cfg.ProxyHops()))
+	s.logger.Info("password changed", "event", "password_changed", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	redirect(w, r, "/account", msgPasswordChanged)
 }
 
@@ -98,6 +98,6 @@ func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *au
 		return
 	}
 	s.clearSessionCookie(w, r)
-	s.logger.Info("sessions revoked", "event", "sessions_revoked", "user_id", a.User.ID, "ip", clientKey(r, s.cfg.ProxyHops()))
+	s.logger.Info("sessions revoked", "event", "sessions_revoked", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	redirect(w, r, "/login", msgSignedOutAll)
 }

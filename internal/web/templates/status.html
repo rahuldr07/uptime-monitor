@@ -34,7 +34,7 @@
 {{end}}
 {{if .Admin}}
 <div class="card block" style="margin-top:28px;border-style:dashed">
-  <div class="head"><h2>Status page settings</h2><span class="small muted">visible to admins only</span></div>
+  <div class="head"><h2>Status page settings</h2><span class="small muted">visible to the workspace owner only</span></div>
   <form method="post" action="/status/settings" class="frow" style="margin-top:10px">
     <div class="field"><label>Title</label><input name="title" value="{{.StatusTitle}}" maxlength="80"></div>
     <div class="field wide"><label>Description</label><input name="description" value="{{.StatusDesc}}" maxlength="200" placeholder="Current status of our services"></div>

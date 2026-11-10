@@ -61,11 +61,14 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
   cookies (sessions are in the database and survive a restart).
 - **Lost password.** `uptime-monitor -reset-password you@example.com` prints a
   link that works for 1 hour. It refuses unknown and disabled users.
+- **Plain HTTP.** With an https `base_url` the session cookie is `__Host-`
+  and Secure, so signing in over plain HTTP (for example
+  `http://<lan-ip>:8080`) silently fails. Use the https address.
 - **Links.** `base_url` is the external URL used in the setup and reset links.
   Without it the links are built from `listen`.
 
 Rate limits are kept in memory, so they reset on restart; run one server
-process only. IPv6 clients are grouped by /64.
+process only. IPv6 clients are grouped by /64 (logs still show the full address).
 
 | What | Limit |
 |---|---|
@@ -77,6 +80,11 @@ process only. IPv6 clients are grouped by /64.
 | Live updates | 5 streams per user |
 | Status pages | 120 per minute per address, at most 2 rebuilds at once |
 | Password hashing | 4 at once, 64 waiting; a request that can't queue, or waits more than 2 seconds, gets 503 |
+
+A restart invalidates device cookies, so during an attack the per-email
+slowdown can then delay the owner's own sign-in. Recover with
+`uptime-monitor -reset-password <email>`: its link signs you in without going
+through the sign-in limits.
 
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
 delete those files. Account deletion arrives in a later release.
@@ -128,27 +136,23 @@ From a release before workspaces:
 
 From a release before the production hardening:
 
-- **Empty password.** (No longer applies since accounts: the server starts
-  without a password and sign-in is always required.) The server then refused to start with an empty `admin_password` on a non-loopback `listen`. Set a password, listen on
-  `127.0.0.1`, or, if something in front already authenticates users, set
-  `"insecure_no_auth": true`.
+- **Empty password.** (Superseded: since accounts the server starts without
+  a password and sign-in is always required, so `insecure_no_auth` is gone.)
+  Before that, the server refused to start with an empty `admin_password` on a
+  non-loopback `listen`.
 - **`retention`** must be at least `24h`.
 - **Docker, original layout** (`./data:/data` with `data/config.json`): it keeps
   working. Without `-config` the binary uses `/data/config.json` when it
   exists. To keep that layout with the new `docker-compose.yml`, replace its
   two volume lines with `- ./data:/data`.
 - **Docker: the password is now required.** (Superseded: since accounts the
-  password is optional and only unlocks setup on an upgraded install.) The old `docker-compose.yml`
-  fell back to the password `change-me`; the new one refuses to run any
-  command, `docker compose down` included, until `UPTIME_ADMIN_PASSWORD` is
-  set. Do this first:
-
-  ```bash
-  echo "UPTIME_ADMIN_PASSWORD=$(openssl rand -base64 24)" > .env
-  ```
+  password is optional and only unlocks setup on an upgraded install, so
+  the env file is optional.) The old `docker-compose.yml` fell back to the
+  password `change-me`, and for a while the new one refused to run any command
+  until `UPTIME_ADMIN_PASSWORD` was set.
 
 - **Docker, moving to the new layout** (named volume `uptime-monitor-data`,
-  config outside it), after creating `.env`:
+  config outside it), (optionally) after creating `.env`:
 
   ```bash
   docker compose down

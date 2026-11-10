@@ -106,15 +106,6 @@ func (s *Store) UserByEmail(ctx context.Context, email string) (User, string, er
 	return u, phc, err
 }
 
-// UserByID returns a user or ErrNotFound.
-func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
-	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
-	return u, err
-}
-
 // PasswordHash returns a user's password hash, or ErrNotFound.
 func (s *Store) PasswordHash(ctx context.Context, userID int64) (string, error) {
 	var phc string
@@ -302,7 +293,7 @@ func setPassword(ctx context.Context, tx querier, userID int64, phc, keepSession
 
 // SetPassword replaces a user's password hash, deletes all their sessions
 // except keepSessionHash (empty deletes all), and deletes their unused reset
-// tokens.
+// and verify tokens.
 func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepSessionHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -316,8 +307,8 @@ func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepS
 }
 
 // ResetPassword consumes a reset token and, in the same transaction, sets the
-// user's password, deletes all their sessions and unused reset tokens, and
-// marks the address verified (receiving the link proves ownership). A token
+// user's password, deletes all their sessions and unused reset and verify tokens,
+// and marks the address verified (receiving the link proves ownership). A token
 // that is unknown, used, expired or belongs to a disabled user is ErrNotFound.
 func (s *Store) ResetPassword(ctx context.Context, raw, phc string, now time.Time) (User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -343,25 +334,4 @@ func (s *Store) ResetPassword(ctx context.Context, raw, phc string, now time.Tim
 		return User{}, err
 	}
 	return u, nil
-}
-
-// MarkVerified sets verified_at if it is not already set.
-func (s *Store) MarkVerified(ctx context.Context, userID int64, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET verified_at = ? WHERE id = ? AND verified_at IS NULL`, now.UnixMilli(), userID)
-	return err
-}
-
-// UserWorkspace returns the single workspace the user owns.
-func (s *Store) UserWorkspace(ctx context.Context, userID int64) (*WS, Workspace, error) {
-	ws, err := scanWorkspace(s.db.QueryRowContext(ctx,
-		`SELECT w.id, w.name, w.slug, w.created_at FROM workspaces w
-		 JOIN memberships m ON m.workspace_id = w.id
-		 WHERE m.user_id = ? AND m.role = 'owner' ORDER BY w.id LIMIT 1`, userID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, Workspace{}, ErrNotFound
-	}
-	if err != nil {
-		return nil, Workspace{}, err
-	}
-	return s.Workspace(ws.ID), ws, nil
 }

@@ -19,7 +19,7 @@ type resetData struct {
 // use it up.
 func (s *Server) resetPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	d := resetData{base: s.page(r, "Reset password · Uptime")}
+	d := resetData{base: s.page(r, "Reset password")}
 	tok := r.URL.Query().Get("token")
 	if _, err := s.sys.PeekToken(r.Context(), store.TokenReset, tok, s.now()); err == nil {
 		d.Token = tok
@@ -36,7 +36,7 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
 	tok, pw := r.FormValue("token"), r.FormValue("password")
-	d := resetData{base: s.page(r, "Reset password · Uptime"), Token: tok}
+	d := resetData{base: s.page(r, "Reset password"), Token: tok}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "reset", d)
@@ -81,6 +81,6 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, r, raw)
-	s.logger.Warn("password reset", "event", "password_reset", "user_id", u.ID, "ip", clientKey(r, s.cfg.ProxyHops()))
+	s.logger.Warn("password reset", "event", "password_reset", "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
