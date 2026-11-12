@@ -1153,7 +1153,7 @@ func TestSlowTargetRapidReloadsProbeOncePerGap(t *testing.T) {
 		reloads++
 		time.Sleep(100 * time.Millisecond)
 	}
-	for i := 0; i < 10; i++ { // pause/resume and mute toggles, ~1s
+	for i := 0; i < 10; i++ { // mute toggles only (pause/resume shares the same Reload path), ~1s
 		if err := ws.SetMuted(ctx, f.target.ID, i%2 == 0); err != nil {
 			t.Fatal(err)
 		}

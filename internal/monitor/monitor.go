@@ -562,6 +562,8 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	if !st.lastProbeAt.IsZero() {
 		delay = max(delay, st.lastProbeAt.Add(m.reprobeGap).Sub(now))
 	}
+	// Cap the delay so a clock step-back can never hold the first probe back indefinitely.
+	delay = min(delay, max(interval, m.reprobeGap))
 	m.mu.Unlock()
 	if delay > 0 {
 		timer := time.NewTimer(delay)
