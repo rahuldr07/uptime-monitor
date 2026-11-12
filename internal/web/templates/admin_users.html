@@ -16,12 +16,12 @@
   <button type="submit">Search</button>
 </form>
 {{if .Rows}}
-<div class="dt" data-table="admin-users" data-noun="users" data-paged="server" data-empty="No users match.">
+<div class="dt" data-table="admin-users" data-noun="users" data-paged="server" data-select data-cards data-empty="No users match.">
 <table>
 <thead><tr><th data-w="180" data-card="primary">Email</th><th data-hide-below="md">Workspace</th><th data-hide-below="lg">Created</th><th data-hide-below="sm">Last seen</th><th data-num data-hide-below="md">Monitors</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
 <tbody>
 {{range .Rows}}
-<tr data-id="{{.ID}}">
+<tr data-id="{{.ID}}" data-label="{{.Email}}">
   <td data-sort="{{.Email}}">{{.Email}}
     {{if .VerifiedAt}}<span class="badge up">verified</span>{{else}}<span class="badge paused">unverified</span>{{end}}
     {{if .DisabledAt}}<span class="badge down">disabled</span>{{end}}

@@ -10,12 +10,12 @@
 {{end}}
 
 {{define "incident-table"}}
-<div class="dt" data-table="incidents" data-noun="incidents" data-pills="all:All,ongoing:Ongoing,unacked:Unacknowledged" data-empty="No incidents match.">
+<div class="dt" data-table="incidents" data-noun="incidents" data-select data-pills="all:All,ongoing:Ongoing,unacked:Unacknowledged" data-empty="No incidents match.">
 <table>
 <thead><tr>{{if .ShowTarget}}<th data-w="140" data-card="primary">Monitor</th>{{end}}<th>Started</th><th data-num>Duration</th><th data-hide-below="sm">Cause</th><th data-hide-below="lg">Alerted</th><th>Status</th><th data-sort="false" data-hide-below="md">Note</th></tr></thead>
 <tbody>
 {{$now := .Now}}
-{{range .Incidents}}<tr data-id="{{.ID}}" data-k="{{if .Ongoing}}ongoing{{if not .Acknowledged}} unacked{{end}}{{end}}">
+{{range .Incidents}}<tr data-id="{{.ID}}" data-label="{{.TargetName}}, {{ts .StartedAt}}" data-k="{{if .Ongoing}}ongoing{{if not .Acknowledged}} unacked{{end}}{{end}}">
   {{if $.ShowTarget}}<td data-sort="{{.TargetName}}"><a href="/targets/{{.TargetID}}" style="font-weight:500">{{.TargetName}}</a></td>{{end}}
   <td style="white-space:nowrap" data-sort="{{ums .StartedAt}}">{{ts .StartedAt}}</td>
   <td style="white-space:nowrap" data-sort="{{dms (.Duration $now)}}">{{if .Ongoing}}<span class="bad-text">ongoing · {{dur (.Duration $now)}}</span>{{else}}{{dur (.Duration $now)}}{{end}}</td>

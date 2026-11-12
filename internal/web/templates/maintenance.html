@@ -18,7 +18,7 @@
 {{end}}
 <div class="section"{{if not .Active}} style="margin-top:0"{{end}}><h2>Upcoming</h2>{{if .Upcoming}}<span class="small muted">{{len .Upcoming}} scheduled</span>{{end}}</div>
 {{if .Upcoming}}
-<div class="dt" data-table="maint-upcoming" data-noun="windows" data-empty="Nothing scheduled.">
+<div class="dt" data-table="maint-upcoming" data-noun="windows" data-cards data-empty="Nothing scheduled.">
 <table>
 <thead><tr><th data-w="140" data-card="primary">Title</th><th data-card="secondary">Scope</th><th>Starts</th><th data-num>Duration</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
 <tbody>
@@ -35,7 +35,7 @@
 {{else}}<div class="empty" style="padding:22px"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>Nothing scheduled</strong><p>Plan a deploy or an upgrade on the right and nobody gets paged for it.</p></div>{{end}}
 {{if .Past}}
 <div class="section"><h2>Past</h2><span class="small muted">most recent {{len .Past}}</span></div>
-<div class="dt" data-table="maint-past" data-noun="windows" data-empty="No past windows.">
+<div class="dt" data-table="maint-past" data-noun="windows" data-cards data-empty="No past windows.">
 <table>
 <thead><tr><th data-w="140" data-card="primary">Title</th><th data-card="secondary">Scope</th><th>Started</th><th data-num>Duration</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
 <tbody>

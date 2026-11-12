@@ -379,7 +379,7 @@
   // Rows stay in the DOM: filtering and paging set tr.hidden, sorting reorders the <tbody>. State (query, pill,
   // sort, page) lives in dtState keyed by data-table, so a live refresh that replaces #content re-applies it.
   var DT_KEY = 'uptime.tables', DT_SIZES = [25, 50, 100], dtPrefs = null, dtState = {}, dtLive = [];
-  var DT_MIN = 64, DT_MAX = 640;
+  var DT_MIN = 64, DT_MAX = 640, dtDragging = false;
   function isRec(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
   function readPrefs() {
     var p = { density: '', size: 25, columns: {}, widths: {} }, raw = null;
@@ -441,6 +441,21 @@
     if (shown === 0) return 'No ' + noun + tail + '.' + (parts.length ? ' Take a filter off to see more.' : '');
     return 'Showing ' + shown + ' of ' + total + ' ' + singular(total, noun) + (parts.length ? ', ' + parts.join(', ') : '') + '.';
   }
+  function clampW(px) { return Math.round(Math.min(DT_MAX, Math.max(DT_MIN, px))); }
+  function rangeIds(ids, from, to) { // kit tableGrid.ts
+    var a = ids.indexOf(from), b = ids.indexOf(to);
+    if (a < 0 || b < 0) return [to];
+    return ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+  }
+  function copyText(text, ok, fail) {
+    var fallback = function () {
+      var ta = mk('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var done = false; try { done = document.execCommand('copy'); } catch (e) { }
+      ta.remove(); if (done) ok(); else fail();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback); else fallback();
+  }
   function setSel(sel, v) { sel.value = v; if (sel._dd) syncDD(sel._dd); }
 
   // A small menu (View). Same look and closers as the dropdown popup: the .dd-menu class makes editing() hold
@@ -496,7 +511,8 @@
     var emptyText = root.getAttribute('data-empty') || 'Nothing to show.';
     var topbar = root.hasAttribute('data-topbar-search') && mode !== 'server' ? $('input[data-search]') : null;
     var searchLabel = mode === 'server' ? '' : root.getAttribute('data-search');
-    var S = dtState[T.id] || (dtState[T.id] = { q: '', pill: 'all', sort: null, page: 0 });
+    var S = dtState[T.id] || (dtState[T.id] = { q: '', pill: 'all', sort: null, page: 0, sel: {} });
+    $$('.dt-bulk').forEach(function (b) { if (b.getAttribute('data-for') === T.id) b.remove(); }); // the previous render's bar
     T.topbar = topbar;
     if (topbar) { if (S.q && !topbar.value) topbar.value = S.q; else S.q = topbar.value; }
 
@@ -504,10 +520,19 @@
     T.rows = Array.prototype.filter.call(tbody.children, function (tr) { return tr.tagName === 'TR'; }).map(function (tr, n) {
       return { tr: tr, idx: n, k: (tr.getAttribute('data-k') || '').split(/\s+/).filter(Boolean), vals: [], text: null };
     });
-    var ths = $$('thead th', table);
+    var select = root.hasAttribute('data-select'), lead = select ? 1 : 0, hcb = null;
+    T.rows.forEach(function (r) { r.id = r.tr.getAttribute('data-id') || String(r.idx); r.tr._r = r; });
+    if (select) { // a leading checkbox column; column index i of the markup is cell i + lead
+      var hrow = $('thead tr', table), th0 = mk('th', 'dt-tick');
+      hcb = mk('input'); hcb.type = 'checkbox'; th0.appendChild(hcb); hrow.insertBefore(th0, hrow.firstChild);
+      T.rows.forEach(function (r) {
+        var td = mk('td', 'dt-tick'), cb = mk('input'); cb.type = 'checkbox'; td.appendChild(cb); r.tr.insertBefore(td, r.tr.firstChild); r.cb = cb;
+      });
+    }
+    var ths = $$('thead th', table).slice(lead);
     function rowVal(r, i) {
       if (!(i in r.vals)) {
-        var td = r.tr.children[i];
+        var td = r.tr.children[i + lead];
         r.vals[i] = !td ? undefined : sortVal(td.hasAttribute('data-sort') ? td.getAttribute('data-sort') : td.textContent);
       }
       return r.vals[i];
@@ -533,15 +558,38 @@
       if (th_num(c.th)) cls.push('dt-num');
       c.cls = cls;
       cls.forEach(function (x) { c.th.classList.add(x); });
-      T.rows.forEach(function (r) { var td = r.tr.children[c.i]; if (td) cls.forEach(function (x) { td.classList.add(x); }); });
+      T.rows.forEach(function (r) { var td = r.tr.children[c.i + lead]; if (td) cls.forEach(function (x) { td.classList.add(x); }); });
       c.th.setAttribute('scope', 'col');
       if (c.w) c.th.style.minWidth = c.w + 'px';
     });
     function th_num(th) { return th.hasAttribute('data-num'); }
+    // phone cards (CSS does the layout): title column, up to 3 facts, actions; the rest is hidden under 640px
+    (function () {
+      var act = T.cols.filter(function (c) { return c.pin === 'end' || c.th.getAttribute('data-card') === 'actions'; })[0];
+      var free = T.cols.filter(function (c) { return c !== act && c.th.getAttribute('data-card') !== 'hide'; });
+      var prim = free.filter(function (c) { return c.th.getAttribute('data-card') === 'primary'; })[0] || free[0];
+      var sec = free.filter(function (c) { return c !== prim && c.th.getAttribute('data-card') === 'secondary'; });
+      if (!sec.length) sec = free.filter(function (c) { return c !== prim; });
+      sec = sec.slice(0, 3);
+      T.cols.forEach(function (c) {
+        var role = c === act ? 'dt-ca' : c === prim ? 'dt-cp' : sec.indexOf(c) >= 0 ? 'dt-cs' : 'dt-cx';
+        c.th.classList.add(role);
+        T.rows.forEach(function (r) {
+          var td = r.tr.children[c.i + lead]; if (!td) return;
+          td.classList.add(role); if (role === 'dt-cs') td.setAttribute('data-label', c.label);
+        });
+      });
+    })();
+    T.rows.forEach(function (r) {
+      var lbl = r.tr.getAttribute('data-label') || (T.cols.length ? cellText(r.tr.children[lead] || r.tr, []).join(' ').replace(/\s+/g, ' ').trim() : '');
+      r.label = lbl || 'row ' + (r.idx + 1);
+      if (r.cb) r.cb.setAttribute('aria-label', 'Select ' + r.label);
+      if (r.tr.getAttribute('data-href')) r.tr.classList.add('dt-click');
+    });
 
     // chrome
     var bar = mk('div', 'dt-bar'), sum = mk('p', 'dt-sum'), sumT = mk('span'), clear = mk('button', 'dt-link');
-    var wrap = mk('div', 'dt-wrap'), foot = mk('nav', 'dt-foot'), live = mk('span', 'sr');
+    var box = mk('div', 'dt-box'), wrap = mk('div', 'dt-wrap'), foot = mk('nav', 'dt-foot'), live = mk('span', 'sr');
     var filterable = !!(topbar || searchLabel || root.getAttribute('data-pills'));
     var q = null, pillBtns = [], more = null, sizeSel = null;
     if (searchLabel) {
@@ -582,7 +630,8 @@
     clear.addEventListener('click', function () { T.clearAll(); });
     sum.appendChild(sumT); sum.appendChild(clear);
 
-    wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', T.noun + ', scrolls sideways');
+    wrap.setAttribute('role', 'region'); wrap.tabIndex = 0;
+    wrap.setAttribute('aria-label', T.noun + '. Arrow keys move' + (select ? ', Space selects' : '') + (T.rows.some(function (r) { return r.tr.getAttribute('data-href'); }) ? ', Enter opens' : '') + '.');
     live.setAttribute('aria-live', 'polite');
     foot.setAttribute('aria-label', 'Pages of ' + T.noun); foot.hidden = true;
     var cnt = mk('p', 'dt-count'), size = mk('span', 'dt-size'), pg = mk('div', 'dt-pages');
@@ -595,19 +644,57 @@
     }
     foot.appendChild(cnt); foot.appendChild(size); foot.appendChild(pg);
 
-    table.parentNode.insertBefore(wrap, table); wrap.appendChild(table);
-    root.insertBefore(bar, wrap); root.insertBefore(sum, wrap); root.appendChild(foot); root.appendChild(live);
+    table.parentNode.insertBefore(box, table); box.appendChild(wrap); wrap.appendChild(table);
+    var edge = mk('span', 'dt-edge'), eb = mk('button', 'dt-edge-more'); edge.setAttribute('aria-hidden', 'true');
+    eb.type = 'button'; eb.tabIndex = -1; eb.textContent = 'More columns →'; edge.appendChild(eb); box.appendChild(edge);
+    eb.addEventListener('click', function () { wrap.scrollBy({ left: wrap.clientWidth * 0.8, behavior: 'smooth' }); });
+    wrap.addEventListener('scroll', function () { T.edge(); }, { passive: true });
+    root.insertBefore(bar, box); root.insertBefore(sum, box); root.appendChild(foot); root.appendChild(live);
     T.sizeSel = sizeSel;
 
-    // sortable headers
-    var ARROW = { asc: 'M8 13V3M4 7l4-4 4 4', desc: 'M8 3v10M4 9l4 4 4-4', none: 'M5 6l3-3 3 3M5 10l3 3 3-3' };
+    // headers: sort button, column menu, resize grip
+    var ARROW = { asc: 'M8 13V3M4 7l4-4 4 4', desc: 'M8 3v10M4 9l4 4 4-4', none: 'M5 6l3-3 3 3M5 10l3 3 3-3' }, NS = 'http://www.w3.org/2000/svg';
+    function drag(c, g) {
+      var d = null;
+      function up() { if (!d) return; d = null; dtDragging = false; g.classList.remove('on'); savePrefs(); }
+      g.addEventListener('pointerdown', function (e) {
+        if (e.button) return; e.preventDefault(); e.stopPropagation();
+        try { g.setPointerCapture(e.pointerId); } catch (x) { }
+        d = { x: e.clientX, w: c.th.getBoundingClientRect().width }; dtDragging = true; g.classList.add('on');
+      });
+      g.addEventListener('pointermove', function (e) { if (d) T.widen(c, d.w + e.clientX - d.x, false); });
+      g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+      g.addEventListener('click', function (e) { e.stopPropagation(); });
+      g.addEventListener('dblclick', function () { T.fitCol(c); });
+      g.addEventListener('keydown', function (e) {
+        var by = e.key === 'ArrowRight' ? 16 : e.key === 'ArrowLeft' ? -16 : 0;
+        if (by) T.widen(c, c.th.getBoundingClientRect().width + by);
+        else if (e.key === 'Enter' || e.key === 'Delete') T.widen(c, undefined);
+        else return;
+        e.preventDefault(); e.stopPropagation();
+      });
+    }
     T.cols.forEach(function (c) {
-      if (!c.canSort) return;
-      var b = mk('button', 'dt-sort'), NS = 'http://www.w3.org/2000/svg', s = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
-      b.type = 'button'; b.appendChild(document.createTextNode(c.label));
-      s.setAttribute('viewBox', '0 0 16 16'); s.setAttribute('class', 'dt-arrow'); s.setAttribute('aria-hidden', 'true'); s.appendChild(p); b.appendChild(s);
-      c.th.textContent = ''; c.th.appendChild(b); c.path = p; c.btn = b;
-      b.addEventListener('click', function () { T.sortBy(c); });
+      var th = c.th, span = mk('span', 'dt-th');
+      if (c.canSort) {
+        var b = mk('button', 'dt-sort'), sv = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+        b.type = 'button'; b.appendChild(document.createTextNode(c.label));
+        sv.setAttribute('viewBox', '0 0 16 16'); sv.setAttribute('class', 'dt-arrow'); sv.setAttribute('aria-hidden', 'true'); sv.appendChild(p); b.appendChild(sv);
+        span.appendChild(b); c.path = p; c.btn = b;
+        b.addEventListener('click', function () { T.sortBy(c); });
+      } else while (th.firstChild) span.appendChild(th.firstChild);
+      th.textContent = ''; th.appendChild(span);
+      if (c.pin) return; // the actions column has no menu or grip
+      var hm = mk('button', 'dt-hm'), kv = document.createElementNS(NS, 'svg');
+      hm.type = 'button'; hm.setAttribute('aria-haspopup', 'menu'); hm.setAttribute('aria-expanded', 'false'); hm.setAttribute('aria-label', c.label + ' column menu');
+      kv.setAttribute('viewBox', '0 0 24 24'); kv.setAttribute('aria-hidden', 'true'); kv.setAttribute('width', '14'); kv.setAttribute('height', '14'); kv.setAttribute('fill', 'currentColor');
+      [5, 12, 19].forEach(function (x) { var ci = document.createElementNS(NS, 'circle'); ci.setAttribute('cx', x); ci.setAttribute('cy', 12); ci.setAttribute('r', 1.8); kv.appendChild(ci); });
+      hm.appendChild(kv); span.appendChild(hm);
+      hm.addEventListener('click', function () { hm.focus(); T.colMenu(c, hm); });
+      hm.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.colMenu(c, hm); } });
+      var g = mk('div', 'dt-grip'); g.setAttribute('role', 'separator'); g.setAttribute('aria-orientation', 'vertical'); g.tabIndex = 0;
+      g.setAttribute('aria-label', 'Resize ' + c.label); g.setAttribute('aria-valuemin', DT_MIN); g.setAttribute('aria-valuemax', DT_MAX);
+      th.appendChild(g); c.grip = g; drag(c, g);
     });
 
     function hidden(c) { var m = prefs().columns[T.pk]; return m && typeof m[c.id] === 'boolean' ? !m[c.id] : c.hide; }
@@ -616,8 +703,9 @@
         var off = c.canHide && hidden(c);
         c.off = off;
         c.th.classList.toggle('dt-off', off);
-        T.rows.forEach(function (r) { var td = r.tr.children[c.i]; if (td) td.classList.toggle('dt-off', off); });
+        T.rows.forEach(function (r) { var td = r.tr.children[c.i + lead]; if (td) td.classList.toggle('dt-off', off); });
       });
+      T.applyWidths();
       root.classList.toggle('dt-compact', prefs().density === 'compact');
       var e = $('.dt-empty td', tbody); if (e) e.colSpan = T.cols.filter(function (c) { return !c.off; }).length;
     };
@@ -626,7 +714,7 @@
       if (r.text === null) {
         var parts = [r.tr.getAttribute('data-row') || ''];
         Array.prototype.forEach.call(r.tr.children, function (td, i) {
-          var c = T.cols[i]; if (c && (c.pin || c.th.getAttribute('data-sort') === 'false') && !c.canSort) return;
+          var c = T.cols[i - lead]; if (c && (c.pin || c.th.getAttribute('data-sort') === 'false') && !c.canSort) return;
           parts = cellText(td, parts);
         });
         r.text = parts.join(' ').replace(/\s+/g, ' ').toLowerCase();
@@ -680,10 +768,132 @@
 
     // sticky header sticks to the page only while the table fits; with a horizontal scroller it sticks inside it
     T.fit = function () {
-      var over = table.offsetWidth > wrap.clientWidth + 1;
-      wrap.classList.toggle('dt-page', !over);
-      if (over) wrap.tabIndex = 0; else wrap.removeAttribute('tabindex');
+      wrap.classList.toggle('dt-page', !(table.offsetWidth > wrap.clientWidth + 1));
+      T.edge();
     };
+    // "More columns" edge: shown while content is scrolled off to the right; the right-pinned column gets a shadow
+    T.edge = function () {
+      var pin = $('thead .dt-pin-end', table); if (pin) box.style.setProperty('--pin-w', pin.offsetWidth + 'px');
+      if (wrap.scrollLeft + wrap.clientWidth < wrap.scrollWidth - 2) box.setAttribute('data-edge', ''); else box.removeAttribute('data-edge');
+    };
+
+    // column widths: saved ones switch the table to a fixed layout (every column then has a width)
+    function savedWidths() { var p = prefs(); return p.widths[T.pk] || (p.widths[T.pk] = {}); }
+    T.applyWidths = function () {
+      var w = savedWidths(), any = Object.keys(w).length > 0, total = lead * 44;
+      table.classList.toggle('dt-fixed', any);
+      T.cols.forEach(function (c) {
+        var px = any && !c.off && w[c.id] ? w[c.id] : 0;
+        c.th.style.width = px ? px + 'px' : ''; c.th.style.minWidth = px ? px + 'px' : c.w ? c.w + 'px' : '';
+        if (!c.off) total += w[c.id] || c.w || 160;
+      });
+      table.style.tableLayout = any ? 'fixed' : ''; table.style.width = any ? total + 'px' : ''; table.style.minWidth = any ? '100%' : '';
+      T.cols.forEach(function (c) { if (c.grip) c.grip.setAttribute('aria-valuenow', Math.round(c.th.getBoundingClientRect().width)); });
+    };
+    T.widen = function (c, px, save) { // px undefined resets this column
+      var w = savedWidths();
+      if (px !== undefined && !Object.keys(w).length) { // first resize: freeze every other column at its measured width
+        T.cols.forEach(function (o) { if (o !== c && !o.off) w[o.id] = clampW(o.th.getBoundingClientRect().width); });
+      }
+      if (px === undefined) delete w[c.id]; else w[c.id] = clampW(px);
+      T.applyWidths(); T.fit(); if (save !== false) savePrefs();
+    };
+    T.resetWidths = function () { delete prefs().widths[T.pk]; savePrefs(); T.applyWidths(); T.fit(); };
+    T.fitCol = function (c) { // widest cell on the page (or the header) + cell padding
+      var rg = document.createRange(), w = 0, lab = $('.dt-sort', c.th) || $('.dt-th', c.th);
+      (T.shown || []).forEach(function (r) {
+        var td = r.tr.children[c.i + lead]; if (!td) return;
+        var prev = td.style.whiteSpace; td.style.whiteSpace = 'nowrap'; rg.selectNodeContents(td);
+        w = Math.max(w, rg.getBoundingClientRect().width); td.style.whiteSpace = prev;
+      });
+      T.widen(c, Math.max(w, lab ? lab.scrollWidth + (c.canSort ? 28 : 20) : 0) + 24);
+    };
+    T.colMenu = function (c, btn) {
+      var items = [];
+      if (c.canSort) items.push(
+        { label: 'Sort ascending', run: function () { S.sort = { col: c.id, dir: 'asc' }; S.page = 0; T.render(); } },
+        { label: 'Sort descending', run: function () { S.sort = { col: c.id, dir: 'desc' }; S.page = 0; T.render(); } });
+      items.push({ label: 'Fit width', run: function () { T.fitCol(c); } });
+      if (c.canHide) items.push({ label: 'Hide column', run: function () {
+        var m = prefs().columns[T.pk] || (prefs().columns[T.pk] = {}); m[c.id] = false; savePrefs(); T.layout(); T.fit();
+      } });
+      items.push({ t: 'sep' }, { label: 'Reset widths', run: function () { T.resetWidths(); } });
+      openPop(btn, items);
+    };
+
+    // selection (data-select): ids live in S.sel, so it survives a live refresh; filtered-out rows drop out at render
+    T.anchor = null; T.cur = -1;
+    var bulk = null;
+    T.paintSel = function () {
+      var list = T.list || [], n = 0;
+      list.forEach(function (r) { if (S.sel[r.id]) n++; });
+      T.rows.forEach(function (r) {
+        if (select) { r.tr.setAttribute('aria-selected', S.sel[r.id] ? 'true' : 'false'); r.cb.checked = !!S.sel[r.id]; }
+        r.tr.classList.toggle('is-focus', r.show && T.shown && T.shown.indexOf(r) === T.cur);
+      });
+      if (!select) return;
+      hcb.checked = n > 0 && n === list.length; hcb.indeterminate = n > 0 && n < list.length;
+      hcb.setAttribute('aria-label', 'Select all ' + list.length + ' ' + T.noun);
+      if (!n) { if (bulk) { bulk.remove(); bulk = null; } return; }
+      if (!bulk) {
+        bulk = mk('div', 'dt-bulk'); bulk.setAttribute('role', 'region'); bulk.setAttribute('aria-label', 'Selected ' + T.noun); bulk.setAttribute('data-for', T.id);
+        var cn = mk('span'), cb = mk('button'), xb = mk('button'); cn.appendChild(mk('b')); cn.appendChild(document.createTextNode(' selected'));
+        cb.type = 'button'; cb.appendChild(icon('i-copy')); cb.appendChild(document.createTextNode('Copy')); cb.addEventListener('click', function () { T.copy(); });
+        xb.type = 'button'; xb.setAttribute('aria-label', 'Clear selection'); xb.appendChild(icon('i-x')); xb.addEventListener('click', function () { T.clearSel(); });
+        bulk.appendChild(cn); bulk.appendChild(cb); bulk.appendChild(xb); document.body.appendChild(bulk);
+      }
+      $('b', bulk).textContent = n;
+    };
+    T.clearSel = function () { S.sel = {}; T.paintSel(); };
+    T.copy = function () { // the visible columns of the selected rows, in table order, as TSV
+      var cols = T.cols.filter(function (c) { return !c.off && !c.pin && c.th.getAttribute('data-sort') !== 'false'; });
+      var chosen = (T.list || []).filter(function (r) { return S.sel[r.id]; }), flat = function (x) { return x.replace(/[\t\r\n]+/g, ' ').replace(/ +/g, ' ').trim(); };
+      var tsv = [cols.map(function (c) { return c.label; })].concat(chosen.map(function (r) {
+        return cols.map(function (c) { return flat(cellText(r.tr.children[c.i + lead], []).join(' ')); });
+      })).map(function (row) { return row.join('\t'); }).join('\n');
+      copyText(tsv, function () { toast('Copied ' + chosen.length + ' ' + singular(chosen.length, T.noun), 'ok'); }, function () { toast('Could not copy: the browser blocked the clipboard', 'error'); });
+    };
+    function pick(ids, on) { ids.forEach(function (id) { if (on) S.sel[id] = true; else delete S.sel[id]; }); }
+    function shownIds() { return (T.shown || []).map(function (r) { return r.id; }); }
+    function tick(r, range) {
+      if (range && T.anchor) pick(rangeIds(shownIds(), T.anchor, r.id), true); else pick([r.id], !S.sel[r.id]);
+      T.anchor = r.id; T.paintSel();
+    }
+    if (select) hcb.addEventListener('click', function () {
+      var list = T.list || [], all = list.length > 0 && list.every(function (r) { return S.sel[r.id]; });
+      S.sel = {}; if (!all) pick(list.map(function (r) { return r.id; }), true);
+      T.paintSel();
+    });
+    tbody.addEventListener('click', function (e) {
+      var tr = e.target.closest ? e.target.closest('tr') : null, r = tr && tr._r; if (!r) return;
+      if (e.target.closest('.dt-tick input')) { tick(r, e.shiftKey); return; }
+      if (e.target.closest('a,button,input,select,textarea,label,summary,form,.dt-tick')) return;
+      var h = tr.getAttribute('data-href');
+      if (!h || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
+      if (window.getSelection && String(getSelection())) return; // the user was selecting text
+      if (/^\/[^\/\\]/.test(h)) location.href = h;
+    });
+    // keyboard: the focused region moves a row cursor (kit useRowPick)
+    function move(to, extend) {
+      var rows = T.shown || [], n = Math.max(0, Math.min(rows.length - 1, to)), r = rows[n]; if (!r) return;
+      T.cur = n; live.textContent = 'Row ' + (n + 1) + ' of ' + rows.length + ': ' + r.label;
+      if (extend && select) { pick(rangeIds(shownIds(), T.anchor || r.id, r.id), true); if (!T.anchor) T.anchor = r.id; }
+      T.paintSel(); r.tr.scrollIntoView({ block: 'nearest' });
+    }
+    wrap.addEventListener('keydown', function (e) {
+      if (e.target !== wrap || e.ctrlKey || e.metaKey || e.altKey) return;
+      var rows = T.shown || [], at = T.cur < 0 ? -1 : Math.min(T.cur, rows.length - 1), r = at < 0 ? null : rows[at], k = e.key;
+      if (k === 'ArrowDown') move(at < 0 ? 0 : at + 1, e.shiftKey);
+      else if (k === 'ArrowUp') move(at < 0 ? 0 : at - 1, e.shiftKey);
+      else if (k === 'Home') move(0, e.shiftKey);
+      else if (k === 'End') move(rows.length - 1, e.shiftKey);
+      else if (k === ' ' && r && select) tick(r, false);
+      else if (k === 'Enter' && r && r.tr.getAttribute('data-href') && /^\/[^\/\\]/.test(r.tr.getAttribute('data-href'))) location.href = r.tr.getAttribute('data-href');
+      else if (k === 'Escape' && Object.keys(S.sel).length) T.clearSel();
+      else return;
+      e.preventDefault();
+    });
+
 
       T.render = function (announce) {
       var qq = S.q.trim().toLowerCase(), list = T.rows.filter(function (r) {
@@ -699,11 +909,13 @@
           return sign * cmpVal(x, y) || a.idx - b.idx;
         });
       }
+      T.list = list;
       var matched = list.length, size = mode === 'client' ? prefs().size : Math.max(matched, 1);
       var pages = Math.max(1, Math.ceil(matched / size));
       S.page = Math.max(0, Math.min(S.page, pages - 1));
       T.rows.forEach(function (r) { r.show = false; });
-      list.slice(S.page * size, S.page * size + size).forEach(function (r) { r.show = true; });
+      T.shown = list.slice(S.page * size, S.page * size + size); T.shown.forEach(function (r) { r.show = true; });
+      var keep = {}; list.forEach(function (r) { if (S.sel[r.id]) keep[r.id] = true; }); S.sel = keep; // a filter drops hidden rows from the selection
       var inList = {}; list.forEach(function (r) { inList[r.idx] = 1; });
       var order = list.concat(T.rows.filter(function (r) { return !inList[r.idx]; }));
       var cur = Array.prototype.slice.call(tbody.children), moved = order.some(function (r, n) { return cur[n] !== r.tr; });
@@ -778,6 +990,7 @@
         var top = wrap.getBoundingClientRect().top;
         if (top < 0 || top > window.innerHeight) wrap.scrollIntoView({ block: 'start' });
       }
+      T.paintSel();
       T.fit();
     };
 
@@ -895,6 +1108,7 @@
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
     if ($('#content[data-no-refresh]')) return true;
     if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing
+    if (dtDragging) return true;                                   // a column is being resized
     if ($('.dd-menu')) return true;                                // a dropdown is open; replacing it would drop the menu
     var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
     return $$('#content form').some(function (f) { return f._dirty; }); // unsaved edits
@@ -992,6 +1206,7 @@
     if (e.key === 'Tab' && document.body.classList.contains('panel-open') && !(t && t.closest && t.closest('dialog'))) { panelTab(e); return; }
     if (t && t.closest && t.closest('.dd, .dd-menu')) { if (e.key === 'Escape') closePanel(); return; } // dropdowns own their keys
     if (t && t.closest && t.closest('dialog')) return;
+    if (t && t.classList && t.classList.contains('dt-wrap')) return; // a table region owns its keys (arrows, Space, Enter, Escape)
     if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) { if (e.key === 'Escape') { e.target.blur(); closePanel(); } return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape') closePanel();
