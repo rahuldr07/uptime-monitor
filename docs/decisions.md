@@ -399,7 +399,7 @@ Full design:
   - Schema v2 creates workspace 1 ("Default", `/s/default`) on every database, fresh or upgraded. In M1d, setup adopts it instead of creating a workspace. The pre-migration backup is still written only when data exists.
   - Until M1d adds users, workspace 1 is the operator's workspace.
   - Slug derivation and editing, `CountTargets`, workspace deletion and Check-now coalescing move to M1e, where they are first used. The static allow-list test for the unscoped store moves to M1d.
-  - Because workspace 1 always exists, it no longer marks an upgraded install. `/status` always redirects to `/s/default`, which supersedes §5.1's "404 on fresh installs". M1d's setup mode is "no users exist", and the admin_password unlock must decide "upgraded install" another way, for example by whether workspace 1 holds any targets, settings or maintenance from before setup.
+  - Because workspace 1 always exists, it no longer marks an upgraded install. `/status` always redirects to `/s/default`, which supersedes §5.1's "404 on fresh installs" (superseded by M1e: `/status` redirects to the signed-in user's status page, or for anonymous visitors to the operator workspace's current slug). M1d's setup mode is "no users exist", and the admin_password unlock must decide "upgraded install" another way, for example by whether workspace 1 holds any targets, settings or maintenance from before setup.
 - **Why:** Before M1d there is no setup page, so a fresh install would otherwise have no workspace and nothing would work. With one workspace always present, every step stays releasable and the setup flow stays simpler.
 
 ### D-124: M1d scope and security refinements
@@ -418,6 +418,7 @@ Full design:
   - If stored hashes ever use params above the `Verify` caps, raise the caps together with `DefaultParams`.
   - The per-email slow gate can be occupied by many attacker addresses after a restart, because the device key is per process. Accepted for M1d: there is one operator, sessions survive restarts, and `-reset-password` bypasses the gate. Persisting the device key is deferred.
   - The `password_check_throttled` event (the per-user current-password limit) is logged but is not in §12.
+  - `TestLoginNoEnumeration` keeps a relative timing bound (the gap is under a quarter of the larger median, and unknown emails are not under half the known time) instead of the spec's absolute 50 ms. A hash takes about 44 ms with the real hasher, so an absolute 50 ms bound would still pass if the dummy hash were missing.
   - Session revocation on a password change or reset is covered by the `password_changed` and `password_reset` events; no separate `sessions_revoked` event is logged for those.
 - **Why:** These rulings settle points the spec left open or got wrong while M1d was built. Each keeps the sign-in path from leaking which emails exist, from exceeding its limits under a burst, or from taking over an existing install.
 
@@ -440,7 +441,7 @@ Full design:
     - After the commit the workspace is tombstoned (`Monitor.ForgetWorkspace`) and its runners removed again, so a `Reload` in flight cannot leave an orphan runner.
     - `Reload` cancels a runner it replaces.
     - If the delete fails, the runners are reloaded.
-  - `limits.signups_per_hour` below 1 is a startup error, because the limiter would treat 0 as 1. `signup: "closed"` does not switch sign-ups off: outstanding invites keep working until they expire (§5.2). The off switch is `limits.max_workspaces` set to the current workspace count, or deleting unused `kind='invite'` rows from `tokens`. For the same reason the `allow_private_targets: "all"` WARN fires whenever the value is `all`.
+  - `limits.signups_per_hour` below 1 is a startup error, because the limiter would treat 0 as 1. `signup: "closed"` does not switch sign-ups off: outstanding invites keep working until they expire (§5.2). The off switch is `limits.max_workspaces` set to the current workspace count, or revoking the outstanding invites (the `-invite` flag in M1e; the operator invites page in M3). For the same reason the `allow_private_targets: "all"` WARN fires whenever the value is `all`.
   - `hostRateErr` is check-then-act across workspaces: two creates racing can both pass. Accepted; the create limits bound the overshoot.
   - The runner waits at least 10 seconds after the last check before probing for an edit that changed the probe config (`minReprobeGap`), and `interval - age` after a restart when the last check is fresh, so scripted edits cannot flood outbound probes and a restart does not stretch an interval to nearly twice its length.
   - After an edit or restart, the first probe waits at least 10 seconds after the previous probe started, so operator monitors with intervals under 10 seconds can briefly be checked less often than their interval.
@@ -456,7 +457,7 @@ Full design:
 - **Why:** These rulings settle points the spec left open or got wrong while M1e was built. Each keeps one workspace from reaching, starving or outliving another.
 
 ### D-126: M2 (email) rulings
-- **Status:** Accepted (amends §5.7, §5.8 and the route classes of §8.2)
+- **Status:** Accepted (amends §5.7, §5.8 and the route classes of §6.2)
 - **Decision:**
   - A password reset signs the user in only when the browser has no session or has a session for the same user. If the browser holds a session for a different user, that session and its cookie are left alone and the page says "Password changed. Sign in to continue." This departs from §5.8 (which always signs in) and mirrors §5.7.
   - `/verify` (GET and POST) and `/reset` (GET and POST) are `classPublic`: a signed-in user who opens an emailed link sees the page instead of being redirected to `/`. `/forgot` is `classGuest`.
@@ -490,3 +491,4 @@ Full design:
   - Re-enabling an unverified account older than 48 hours means the next hourly prune deletes it. The operator should send a reset link instead, which verifies the address.
   - Operators cannot be disabled, deleted or sent a reset link from the panel. Disabled users cannot be sent a reset link either. Re-enabling an operator with `-enable-user` is allowed, as the recovery path.
   - `-enable-user` changes only the database. A running server does not resume the user's monitors until it restarts; the panel's enable restarts them directly.
+  - Extra log events not in spec §12: `account_pruned`, `email_verified`, `mail_throttled`, `mail_failed`.

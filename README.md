@@ -26,7 +26,7 @@ build step for the frontend.
 - Targets and alert channels editable in the browser, no restart needed
 - Public status page with 90-day history
 - Accounts: sign in with email and password, database-backed sessions, rate-limited sign-in
-- Several workspaces on one instance, joined by invitation, each with its own monitors, alert channels and status page, and per-workspace limits
+- Several workspaces on one instance, created by invitation or open sign-up, each with its own monitors, alert channels and status page, and per-workspace limits
 - JSON API for scripting
 - State is restored on restart, so an ongoing incident is not re-alerted
 
@@ -38,7 +38,7 @@ cp config.example.json config.json
 go run . -config config.json
 ```
 
-Open http://localhost:8080. The public status page is at `/s/default`; `/status` redirects to it.
+Open http://localhost:8080. The public status page is at `/s/default`; `/status` redirects to the signed-in user's status page, or for anonymous visitors to the operator's.
 
 With Docker:
 
@@ -69,7 +69,7 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
 - **Sessions** are stored in the database. They expire 30 days after sign-in
   or after 7 days idle, and a user has at most 20. "Sign out everywhere" on
   `/account` revokes them all. Changing the password keeps only the current
-  session. A password reset signs the user out everywhere, then signs them back in.
+  session. A password reset signs the user out everywhere, then signs in only a browser with no session or the same user's session.
 - **Cookies.** The session cookie is `uptime_session`, or `__Host-uptime_session`
   (Secure) when the request is HTTPS or `base_url` is https. A device cookie,
   `uptime_device` (`__Host-uptime_device` under the same rule), lasts 90 days
@@ -82,7 +82,7 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
 - **Plain HTTP.** With an https `base_url` the session cookie is `__Host-`
   and Secure, so signing in over plain HTTP (for example
   `http://<lan-ip>:8080`) silently fails. Use the https address.
-- **Links.** `base_url` is the external URL used in the setup, reset and invite links.
+- **Links.** `base_url` is the external URL used in the setup, reset and invite links and in emailed links.
   Without it the links are built from `listen`.
 
 Rate limits are kept in memory, so they reset on restart; run one server
@@ -334,7 +334,8 @@ From a release before workspaces:
   `<db>.pre-accounts-<timestamp>.bak` (mode `0600`) before migrating. Keep it
   until you have checked the upgrade, then delete it, because it holds alert
   secrets.
-- **Status page.** `/status` now redirects to `/s/default`. Existing links
+- **Status page.** `/status` now redirects to the signed-in user's status page, or for
+  anonymous visitors to the operator's (`/s/default` on an upgraded install). Existing links
   keep working.
 - **Alert settings** saved in the browser now belong to the workspace.
 - **Status page rate limit.** Status pages (`/s/{slug}`) allow 120 requests
@@ -385,7 +386,7 @@ From a release before the production hardening:
 | `db` | `uptime.db` | SQLite file |
 | `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
-| `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup, reset and invite links; an https value makes session cookies always Secure |
+| `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup, reset and invite links and the links in emails; an https value makes session cookies always Secure |
 | `signup` | `closed` | `closed`, `invite` or `open`; see Sign-up and invites. `open` needs `mail` |
 | `mail` | none | system SMTP account for verification and reset emails; see System email |
 | `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `mail_per_hour`, `host_requests_per_second` |
@@ -426,7 +427,7 @@ with that name does not already exist. Config targets and alert settings are add
 
 All endpoints need a signed-in session cookie.
 
-- `GET /s/{slug}` (public) the public status page (`/status` redirects to `/s/default`)
+- `GET /s/{slug}` (public) the public status page (`/status` redirects to the signed-in user's page, or to the operator's for anonymous visitors)
 - `GET /api/status` current state and uptime for every target
 - `GET /api/targets/{id}/checks?range=24h|7d|30d` raw checks
 - `GET /api/incidents?target={id}&ongoing=1` incidents, including acknowledgement and notes
@@ -443,6 +444,8 @@ internal/store        SQLite schema and queries
 internal/monitor      scheduler, HTTP probe, state machine, alert dispatch
 internal/netguard     blocks internal destinations for monitors, Test URL and alert channels
 internal/notify       Telegram, Slack, email, log channels
+internal/mail         system email (verification, reset, notices) over SMTP
+internal/ratelimit    in-memory rate limiters
 internal/web          handlers, templates, sessions, sign-in, SVG charts
 internal/password     argon2id hashing under a concurrency bound
 deploy/               hardened systemd unit

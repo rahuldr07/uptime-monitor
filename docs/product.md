@@ -37,7 +37,7 @@ It is being released as an **open-source project** and will be run in two ways:
 - **Upgrades never lose data.** Schema changes are versioned, run in
   transactions, and are preceded by an automatic backup when data exists.
 - **Small dependencies.** Only `modernc.org/sqlite` today, plus
-  `golang.org/x/crypto` for password hashing once accounts ship.
+  `golang.org/x/crypto` for password hashing.
 - **Follow the codebase's patterns.** Small files split by area, tests next to
   the code using real SQLite, `Options` structs for wiring, one shared
   implementation of each building block (rate limiter, tokens, error
@@ -84,8 +84,23 @@ It is being released as an **open-source project** and will be run in two ways:
 
 **Security and operations**
 
-- One admin password, with rate-limited login that works correctly behind
-  reverse proxies (`trust_proxy`, `trusted_proxies`).
+- **Accounts:** email and password sign-in (argon2id) with database-backed
+  sessions (30-day absolute expiry, 7-day idle) and sign-out everywhere. A
+  protected setup page, unlocked by a one-time link in the server log, creates
+  the operator; on an upgraded install the operator adopts all existing data.
+  Rate-limited sign-in works correctly behind reverse proxies (`trust_proxy`,
+  `trusted_proxies`).
+- **Sign-up modes:** `closed` (default), `invite` (operator invite links) and
+  `open` (requires email verification).
+- **System email** (when configured): verification, forgot and reset password,
+  and notices when a password changes. Without mail, the operator issues reset
+  links from the command line or the panel.
+- **Workspaces:** each account has a separate workspace with its own monitors,
+  incidents, alert channels, maintenance windows and status page at
+  `/s/<slug>`. Per-workspace limits cap monitors, check interval and traffic to
+  any one host, and non-operator workspaces cannot monitor internal addresses.
+- **Operator panel** (`/admin`): disable, enable or delete users, send reset
+  links, and manage invites.
 - Strict Content-Security-Policy (no inline scripts), cross-site request
   checks, signed flash messages and 1 MB request limits.
 - Owner-only (0600) database and backup files; `-backup` takes a consistent
@@ -93,36 +108,6 @@ It is being released as an **open-source project** and will be run in two ways:
 - Docker image (non-root, read-only filesystem, health check), Docker Compose
   file, hardened systemd unit, and CI (format, vet, race tests, vulnerability
   scan, Docker build).
-
-## Planned: accounts (in design)
-
-Designed in
-[2026-11-10-accounts-design.md](superpowers/specs/2026-11-10-accounts-design.md).
-
-- **Sign-up and sign-in** with email and password (argon2id), database-backed
-  sessions (30-day absolute expiry, 7-day idle), and sign-out everywhere.
-- **Workspaces:** each account gets a private workspace with its own monitors,
-  incidents, alert channels, maintenance windows and status page at
-  `/s/<slug>`. The schema already allows teammates to be added later.
-- **Sign-up modes:** `closed` (default), `invite` (operator invite links) and
-  `open` (requires email verification, so system mail must be configured).
-- **First run:** a protected setup page, unlocked by a one-time link in the
-  server log, creates the operator. On an upgraded install the operator adopts
-  all existing data.
-- **Email (when configured):** verification, forgot password, and notices when a
-  password changes. Without mail, the operator issues reset links from the
-  command line.
-- **Operator panel:** disable, enable or delete users, send reset links, and
-  manage invites.
-- **Abuse protection:**
-  - account isolation proven by tests on every route
-  - internal-network blocking for non-operator workspaces
-  - per-workspace limits on monitors, check interval and traffic to any one host
-  - rate limits on sign-in, sign-up, email, Check now, Test URL, the API and
-    status pages
-
-Delivered in seven steps (M1a–M1e, M2, M3), each reviewed and releasable on its
-own.
 
 ## Not planned yet
 

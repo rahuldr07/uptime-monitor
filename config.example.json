@@ -3,6 +3,7 @@
   "db": "uptime.db",
   "base_url": "",
   "signup": "closed",
+  "allow_private_targets": "operator",
   "admin_password": "${UPTIME_ADMIN_PASSWORD}",
   "failure_threshold": 2,
   "interval": "30s",
