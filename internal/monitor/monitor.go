@@ -57,7 +57,8 @@ type state struct {
 	firstFailAt time.Time
 	checkMu     sync.Mutex // serialises probe+apply per target
 	busy        bool       // a check is running or queued; guarded by Monitor.mu
-	reprobe     bool       // the probe config changed; the next runner probes at once. Guarded by Monitor.mu
+	reprobe     bool       // the probe config changed; the next runner probes soon. Guarded by Monitor.mu
+	lastProbeAt time.Time  // when the latest probe started, recorded or not; survives runner replacement. Guarded by Monitor.mu
 }
 
 // Options configure a Monitor.
@@ -546,14 +547,20 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	// reprobeGap after the last check, so scripted edits cannot flood probes.
 	m.mu.Lock()
 	var delay time.Duration
+	now := m.now()
 	if last := st.Last; last != nil {
-		now := m.now()
 		switch {
 		case st.reprobe:
 			delay = last.CheckedAt.Add(m.reprobeGap).Sub(now)
 		case now.Sub(last.CheckedAt) < interval:
-			delay = last.CheckedAt.Add(interval).Sub(now)
+			delay = min(last.CheckedAt.Add(interval).Sub(now), interval) // min: the clock may have stepped back
 		}
+	}
+	// Whatever the reason for the restart, never start a probe within
+	// reprobeGap of the previous one, even a cancelled one that was not
+	// recorded; otherwise repeated edits against a slow target probe forever.
+	if !st.lastProbeAt.IsZero() {
+		delay = max(delay, st.lastProbeAt.Add(m.reprobeGap).Sub(now))
 	}
 	m.mu.Unlock()
 	if delay > 0 {
@@ -626,6 +633,9 @@ func (m *Monitor) checkClaimed(ctx context.Context, id int64, st *state) {
 	if !still || cur != st || t.Paused {
 		return // removed, replaced or paused while we waited
 	}
+	m.mu.Lock()
+	st.lastProbeAt = m.now()
+	m.mu.Unlock()
 	c := probe(ctx, m.clientFor(t.WorkspaceID), t, m.now, m.userAgent)
 	if ctx.Err() != nil {
 		return // shutting down; do not record a cancelled probe

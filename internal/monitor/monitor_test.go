@@ -1107,3 +1107,70 @@ func TestReprobeOnTimeoutAndExpectStatusChange(t *testing.T) {
 	}
 	waitFor(t, "probe after expect_status edit", func() bool { return count() == 3 })
 }
+
+// Against a target slower than an edit round trip, a probe an edit triggers is
+// cancelled by the next Reload and never recorded, so Last does not advance.
+// The floor on the last probe start must still hold runners back: back-to-back
+// edits, pause/resume and mute toggles reach the server at most once per gap.
+func TestSlowTargetRapidReloadsProbeOncePerGap(t *testing.T) {
+	f := setup(t, 1)
+	const gap = 500 * time.Millisecond
+	f.mon.reprobeGap = gap
+	f.mon.now = time.Now // the gap is measured on the monitor's clock, which must move
+	var reqs atomic.Int32
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		select {
+		case <-time.After(300 * time.Millisecond):
+			w.Write([]byte("hello"))
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+	f.mon.client, f.mon.openClient = slow.Client(), slow.Client()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ws := f.st.Workspace(1)
+	cur, _ := f.st.TargetByID(ctx, f.target.ID)
+	cur.URL, cur.Keyword = slow.URL, ""
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "first request", func() bool { return reqs.Load() >= 1 })
+	start := time.Now()
+	reloads := 0
+	for i := 0; i < 10; i++ { // edits, 100ms apart: ~1s
+		cur.Keyword = [2]string{"hello", ""}[i%2]
+		if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+			t.Fatal(err)
+		}
+		reloads++
+		time.Sleep(100 * time.Millisecond)
+	}
+	for i := 0; i < 10; i++ { // pause/resume and mute toggles, ~1s
+		if err := ws.SetMuted(ctx, f.target.ID, i%2 == 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+			t.Fatal(err)
+		}
+		reloads++
+		time.Sleep(100 * time.Millisecond)
+	}
+	elapsed := time.Since(start)
+	// The first request is counted already; later ones start at least gap apart.
+	got := int(reqs.Load()) - 1
+	max := int(elapsed/gap) + 1
+	if got > max {
+		t.Fatalf("%d requests in %v over %d reloads; want at most %d (one per %v)", got, elapsed, reloads, max, gap)
+	}
+	if got < 1 {
+		t.Fatalf("no probe followed the edits")
+	}
+}
