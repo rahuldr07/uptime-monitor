@@ -13,7 +13,7 @@ maintainer).
 ## Production hardening (2026-11-09)
 
 Shipped in commits `ed48c6c`..`a2a3380`. Details in
-[../security_best_practices_report.md](../security_best_practices_report.md).
+[security-review.md](security-review.md).
 
 ### D-001: Keep daily uptime summaries separately from raw checks
 - **Status:** Accepted
@@ -145,7 +145,7 @@ Shipped in commits `ed48c6c`..`a2a3380`. Details in
 Approved through brainstorming with the maintainer, then revised after three
 independent reviews (spec quality, security architecture, fit with the code).
 Full design:
-[superpowers/specs/2026-11-10-accounts-design.md](superpowers/specs/2026-11-10-accounts-design.md).
+[design/accounts.md](design/accounts.md).
 
 ### D-101: Separate accounts with workspaces
 - **Status:** Accepted

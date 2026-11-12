@@ -2,7 +2,7 @@
 
 This document describes what uptime-monitor is, who it is for, what it does
 today and what is planned. Every decision behind it, with its reasons, is in
-[decisions.md](decisions.md). Detailed designs are in [superpowers/specs/](superpowers/specs/).
+[decisions.md](decisions.md). Detailed designs are in [design/](design/).
 
 ## What it is
 
@@ -130,6 +130,6 @@ These are recorded so they aren't forgotten, not promised:
 | Document | Contents |
 |---|---|
 | [decisions.md](decisions.md) | every product and technical decision, with reasons and rejected alternatives |
-| [superpowers/specs/2026-11-10-accounts-design.md](superpowers/specs/2026-11-10-accounts-design.md) | the accounts design |
-| [../security_best_practices_report.md](../security_best_practices_report.md) | security review findings and their status |
+| [design/accounts.md](design/accounts.md) | the accounts design |
+| [security-review.md](security-review.md) | security review findings and their status |
 | [../README.md](../README.md) | installation, configuration, upgrading and operations |

@@ -4,3 +4,8 @@ config.json
 /uptime-monitor
 dev.db*
 dev-config.json
+
+# Local tooling and agent working files (kept on disk, not published)
+.claude/
+docs/superpowers/
+.superpowers/
