@@ -470,3 +470,6 @@ Full design:
   - Open sign-up at the `max_workspaces` cap answers 403 for every address, existing or not, so the cap cannot be used to probe for accounts.
   - Pruning of unverified accounts (48 hours) skips operators. It also removes disabled accounts that never verified; this is accepted for now.
   - `TestEnumerationTiming` holds the difference between the medians for existing and unknown addresses on `/forgot`, `/verify/resend` and open `/signup` under 50 ms, with the real hasher.
+  - Accepted risk: open sign-up plus sign-in can reveal whether an address has an account. A new address creates an unverified account with the attacker's password, and signing in with it answers 403 `msgUnverified`; an existing address answers 401. Sign-up limits bound this and each probe sends mail. Closing it would contradict §5.4.
+  - Accepted risk: auto sign-in after `POST /verify` (§5.7) lets an attacker pre-register an address and sign a session-less victim into the attacker's account. This is spec behaviour.
+  - Accepted risk: `/forgot` posts can spend a victim's 10/day recipient mail budget. The operator recovers with `-reset-password`.

@@ -69,8 +69,9 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Open mode without an invite: every attempt keeps its address slot and
-	// the outcome never depends on whether the email has an account.
+	// Open mode without an invite: every well-formed attempt, duplicates
+	// included, keeps its address and instance slots, and the outcome never
+	// depends on whether the email has an account.
 	open := raw == "" && s.cfg.Signup == "open"
 	d := signupData{base: s.page(r, "Sign up"), Invite: raw, Open: open,
 		Email: strings.TrimSpace(r.FormValue("email")), WorkspaceName: strings.TrimSpace(r.FormValue("workspace"))}
@@ -79,8 +80,9 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		s.renderStatus(w, r, code, "signup", d)
 	}
 
-	// 1. Address limit. It is refunded unless the form was a real attempt
-	// with a valid invite, so probing without one costs nothing.
+	// 1. Address limit. In invite mode it is refunded unless the form was a
+	// real attempt with a valid invite, so probing without one costs nothing.
+	// In open mode it is never refunded.
 	if ok, _ := s.signupByAddr.Take(addr); !ok {
 		s.logger.Warn("sign-up throttled", "event", "signup_throttled", "ip", ip)
 		fail(http.StatusTooManyRequests, msgTooMany)
@@ -131,7 +133,8 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Instance-wide limit, spent only by a valid invite.
+	// 4. Instance-wide limit. Open mode: spent by every well-formed attempt.
+	// Invite mode: spent only by a valid invite.
 	if ok, _ := s.signupGlobal.Take("all"); !ok {
 		s.logger.Warn("sign-up throttled", "event", "signup_throttled", "ip", ip, "scope", "instance")
 		fail(http.StatusTooManyRequests, msgTooMany)
@@ -164,12 +167,13 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, store.ErrEmailTaken):
 		refundGlobal = false
-		s.logger.Warn("sign-up duplicate", "event", "signup_duplicate", "ip", ip)
 		if open {
-			s.ownerNotice(context.WithoutCancel(ctx), email)
+			uid := s.ownerNotice(context.WithoutCancel(ctx), email)
+			s.logger.Warn("sign-up duplicate", "event", "signup_duplicate", "ip", ip, "user_id", uid)
 			s.checkEmail(w, r)
 			return
 		}
+		s.logger.Warn("sign-up duplicate", "event", "signup_duplicate", "ip", ip, "email_hash", emailHash(email))
 		fail(http.StatusUnprocessableEntity, msgEmailTaken)
 		return
 	case errors.Is(err, store.ErrInviteEmail):

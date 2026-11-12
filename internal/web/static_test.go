@@ -23,7 +23,7 @@ var sysAllowed = map[string][]string{
 	"forgot.go|(*Server).forgotPost":         {"UserByEmail", "CreateToken"},
 	"verify.go|(*Server).sendVerify":         {"CreateToken"},
 	"verify.go|(*Server).verifyPage":         {"PeekToken"},
-	"verify.go|(*Server).verifyPost":         {"VerifyEmail", "DeleteSession", "CreateSession"},
+	"verify.go|(*Server).verifyPost":         {"PeekToken", "VerifyEmail", "DeleteSession", "CreateSession"},
 	"verify.go|(*Server).verifyResend":       {"UserByEmail"},
 	"verify.go|(*Server).ownerNotice":        {"UserByEmail"},
 	"login.go|(*Server).loginPost":           {"UserByEmail", "DeleteSession", "CreateSession"},

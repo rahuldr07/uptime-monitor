@@ -268,6 +268,26 @@ func TestDuplicateNoticeOncePerDay(t *testing.T) {
 	}
 }
 
+func TestDroppedDuplicateNoticeKeepsSlot(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.openSignedUp(t, "127.0.0.2", "new@x.example")
+	before := len(e.mail.all())
+	e.mail.mu.Lock()
+	e.mail.drop = true
+	e.mail.mu.Unlock()
+	e.signUpOpen(t, "127.0.0.3", "new@x.example")
+	if n := len(e.mail.all()); n != before {
+		t.Fatalf("dropped notice sent mail: %d -> %d", before, n)
+	}
+	e.mail.mu.Lock()
+	e.mail.drop = false
+	e.mail.mu.Unlock()
+	e.signUpOpen(t, "127.0.0.4", "new@x.example")
+	if n := len(e.mail.all()); n != before+1 {
+		t.Fatalf("notice after drop: %d -> %d, want one more", before, n)
+	}
+}
+
 func TestResendIdentical(t *testing.T) {
 	e := newEnvMail(t, openCfg)
 	e.addUnverified(t, "unv@x.example")

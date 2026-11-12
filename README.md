@@ -132,8 +132,10 @@ after 7 days. The email, if any, must come last, after any other flags. Invite
 management in the UI arrives in a later release.
 
 Sign-ups are limited to 5 per hour per client address, and
-`limits.signups_per_hour` across the instance (see below). Only a request with
-a valid invite counts against the instance-wide limit.
+`limits.signups_per_hour` across the instance (see below). In open mode every
+well-formed sign-up attempt, duplicates included, takes a
+`limits.signups_per_hour` slot and is not refunded. In invite mode only a
+request with a valid invite spends one.
 
 ### System email
 
@@ -159,7 +161,7 @@ The SMTP host may be a private address, since you chose it.
 
 What it sends:
 
-- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified after 48 hours are deleted by the hourly prune, operators excepted; disabled accounts that never verified are deleted too, for now.
+- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators excepted; disabled accounts that never verified are deleted too, for now.
 - **Forgot password**: `/forgot` sends a reset link valid for 1 hour. It answers the same for every address. Completing a reset also verifies the address. `/reset` and `/verify` links open even while you are signed in; a reset signs in only a browser with no session or the same user's session.
 - **Password-change notice**: sent after a reset or a change on `/account`.
 - **Duplicate sign-up notice**: sent to the existing owner when someone signs up with their address.
@@ -258,6 +260,7 @@ The server refuses to start when:
 - `signup` is `open` and `mail` is not set
 - `mail` is set without `base_url`, or without `smtp_host` or `from`, or `from` is not a bare address (`up@example.com`, not `Up <up@example.com>`)
 - `limits.mail_per_hour` is under 1
+- `mail.smtp_port` is outside 1-65535
 - `signup` is not `closed` and `base_url` is empty
 - `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query

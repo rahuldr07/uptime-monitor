@@ -66,7 +66,15 @@ func (s *Server) verifyPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) verifyPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
-	u, err := s.sys.VerifyEmail(ctx, r.FormValue("token"), s.now())
+	tok := r.FormValue("token")
+	if _, err := s.sys.PeekToken(ctx, store.TokenVerify, tok, s.now()); errors.Is(err, store.ErrNotFound) {
+		s.verifyBadLink(w, r)
+		return
+	} else if err != nil {
+		s.fail(w, err)
+		return
+	}
+	u, err := s.sys.VerifyEmail(ctx, tok, s.now())
 	if errors.Is(err, store.ErrNotFound) {
 		s.verifyBadLink(w, r)
 		return
@@ -128,20 +136,27 @@ func (s *Server) verifyResend(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "verify", d)
 }
 
+// errNoticeThrottled is returned from compose when the owner already got a
+// notice today; ownerNotice ignores it.
+var errNoticeThrottled = errors.New("duplicate notice already sent today")
+
 // ownerNotice sends the duplicate sign-up notice to the account that owns
-// email, at most once a day.
-func (s *Server) ownerNotice(ctx context.Context, email string) {
+// email, at most once a day, and returns that account's ID (0 if none). The
+// daily slot is taken inside compose, so a dropped message does not use it.
+func (s *Server) ownerNotice(ctx context.Context, email string) int64 {
 	u, _, err := s.sys.UserByEmail(ctx, email)
 	if err != nil || u.DisabledAt != nil {
-		return
+		return 0
 	}
-	if ok, _ := s.dupNotice.Take(strconv.FormatInt(u.ID, 10)); !ok {
-		return
-	}
-	if err := s.mail.Send(u.Email, func() (string, string, error) {
+	err = s.mail.Send(u.Email, func() (string, string, error) {
+		if ok, _ := s.dupNotice.Take(strconv.FormatInt(u.ID, 10)); !ok {
+			return "", "", errNoticeThrottled
+		}
 		subject, body := duplicateMail(s.cfg.BaseURL)
 		return subject, body, nil
-	}); err != nil {
+	})
+	if err != nil && !errors.Is(err, errNoticeThrottled) {
 		s.logger.Error("sign-up: cannot send notice", "err", err, "user_id", u.ID)
 	}
+	return u.ID
 }
