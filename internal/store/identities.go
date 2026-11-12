@@ -146,6 +146,9 @@ func (s *Store) HasPassword(ctx context.Context, userID int64) (bool, error) {
 // same session and token revocation as SetPassword. Otherwise it returns
 // ErrPasswordSet and changes nothing; an unknown user is ErrNotFound.
 func (s *Store) SetFirstPassword(ctx context.Context, userID int64, phc string, keepSessionHash string) error {
+	if phc == "" {
+		return errors.New("store: empty password hash")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

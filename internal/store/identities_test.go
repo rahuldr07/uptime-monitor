@@ -173,6 +173,22 @@ func TestHasPasswordAndSetFirstPassword(t *testing.T) {
 	}
 }
 
+func TestSetFirstPasswordRejectsEmptyHash(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "e@x.co", WorkspaceName: "E", Slug: "e", Verified: true, Now: time.Now(),
+		Identity: &NewIdentity{Provider: "google", Subject: "9", Email: "e@x.co"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFirstPassword(ctx, u.ID, "", ""); err == nil {
+		t.Fatal("SetFirstPassword with empty hash: want error")
+	}
+	if ok, _ := s.HasPassword(ctx, u.ID); ok {
+		t.Fatal("HasPassword should still be false")
+	}
+}
+
 func TestCreateAccountWithIdentity(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()

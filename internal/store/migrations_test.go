@@ -538,6 +538,29 @@ func TestMigrateV3FromV2(t *testing.T) {
 	}
 }
 
+func TestMigrateV1ToV3SingleBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	openV1(t, path)
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
+	}
+	if b, _ := filepath.Glob(path + ".pre-accounts-*.bak"); len(b) != 1 {
+		t.Fatalf("pre-accounts backups = %v, want exactly one", b)
+	}
+	if b, _ := filepath.Glob(path + ".pre-v3-*.bak"); len(b) != 0 {
+		t.Fatalf("unexpected pre-v3 backups %v", b)
+	}
+	if n := len(baks(t, dir)); n != 1 {
+		t.Fatalf("backups = %v, want exactly one", baks(t, dir))
+	}
+}
+
 func TestMigrateV3IsNoOpAtV3(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "t.db")
@@ -588,6 +611,11 @@ func TestMigrateV3RetryReusesBackup(t *testing.T) {
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("Open err = %v, want boom", err)
 	}
+	raw := rawOpen(t, path)
+	if v := rawCount(t, raw, `PRAGMA user_version`); v != 2 {
+		t.Fatalf("after failed v3, user_version = %d, want 2", v)
+	}
+	raw.Close()
 	steps = orig
 	s, err = Open(path)
 	if err != nil {
