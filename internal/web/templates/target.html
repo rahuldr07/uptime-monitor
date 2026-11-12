@@ -50,7 +50,7 @@
 {{else if eq .Tab "incidents"}}
 <div class="card block">
   {{if .Incidents}}{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" false)}}
-  {{else}}<div class="empty">No incidents for this monitor.</div>{{end}}
+  {{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
 </div>
 
 {{else}}

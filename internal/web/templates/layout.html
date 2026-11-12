@@ -9,6 +9,7 @@
 <script defer src="{{asset "app.js"}}"></script>
 </head>
 <body data-live>
+{{template "sprite"}}
 <div class="shell">
 <aside class="side">
   <a class="brand" href="/"><span class="dot{{if gt .DownCount 0}} bad{{end}}"></span><span class="t">Uptime</span></a>
@@ -27,7 +28,7 @@
 </aside>
 <main class="main">
 {{with .Flash}}<div data-flash>{{.}}</div>{{end}}
-{{with .Error}}<div class="flash error">{{.}}</div>{{end}}
+{{with .Error}}<div class="alert error" role="alert"><svg class="ic"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
 <div id="content"{{if or .Error .NoRefresh}} data-no-refresh{{end}}>{{template "content" .}}</div>
 <footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
 </main>

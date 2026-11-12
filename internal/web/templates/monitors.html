@@ -24,6 +24,6 @@
 </tr>{{end}}
 </table>
 </div>
-{{else}}<div class="empty">No monitors yet. Press <kbd>n</kbd> or click New monitor.</div>{{end}}
+{{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No monitors yet</strong><p>Press <kbd>n</kbd> or click New monitor.</p></div>{{end}}
 <datalist id="groups">{{range .Groups}}<option value="{{.}}">{{end}}</datalist>
 {{end}}

@@ -7,7 +7,7 @@
 <div class="card block">
   <h2>Reset link for {{$.LinkEmail}}</h2>
   <p class="muted small" style="margin:6px 0 10px">Shown once. It works for one hour; send it to the user yourself. Leaving this page discards it.</p>
-  <input readonly value="{{.}}" aria-label="Reset link">
+  <div class="copyrow"><input id="onetime" readonly value="{{.}}" aria-label="Reset link"><button type="button" data-action="copy" data-copy-target="#onetime"><svg class="ic"><use href="#i-copy"/></svg>Copy</button></div>
 </div>
 {{end}}
 <form method="get" action="/admin/users" class="btns" style="margin-bottom:12px">
@@ -47,7 +47,7 @@
 {{end}}
 </table>
 </div>
-{{else}}<div class="empty">No users match.</div>{{end}}
+{{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}
 {{if or .Prev .Next}}
 <div class="btns" style="margin-top:12px">
   {{if .Prev}}<a href="{{.Prev}}">← Previous</a>{{end}}

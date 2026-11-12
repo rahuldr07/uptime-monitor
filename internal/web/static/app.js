@@ -84,10 +84,25 @@
   window.openPanel = function () {
     document.body.classList.add('panel-open');
     var p = $('#panel'); if (!p) return;
-    var r = $('[data-test-result]', p); if (r) { r.className = 'result'; r.textContent = ''; }
+    var r = $('[data-test-result]', p); if (r) clearResult(r);
     setTimeout(function () { var u = $('#panel input[name=url]'); if (u) u.focus(); }, 60);
   };
   window.closePanel = function () { document.body.classList.remove('panel-open'); };
+  function icon(id) {
+    var NS = 'http://www.w3.org/2000/svg', s = document.createElementNS(NS, 'svg'), u = document.createElementNS(NS, 'use');
+    s.setAttribute('class', 'ic'); s.setAttribute('aria-hidden', 'true'); u.setAttribute('href', '#' + id); s.appendChild(u);
+    return s;
+  }
+  function clearResult(r) { r.className = 'alert'; r.hidden = true; r.textContent = ''; }
+  // kind: ok | error | info; title is shown bold above detail when both are given
+  function showResult(r, kind, title, detail) {
+    r.className = 'alert ' + kind; r.textContent = '';
+    var d = document.createElement('div');
+    if (detail) { var b = document.createElement('strong'); b.textContent = title; d.appendChild(b); d.appendChild(document.createTextNode(detail)); }
+    else d.textContent = title;
+    r.appendChild(icon(kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : 'i-info')); r.appendChild(d);
+    r.hidden = false;
+  }
   function wirePanel() {
     var f = $('#panel form'); if (!f || f._wired) return; f._wired = true;
     var url = f.querySelector('input[name=url]'), name = f.querySelector('input[name=name]');
@@ -97,23 +112,22 @@
       try { var h = new URL(url.value.trim()).hostname.replace(/^www\./, ''); name.value = h.charAt(0).toUpperCase() + h.slice(1); } catch (e) { }
     });
     var tb = f.querySelector('#test-btn'); if (tb) tb.addEventListener('click', function () {
-      var r = res(); r.className = 'result'; r.textContent = 'Testing…'; r.style.display = 'block';
+      var r = res(); showResult(r, 'info', 'Testing…');
       fetch('/targets/test', { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
         .then(function (x) { if (x.status === 401) { sessionExpired(); throw 0; } return x.json(); })
         .then(function (j) {
-          r.style.display = '';
-          if (j.error && !j.status_code) { r.className = 'result bad'; r.textContent = j.error; return; }
-          r.className = 'result ' + (j.ok ? 'ok' : 'bad');
-          r.textContent = (j.ok ? 'Test passed · ' : 'Test failed · ') + (j.status_code ? 'HTTP ' + j.status_code + ' ' : '') + 'in ' + j.latency_ms + ' ms' + (j.error ? ' · ' + j.error : '');
+          if (j.error && !j.status_code) { showResult(r, 'error', j.error); return; }
+          showResult(r, j.ok ? 'ok' : 'error', j.ok ? 'Test passed' : 'Test failed',
+            (j.status_code ? 'HTTP ' + j.status_code + ' ' : '') + 'in ' + j.latency_ms + ' ms' + (j.error ? ' · ' + j.error : ''));
         })
-        .catch(function () { r.className = 'result bad'; r.textContent = 'Could not run the test'; });
+        .catch(function () { showResult(r, 'error', 'Could not run the test'); });
     });
     f.addEventListener('submit', function (e) {
       e.preventDefault();
       fetch(f.action, { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
         .then(function (x) { if (x.status === 401) { sessionExpired(); throw 0; } return x.json(); })
         .then(function (j) {
-          if (j.error) { var r = res(); r.className = 'result bad'; r.textContent = j.error; r.style.display = ''; return; }
+          if (j.error) { showResult(res(), 'error', j.error); return; }
           closePanel(); f.reset();
           if (j.redirect) location.href = j.redirect; else refresh();
         })
@@ -171,6 +185,17 @@
     es.onerror = function () { if (dot) dot.classList.add('off'); };
   }
 
+  function copyField(btn) {
+    var inp = $(btn.getAttribute('data-copy-target')); if (!inp) return;
+    var done = function () { toast('Link copied', 'ok'); };
+    var fallback = function () {
+      inp.focus(); inp.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) { }
+      if (ok) done(); else toast('Press Ctrl+C to copy the link', 'error');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(done, fallback); else fallback();
+  }
+
   // ---- declarative actions (no inline handlers, so the CSP can forbid inline script) ----
   document.addEventListener('click', function (e) {
     var el = e.target.closest ? e.target.closest('[data-action]') : null; if (!el) return;
@@ -178,6 +203,7 @@
     if (a === 'open-panel') openPanel();
     else if (a === 'close-panel') closePanel();
     else if (a === 'theme') cycleTheme();
+    else if (a === 'copy') copyField(el);
   });
   document.addEventListener('change', function (e) {
     if (e.target.hasAttribute && e.target.hasAttribute('data-autosubmit') && e.target.form) e.target.form.submit();
