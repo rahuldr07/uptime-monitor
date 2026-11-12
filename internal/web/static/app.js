@@ -379,7 +379,7 @@
   window.addEventListener('resize', function () { if (openDD) closeMenu(openDD, false); });
 
   // ---- data tables ----
-  // Progressive enhancement over a server-rendered <table> inside .dt (ported from the data-table kit).
+  // Progressive enhancement over a server-rendered <table> inside .dt.
   // Rows stay in the DOM: filtering and paging set tr.hidden, sorting reorders the <tbody>. State (query, pill,
   // sort, page) lives in dtState keyed by data-table, so a live refresh that replaces #content re-applies it.
   var DT_KEY = 'uptime.tables', DT_SIZES = [25, 50, 100], dtPrefs = null, dtState = {}, dtLive = [];
@@ -407,7 +407,7 @@
   function savePrefs() { try { localStorage.setItem(DT_KEY, JSON.stringify(prefs())); } catch (e) { } }
 
   var NUM_RE = /^-?(\d+\.?\d*|\.\d+)$/;
-  // kit tableSort.ts: explicit key, else the cell text; "" and an em dash are empty; numeric text becomes a number
+  // Sort key: explicit key, else the cell text; "" and an em dash are empty; numeric text becomes a number
   function sortVal(raw) {
     if (raw === null || raw === undefined) return undefined;
     var t = String(raw).replace(/\s+/g, ' ').trim();
@@ -430,7 +430,7 @@
     }
     return out;
   }
-  function pageList(index, count, slots) { // kit tableGrid.ts
+  function pageList(index, count, slots) { // page-number list with ellipsis gaps
     var last = count - 1, side = slots - 2, near = (slots - 5) / 2, out = [], i;
     function run(a, b) { var r = []; for (var k = a; k <= b; k++) r.push(k); return r; }
     if (count <= slots) return run(0, last);
@@ -440,7 +440,7 @@
     return out;
   }
   function singular(n, noun) { return n === 1 ? noun.replace(/s$/, '') : noun; }
-  function filterSummary(shown, total, noun, parts) { // kit filterSummary.ts
+  function filterSummary(shown, total, noun, parts) { // result summary line naming the active filters
     var tail = parts.length ? ' ' + parts.join(', ') : '';
     if (shown === 0) return 'No ' + noun + tail + '.' + (parts.length ? ' Take a filter off to see more.' : '');
     return 'Showing ' + shown + ' of ' + total + ' ' + singular(total, noun) + (parts.length ? ', ' + parts.join(', ') : '') + '.';
@@ -459,7 +459,7 @@
     if (!h || !/^\/[^\/\\]/.test(h)) return false;
     try { return new URL(h, location.href).origin === location.origin; } catch (e) { return false; }
   }
-  function rangeIds(ids, from, to) { // kit tableGrid.ts
+  function rangeIds(ids, from, to) { // ids between two rows (shift-click range)
     var a = ids.indexOf(from), b = ids.indexOf(to);
     if (a < 0 || b < 0) return [to];
     return ids.slice(Math.min(a, b), Math.max(a, b) + 1);
@@ -896,7 +896,7 @@
       if (window.getSelection && String(getSelection())) return; // the user was selecting text
       if (sameHref(h)) location.href = h;
     });
-    // keyboard: the focused region moves a row cursor (kit useRowPick)
+    // keyboard: the focused region moves a row cursor
     function move(to, extend) {
       var rows = T.shown || [], n = Math.max(0, Math.min(rows.length - 1, to)), r = rows[n]; if (!r) return;
       T.cur = n; S.cur = r.id; S.ci = n; live.textContent = 'Row ' + (n + 1) + ' of ' + rows.length + ': ' + r.label;
