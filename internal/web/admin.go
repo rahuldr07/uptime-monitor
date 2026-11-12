@@ -23,6 +23,10 @@ const (
 	msgDeleteFailed    = "Delete failed; the user is left disabled."
 	msgVerifyQueued    = "Verification email queued (subject to mail limits)."
 	msgResetQueued     = "Reset email queued (subject to mail limits)."
+	msgInviteRevoked   = "Invite revoked."
+	msgInviteNotFound  = "Invite not found."
+
+	inviteTTL = 7 * 24 * time.Hour
 
 	adminFieldMax = 200
 	adminPageMax  = 1_000_000
@@ -358,3 +362,78 @@ func pathUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 
 func isNotFound(err error) bool    { return errors.Is(err, store.ErrNotFound) }
 func isOperatorErr(err error) bool { return errors.Is(err, store.ErrOperator) }
+
+type adminInvitesData struct {
+	base
+	Invites []store.Invite
+	Email   string // the address typed into a refused create form
+	Link    string // one-time invite link; set only on the response that creates it
+}
+
+func (s *Server) adminInvitesView(r *http.Request, a *authCtx) (adminInvitesData, error) {
+	list, err := s.sys.ListInvites(r.Context(), s.now())
+	if err != nil {
+		return adminInvitesData{}, err
+	}
+	return adminInvitesData{base: s.base(r, a, "admin", "Invites"), Invites: list}, nil
+}
+
+func (s *Server) adminInvites(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	d, err := s.adminInvitesView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, "admin_invites", d)
+}
+
+// adminInviteCreate makes an invite, optionally bound to an email. The link
+// is shown once on this response; it is never put in a flash, a URL or a log.
+func (s *Server) adminInviteCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	email := strings.TrimSpace(r.FormValue("email"))
+	if len(email) > adminFieldMax {
+		email = email[:adminFieldMax]
+	}
+	email = strings.ToValidUTF8(email, "")
+	var raw string
+	var badEmail bool
+	if email != "" {
+		_, err := store.NormalizeEmail(email)
+		badEmail = err != nil
+	}
+	if !badEmail {
+		var err error
+		if raw, err = s.sys.CreateInvite(context.WithoutCancel(r.Context()), email, inviteTTL, s.now()); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	d, err := s.adminInvitesView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if badEmail {
+		d.Email, d.Error = email, msgBadEmail
+		s.renderStatus(w, r, http.StatusUnprocessableEntity, "admin_invites", d)
+		return
+	}
+	d.NoRefresh = true
+	d.Link = s.cfg.LinkBase() + "/signup?invite=" + raw
+	s.operatorAction(r, a, "invite_create", 0)
+	w.Header().Set("Cache-Control", "no-store")
+	s.render(w, r, "admin_invites", d)
+}
+
+func (s *Server) adminInviteRevoke(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	err := s.sys.RevokeInvite(context.WithoutCancel(r.Context()), r.FormValue("id"))
+	switch {
+	case isNotFound(err):
+		redirect(w, r, "/admin/invites", msgInviteNotFound)
+	case err != nil:
+		s.fail(w, err)
+	default:
+		s.operatorAction(r, a, "invite_revoke", 0)
+		redirect(w, r, "/admin/invites", msgInviteRevoked)
+	}
+}

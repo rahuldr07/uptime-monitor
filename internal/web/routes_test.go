@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 56 {
-		t.Errorf("len = %d, want 56", len(routes))
+	if len(routes) != 59 {
+		t.Errorf("len = %d, want 59", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -51,7 +51,8 @@ func TestRouteTableIsComplete(t *testing.T) {
 		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /forgot", "POST /forgot"},
 		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete"},
 		classOperator: {"GET /admin", "GET /admin/users", "GET /admin/users/{id}/delete", "POST /admin/users/{id}/disable",
-			"POST /admin/users/{id}/enable", "POST /admin/users/{id}/delete", "POST /admin/users/{id}/resend", "POST /admin/users/{id}/reset-link"},
+			"POST /admin/users/{id}/enable", "POST /admin/users/{id}/delete", "POST /admin/users/{id}/resend", "POST /admin/users/{id}/reset-link",
+			"GET /admin/invites", "POST /admin/invites", "POST /admin/invites/revoke"},
 	} {
 		if len(byClass[class]) != len(want) {
 			t.Errorf("class %d routes = %v, want %v", class, byClass[class], want)

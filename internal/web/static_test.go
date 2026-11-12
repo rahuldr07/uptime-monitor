@@ -41,6 +41,9 @@ var sysAllowed = map[string][]string{
 	"admin.go|(*Server).adminEnable":         {"SetUserDisabled", "Workspace"},
 	"admin.go|(*Server).adminDelete":         {"SetUserDisabled", "DeleteAccount"},
 	"admin.go|(*Server).adminResetLink":      {"CreateToken"},
+	"admin.go|(*Server).adminInvitesView":    {"ListInvites"},
+	"admin.go|(*Server).adminInviteCreate":   {"CreateInvite"},
+	"admin.go|(*Server).adminInviteRevoke":   {"RevokeInvite"},
 	"web.go|(*Server).healthz":               {"Ping"},
 	"status.go|(*Server).statusRedirect":     {"Workspace"},                    // operator's page for anonymous visitors
 	"status.go|(*Server).statusPage":         {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
@@ -128,7 +131,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 56
+	const want = 59
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

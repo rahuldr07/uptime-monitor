@@ -107,6 +107,9 @@ func (s *Server) routeTable() []route {
 		{"POST", "/admin/users/{id}/delete", classOperator, nil, s.adminDelete},
 		{"POST", "/admin/users/{id}/resend", classOperator, nil, s.adminResend},
 		{"POST", "/admin/users/{id}/reset-link", classOperator, nil, s.adminResetLink},
+		{"GET", "/admin/invites", classOperator, nil, s.adminInvites},
+		{"POST", "/admin/invites", classOperator, nil, s.adminInviteCreate},
+		{"POST", "/admin/invites/revoke", classOperator, nil, s.adminInviteRevoke},
 	}
 }
 

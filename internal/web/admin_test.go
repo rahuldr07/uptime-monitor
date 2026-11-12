@@ -564,3 +564,92 @@ func TestOperatorActionLogged(t *testing.T) {
 		t.Errorf("refusal not logged: %s", out)
 	}
 }
+
+var inviteLinkRe = regexp.MustCompile(`https?://[^\s"<]+/signup\?invite=[A-Za-z0-9_-]+`)
+
+func TestAdminInviteCreate(t *testing.T) {
+	e := newEnv(t)
+	var buf syncBuf
+	e.srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	anon := e.client(t)
+	for _, email := range []string{"", "Guest@Example.com"} {
+		resp, body := e.post(t, e.op, "/admin/invites", url.Values{"email": {email}})
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("create %q: %d cache=%q", email, resp.StatusCode, resp.Header.Get("Cache-Control"))
+		}
+		if !strings.Contains(body, "data-no-refresh") || !strings.Contains(body, "/signup?invite=") {
+			t.Fatalf("one-time box missing: %s", body)
+		}
+		m := inviteLinkRe.FindString(body)
+		if m == "" {
+			t.Fatalf("no link in %s", body)
+		}
+		if !strings.HasPrefix(m, e.cfg.LinkBase()+"/signup?invite=") {
+			t.Errorf("link %q not built from LinkBase", m)
+		}
+		_, page := e.get(t, anon, linkPath(m))
+		if email != "" && !strings.Contains(page, "guest@example.com") {
+			t.Errorf("bound invite does not prefill its email: %s", page)
+		}
+		if strings.Contains(buf.String(), strings.TrimPrefix(m, e.cfg.LinkBase()+"/signup?invite=")) {
+			t.Error("invite token in the log")
+		}
+	}
+	if !strings.Contains(buf.String(), `"action":"invite_create"`) {
+		t.Errorf("invite_create not logged: %s", buf.String())
+	}
+	if _, body := e.get(t, e.op, "/admin/invites"); strings.Contains(body, "/signup?invite=") {
+		t.Error("link shown again on a fresh GET")
+	}
+	resp, body := e.post(t, e.op, "/admin/invites", url.Values{"email": {"not-an-email"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgBadEmail) || strings.Contains(body, "/signup?invite=") {
+		t.Errorf("bad email: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestAdminInviteListAndRevoke(t *testing.T) {
+	e := newEnv(t)
+	var buf syncBuf
+	e.srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	e.invite(t, "")
+	e.invite(t, "bound@example.com")
+	_, body := e.get(t, e.op, "/admin/invites")
+	if !strings.Contains(body, "bound@example.com") || !strings.Contains(body, "anyone") {
+		t.Fatalf("list lacks invites: %s", body)
+	}
+	ids, err := e.st.ListInvites(t.Context(), e.now())
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("ListInvites: %v %v", ids, err)
+	}
+	resp, _ := e.post(t, e.op, "/admin/invites/revoke", url.Values{"id": {ids[0].ID}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") == "" || !strings.HasPrefix(resp.Header.Get("Location"), "/admin/invites") {
+		t.Fatalf("revoke: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	body = e.follow(t, resp)
+	if strings.Contains(body, ids[0].Email) && ids[0].Email != "" {
+		t.Errorf("revoked invite still listed: %s", body)
+	}
+	left, _ := e.st.ListInvites(t.Context(), e.now())
+	if len(left) != 1 || left[0].ID != ids[1].ID {
+		t.Errorf("after revoke: %v", left)
+	}
+	if !strings.Contains(buf.String(), `"action":"invite_revoke"`) {
+		t.Errorf("invite_revoke not logged: %s", buf.String())
+	}
+	resp, _ = e.post(t, e.op, "/admin/invites/revoke", url.Values{"id": {ids[0].ID}})
+	if b := e.follow(t, resp); !strings.Contains(b, "Invite not found.") {
+		t.Errorf("unknown flash: %s", b)
+	}
+}
+
+func TestRevokedInviteRefused(t *testing.T) {
+	e := newEnv(t)
+	raw := e.invite(t, "")
+	ids, _ := e.st.ListInvites(t.Context(), e.now())
+	if resp := e.adminPost(t, "/admin/invites/revoke", url.Values{"id": {ids[0].ID}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("revoke: %d", resp.StatusCode)
+	}
+	if _, body := e.get(t, e.client(t), "/signup?invite="+raw); !strings.Contains(body, msgBadInvite) {
+		t.Errorf("revoked invite accepted: %s", body)
+	}
+}

@@ -1,0 +1,34 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Invites</h1><div class="sub">{{len .Invites}} open</div></div>
+</div>
+<div class="tabs"><a href="/admin/users">Users</a><a class="active" href="/admin/invites">Invites</a></div>
+{{with .Link}}
+<div class="card block">
+  <h2>Invite link</h2>
+  <p class="muted small" style="margin:6px 0 10px">Shown once. It works for 7 days; send it to the invitee yourself. Leaving this page discards it.</p>
+  <input readonly value="{{.}}" aria-label="Invite link">
+</div>
+{{end}}
+<form method="post" action="/admin/invites" class="btns" style="margin-bottom:12px">
+  <input name="email" type="email" value="{{.Email}}" placeholder="Email (optional)" aria-label="Email (optional)" style="width:260px">
+  <button type="submit">Create invite</button>
+</form>
+{{if .Invites}}
+<div class="card block" style="padding:0 18px">
+<table>
+<tr><th>For</th><th>Created</th><th>Expires</th><th></th></tr>
+{{range .Invites}}
+<tr>
+  <td>{{if .Email}}{{.Email}}{{else}}<span class="faint">anyone</span>{{end}}</td>
+  <td>{{ts .CreatedAt}}</td>
+  <td>{{ts .ExpiresAt}}</td>
+  <td class="btns">
+    <form method="post" action="/admin/invites/revoke" data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm">Revoke</button></form>
+  </td>
+</tr>
+{{end}}
+</table>
+</div>
+{{else}}<div class="empty">No open invites.</div>{{end}}
+{{end}}

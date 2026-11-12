@@ -197,7 +197,7 @@ func New(o Options) (*Server, error) {
 		},
 	}
 	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
-	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete"} {
+	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete", "admin_invites"} {
 		files := append([]string{"templates/layout.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)
