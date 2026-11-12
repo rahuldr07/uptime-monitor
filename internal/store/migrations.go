@@ -95,12 +95,14 @@ type migration struct {
 
 // steps are the numbered schema migrations; step N brings PRAGMA user_version
 // to N. Append new steps, never edit existing ones.
-var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}}
+var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}, {run: v3}}
 
 // migrate runs every step above the database's user_version, each in its own
 // transaction together with the version bump. path is the database file; when
-// the accounts step is about to run on a database that already holds data, a
-// backup is written next to it first.
+// any step is about to run on a database that already holds data, a backup is
+// written next to it first: pre-accounts when the upgrade includes the
+// accounts step (v2), otherwise pre-v<N> for the target version N. An
+// existing backup of the same name is reused.
 func migrate(ctx context.Context, db *sql.DB, path string) error {
 	var cur int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&cur); err != nil {
@@ -109,24 +111,28 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 	if cur > len(steps) {
 		return fmt.Errorf("database schema version %d is newer than this build supports (%d); use a newer uptime-monitor", cur, len(steps))
 	}
-	if cur < 2 && len(steps) >= 2 && path != "" {
+	if cur < len(steps) && path != "" {
 		has, err := hasData(ctx, db)
 		if err != nil {
 			return err
 		}
 		if has {
-			existing, err := findBackup(path)
+			name := fmt.Sprintf("pre-v%d", len(steps))
+			if cur < 2 && len(steps) >= 2 {
+				name = "pre-accounts"
+			}
+			existing, err := findBackup(path, name)
 			if err != nil {
 				return err
 			}
 			if existing != "" {
 				slog.Info("pre-migration backup already exists", "backup", existing)
 			} else {
-				dest := path + ".pre-accounts-" + time.Now().Format("20060102-150405") + ".bak"
+				dest := path + "." + name + "-" + time.Now().Format("20060102-150405") + ".bak"
 				if err := Backup(ctx, path, dest); err != nil {
 					return fmt.Errorf("pre-migration backup: %w", err)
 				}
-				slog.Info("backed up database before the accounts migration", "backup", dest)
+				slog.Info("backed up database before migrating", "backup", dest, "from", cur, "to", len(steps))
 			}
 		}
 	}
@@ -138,26 +144,26 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 	return nil
 }
 
-// findBackup returns the path of an earlier pre-migration backup of the
-// database at path, or "". The directory is listed rather than globbed so
+// findBackup returns the path of an earlier pre-migration backup named name
+// (for example "pre-accounts") of the database at path, or "". The directory is listed rather than globbed so
 // that characters in path are never read as a pattern. An empty file, left by
 // a process killed mid-backup, is removed and does not count.
-func findBackup(path string) (string, error) {
+func findBackup(path, name string) (string, error) {
 	dir, base := filepath.Dir(path), filepath.Base(path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("look for pre-migration backup: %w", err)
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, base+".pre-accounts-") || !strings.HasSuffix(name, ".bak") {
+		file := e.Name()
+		if !strings.HasPrefix(file, base+"."+name+"-") || !strings.HasSuffix(file, ".bak") {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		full := filepath.Join(dir, name)
+		full := filepath.Join(dir, file)
 		if info.Size() == 0 {
 			slog.Warn("removing empty pre-migration backup", "backup", full)
 			if err := os.Remove(full); err != nil {
@@ -170,10 +176,11 @@ func findBackup(path string) (string, error) {
 	return "", nil
 }
 
-// hasData reports whether any row exists in targets, settings or maintenance.
+// hasData reports whether any row exists in targets, settings, maintenance or
+// users.
 // A missing table counts as empty.
 func hasData(ctx context.Context, q querier) (bool, error) {
-	for _, table := range []string{"targets", "settings", "maintenance"} {
+	for _, table := range []string{"targets", "settings", "maintenance", "users"} {
 		var n int
 		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {
 			return false, err
@@ -450,4 +457,28 @@ func rebuild(ctx context.Context, tx *sql.Tx, table, create, indexes string) err
 		_, err = tx.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`, table, seq)
 	}
 	return err
+}
+
+const identitiesSchema = `
+CREATE TABLE identities (
+	provider     TEXT    NOT NULL CHECK (provider IN ('google','github')),
+	subject      TEXT    NOT NULL,
+	user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	email        TEXT    NOT NULL,
+	created_at   INTEGER NOT NULL,
+	last_used_at INTEGER,
+	PRIMARY KEY (provider, subject),
+	UNIQUE (user_id, provider)
+);
+CREATE INDEX idx_identities_user ON identities(user_id);
+ALTER TABLE sessions ADD COLUMN auth_at INTEGER;
+`
+
+// v3 adds social sign-in: the identities table, and sessions.auth_at, which is
+// NULL (not recently authenticated) for sessions that predate it.
+func v3(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, identitiesSchema); err != nil {
+		return fmt.Errorf("create identities: %w", err)
+	}
+	return nil
 }

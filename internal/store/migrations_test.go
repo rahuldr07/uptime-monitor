@@ -45,8 +45,8 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := userVersion(t, s); v != len(steps) || v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != len(steps) || v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'daily'`); n != 1 {
 		t.Fatal("daily table missing on fresh database")
@@ -89,8 +89,8 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	ctx := context.Background()
 	for _, c := range [][2]string{{"targets", "grp"}, {"targets", "muted"}, {"incidents", "acked_at"}, {"incidents", "note"}, {"checks", "maint"}} {
@@ -152,8 +152,8 @@ func TestMigrateStepIsAtomic(t *testing.T) {
 		t.Fatalf("Open err = %v, want boom", err)
 	}
 	raw := rawOpen(t, path)
-	if v := rawCount(t, raw, `PRAGMA user_version`); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := rawCount(t, raw, `PRAGMA user_version`); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	if n := rawCount(t, raw, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'half_done'`); n != 0 {
 		t.Fatal("half_done table survived a failed step")
@@ -203,8 +203,8 @@ func TestMigrateV2Upgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	var id int64
 	var name, slug string
@@ -265,8 +265,8 @@ func TestMigrateV2Upgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	if baks, _ := filepath.Glob(path + ".pre-accounts-*.bak"); len(baks) != 1 {
 		t.Fatalf("backups = %v, want 1", baks)
@@ -281,8 +281,8 @@ func TestMigrateV2Fresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM workspaces WHERE id = 1`); n != 1 {
 		t.Fatal("workspace 1 missing")
@@ -332,8 +332,8 @@ func TestMigrateV2FailureRollsBack(t *testing.T) {
 	if n := rawCount(t, s.db, `PRAGMA foreign_keys`); n != 1 {
 		t.Fatalf("foreign_keys = %d, want 1", n)
 	}
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }
 
@@ -363,8 +363,8 @@ func TestMigrateRetryReusesBackup(t *testing.T) {
 	if err != nil || len(baks) != 1 {
 		t.Fatalf("backups = %v, %v; want exactly one", baks, err)
 	}
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }
 
@@ -402,8 +402,8 @@ func TestMigrateBackupPathWithGlobChars(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("backups = %d, want 1", n)
 	}
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }
 
@@ -430,8 +430,8 @@ func TestMigrateReplacesEmptyBackup(t *testing.T) {
 	if fi, err := os.Stat(b[0]); err != nil || fi.Size() == 0 {
 		t.Fatalf("backup empty: %v", err)
 	}
-	if v := userVersion(t, s); v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }
 
@@ -474,5 +474,130 @@ func TestTwoWorkspacesSameTargetName(t *testing.T) {
 	}
 	if _, err := s.db.Exec(ins, 1); err == nil || !strings.Contains(err.Error(), "UNIQUE") {
 		t.Fatalf("duplicate err = %v, want UNIQUE", err)
+	}
+}
+
+func TestMigrateV3FromV2(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	orig := steps
+	steps = orig[:2]
+	s, err := Open(path)
+	steps = orig
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Verified: true, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) VALUES ('h1', ?, 1, 1, 9)`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v := userVersion(t, s); v != 2 {
+		t.Fatalf("user_version = %d, want 2", v)
+	}
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
+	}
+	b, err := filepath.Glob(path + ".pre-v3-*.bak")
+	if err != nil || len(b) != 1 {
+		t.Fatalf("pre-v3 backups = %v, %v; want one", b, err)
+	}
+	if fi, err := os.Stat(b[0]); err != nil || fi.Mode().Perm() != 0o600 || fi.Size() == 0 {
+		t.Fatalf("backup = %v, %v", fi, err)
+	}
+	if a, _ := filepath.Glob(path + ".pre-accounts-*.bak"); len(a) != 0 {
+		t.Fatalf("unexpected pre-accounts backup %v", a)
+	}
+	// The data survived, and the backup holds the v2 data.
+	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM users WHERE email = 'a@x.co'`); n != 1 {
+		t.Fatal("user lost")
+	}
+	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM sessions WHERE token_hash = 'h1' AND auth_at IS NULL`); n != 1 {
+		t.Fatal("old session should have NULL auth_at")
+	}
+	if n := rawCount(t, s.db, `SELECT COUNT(*) FROM identities`); n != 0 {
+		t.Fatal("identities should be empty")
+	}
+	raw := rawOpen(t, b[0])
+	defer raw.Close()
+	if v := rawCount(t, raw, `PRAGMA user_version`); v != 2 {
+		t.Fatalf("backup user_version = %d, want 2", v)
+	}
+	if n := rawCount(t, raw, `SELECT COUNT(*) FROM users`); n != 1 {
+		t.Fatal("backup lost the user")
+	}
+}
+
+func TestMigrateV3IsNoOpAtV3(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateAccount(context.Background(), AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
+	}
+	if b := baks(t, dir); len(b) != 0 {
+		t.Fatalf("unexpected backups %v", b)
+	}
+}
+
+func TestMigrateV3RetryReusesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	orig := steps
+	steps = orig[:2]
+	s, err := Open(path)
+	steps = orig
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateAccount(context.Background(), AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	t.Cleanup(func() { steps = orig })
+	steps = append([]migration{}, orig...)
+	steps[2].run = func(ctx context.Context, tx *sql.Tx) error {
+		if err := v3(ctx, tx); err != nil {
+			return err
+		}
+		return errors.New("boom")
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Open err = %v, want boom", err)
+	}
+	steps = orig
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if b, _ := filepath.Glob(path + ".pre-v3-*.bak"); len(b) != 1 {
+		t.Fatalf("backups = %v, want one", b)
+	}
+	if v := userVersion(t, s); v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 }

@@ -256,12 +256,19 @@ type AccountInput struct {
 	// MaxWorkspaces, when positive, refuses the account with ErrWorkspaceCap
 	// once that many workspaces exist. The count is taken in the transaction.
 	MaxWorkspaces int
-	Now           time.Time
+	// Identity, when set, links a social identity in the same transaction;
+	// a collision is ErrIdentityTaken and rolls everything back. An empty
+	// PasswordHash is allowed only with an Identity.
+	Identity *NewIdentity
+	Now      time.Time
 }
 
 // CreateAccount creates a user, a new workspace and the owner membership in
 // one transaction.
 func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, error) {
+	if in.PasswordHash == "" && in.Identity == nil {
+		return User{}, nil, errors.New("password hash required without an identity")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return User{}, nil, err
@@ -314,6 +321,11 @@ func (s *Store) CreateAccount(ctx context.Context, in AccountInput) (User, *WS, 
 	}
 	if err := insertOwner(ctx, tx, u.ID, ws.ID, in.Now); err != nil {
 		return User{}, nil, err
+	}
+	if id := in.Identity; id != nil {
+		if err := insertIdentity(ctx, tx, u.ID, id.Provider, id.Subject, id.Email, in.Now); err != nil {
+			return User{}, nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return User{}, nil, err
