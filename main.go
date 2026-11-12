@@ -71,6 +71,7 @@ func main() {
 	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
 	resetEmail := flag.String("reset-password", "", "print a one-time password reset link for this email and exit")
 	invite := flag.Bool("invite", false, "print a one-time sign-up link and exit; an email address, if any, must come last and binds the invitation to it")
+	enableEmail := flag.String("enable-user", "", "re-enable a disabled account by email and exit (restart the server afterwards so its monitors resume)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -93,6 +94,14 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(link)
+		return
+	}
+	if *enableEmail != "" {
+		if err := enableUser(cfgPath, *enableEmail); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("enabled %s\n", *enableEmail)
 		return
 	}
 	if *invite {
@@ -332,6 +341,31 @@ func newResetLink(cfgPath, email string) (string, error) {
 		return "", err
 	}
 	return cfg.LinkBase() + "/reset?token=" + raw, nil
+}
+
+// enableUser re-enables the account with this email. It also works for
+// operators: this is the recovery path. The running server must restart before
+// the user's monitors resume.
+func enableUser(cfgPath, email string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	u, _, err := st.UserByEmail(ctx, email)
+	if errors.Is(err, store.ErrNotFound) {
+		return errors.New("no such user")
+	}
+	if err != nil {
+		return err
+	}
+	_, err = st.SetUserDisabled(ctx, u.ID, false, time.Now())
+	return err
 }
 
 // inviteEmailArg returns the optional email after -invite. Anything after

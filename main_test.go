@@ -197,3 +197,82 @@ func TestNewMailer(t *testing.T) {
 		t.Fatal("with mail, newMailer must return a mailer")
 	}
 }
+
+func TestEnableUser(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "t.db")
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"db":"`+dbPath+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	_, _, err = st.CreateAccount(ctx, store.AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "aa", Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = st.CreateAccount(ctx, store.AccountInput{Email: "op@b.co", PasswordHash: "x", WorkspaceName: "Op", Slug: "op", Operator: true, Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _, err := st.UserByEmail(ctx, "a@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := st.SetUserDisabled(ctx, u.ID, true, now)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("disable: suspended %v, %v", ids, err)
+	}
+	st.Close()
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A disabled operator cannot be disabled through the store, so set it directly.
+	if _, err := db.Exec(`UPDATE users SET disabled_at = ? WHERE email = 'op@b.co'`, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if err := enableUser(cfgPath, "a@b.co"); err != nil {
+		t.Fatalf("enable user: %v", err)
+	}
+	if err := enableUser(cfgPath, "op@b.co"); err != nil {
+		t.Fatalf("enable operator: %v", err)
+	}
+	if err := enableUser(cfgPath, "nobody@b.co"); err == nil || err.Error() != "no such user" {
+		t.Fatalf("unknown: %v", err)
+	}
+
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, e := range []string{"a@b.co", "op@b.co"} {
+		u, _, err := st.UserByEmail(ctx, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.DisabledAt != nil {
+			t.Errorf("%s still disabled", e)
+		}
+	}
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workspaces WHERE suspended_at IS NOT NULL`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d workspaces still suspended", n)
+	}
+}

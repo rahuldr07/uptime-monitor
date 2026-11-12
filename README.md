@@ -77,7 +77,8 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
   below. Its HMAC key is created per process, so a restart invalidates device
   cookies (sessions are in the database and survive a restart).
 - **Lost password.** `uptime-monitor -reset-password you@example.com` prints a
-  link that works for 1 hour. It refuses unknown and disabled users.
+  link that works for 1 hour. It refuses unknown and disabled users; re-enable
+  a disabled account with `-enable-user` (see Operator panel).
 - **Plain HTTP.** With an https `base_url` the session cookie is `__Host-`
   and Secure, so signing in over plain HTTP (for example
   `http://<lan-ip>:8080`) silently fails. Use the https address.
@@ -117,7 +118,8 @@ loopback address). `closed` does not, and `-invite` links then use the
 
 `closed` does not switch sign-ups off: invites already issued keep working
 until they expire. To stop new accounts, set `limits.max_workspaces` to the
-current workspace count, or delete the unused `kind='invite'` rows from `tokens`.
+current workspace count, or revoke the unused invitations on the operator
+panel's invites page.
 
 `open` needs `mail` and `base_url` (see System email). A new account must verify
 its address before it can sign in. Sign-up answers the same whether or not the
@@ -128,8 +130,9 @@ address already has an account: an existing owner gets a notice email instead
 Create an invitation after setup with `uptime-monitor -invite` (any holder of
 the link may sign up) or `uptime-monitor -invite person@example.com` (the
 sign-up must use that address). It prints a link that works once and expires
-after 7 days. The email, if any, must come last, after any other flags. Invite
-management in the UI arrives in a later release.
+after 7 days. The email, if any, must come last, after any other flags. The
+operator panel's invites page lists, creates and revokes invitations too (see
+Operator panel).
 
 Sign-ups are limited to 5 per hour per client address, and
 `limits.signups_per_hour` across the instance (see below). In open mode every
@@ -161,7 +164,7 @@ The SMTP host may be a private address, since you chose it.
 
 What it sends:
 
-- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators excepted; disabled accounts that never verified are deleted too, for now.
+- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators and disabled accounts excepted (D-127).
 - **Forgot password**: `/forgot` sends a reset link valid for 1 hour. It answers the same for every address. Completing a reset also verifies the address. `/reset` and `/verify` links open even while you are signed in; a reset signs in only a browser with no session or the same user's session.
 - **Password-change notice**: sent after a reset or a change on `/account`.
 - **Duplicate sign-up notice**: sent to the existing owner when someone signs up with their address.
@@ -237,6 +240,46 @@ never deleted.
 
 Deleted data stays in backups and in `.pre-accounts-*.bak` files until you
 delete those files.
+
+### Operator panel
+
+The operator sees **Admin** in the navigation. `/admin` is for the operator
+account only: everyone else, including signed-out visitors, gets 404.
+
+**Users** (`/admin/users`) lists accounts, newest first, 50 to a page. Search by
+email, or by monitored host (which matches anywhere in the URL). Actions:
+
+- **Disable** signs the user out everywhere, deletes their unused verification
+  and reset links, and suspends the workspaces where they are the only member.
+  Those workspaces' monitors stop and their status pages return 404. Data is
+  kept, and the user cannot sign in.
+- **Enable** lifts the suspension and restarts those monitors at once.
+- **Delete** asks for your current password, then disables the user, stops
+  their monitors and deletes the account as `/account` does. If the delete
+  fails, the user is left disabled and the page says so.
+- **Resend verification** sends a new verification link to an unverified,
+  enabled user. It needs `mail`, and the link uses `base_url`.
+- **Reset link** is for enabled, non-operator users. With `mail` it emails a
+  reset link. Without `mail` the link is shown once on the page, and is not
+  stored in a flash, a URL or a log.
+
+Operators cannot be disabled, deleted or sent a reset link from the panel.
+Disabled users cannot be sent a reset link either. Disable and delete wait for
+in-flight alerts in the affected workspaces to finish, which can take about two
+minutes, so the page may be slow. Those actions also hold a lock shared by the
+panel, so other disable, enable and delete requests wait behind them.
+
+Each successful action is logged at INFO as `operator_action` with the acting
+user and the target; refusals are logged at WARN. Links and tokens are never
+logged.
+
+**Invites** (`/admin/invites`) creates an invitation, optionally bound to an
+email address, lists them, and revokes one before it is used. Invitations expire
+after 7 days, like `-invite`.
+
+**Recovery.** `uptime-monitor -enable-user you@example.com` re-enables a disabled
+account, including an operator's, and exits. It changes only the database, so
+restart the server afterwards for that user's monitors to resume.
 
 ### Status page address
 
@@ -370,6 +413,7 @@ Command-line flags:
 | `-setup-link` | during first-run setup, print a fresh setup link (replacing the previous one) and exit; fails once setup is complete |
 | `-invite [email]` | print a one-time sign-up link, valid for 7 days, optionally bound to that email (which must come last), and exit; fails before setup is complete |
 | `-reset-password email` | print a password reset link, valid for 1 hour, for that user and exit; fails for unknown and disabled users |
+| `-enable-user email` | re-enable a disabled account (operators too) and exit; restart the server afterwards so its monitors resume |
 | `-version` | print the version and exit |
 
 Targets in the config file are added to the database on first start. After

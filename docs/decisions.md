@@ -468,8 +468,24 @@ Full design:
   - Status pages of unverified owners return 404.
   - The system mail dialer allows private addresses, because the operator chose the SMTP host. Alert-channel email in other workspaces keeps the `netguard` rules.
   - Open sign-up at the `max_workspaces` cap answers 403 for every address, existing or not, so the cap cannot be used to probe for accounts.
-  - Pruning of unverified accounts (48 hours) skips operators. It also removes disabled accounts that never verified; this is accepted for now.
+  - Pruning of unverified accounts (48 hours) skips operators and disabled accounts. D-127 keeps disabled accounts; an earlier version of this note said they were pruned.
   - `TestEnumerationTiming` holds the difference between the medians for existing and unknown addresses on `/forgot`, `/verify/resend` and open `/signup` under 50 ms, with the real hasher.
   - Accepted risk: open sign-up plus sign-in can reveal whether an address has an account. A new address creates an unverified account with the attacker's password, and signing in with it answers 403 `msgUnverified`; an existing address answers 401. Sign-up limits bound this and each probe sends mail. Closing it would contradict §5.4.
   - Accepted risk: auto sign-in after `POST /verify` (§5.7) lets an attacker pre-register an address and sign a session-less victim into the attacker's account. This is spec behaviour.
   - Accepted risk: `/forgot` posts can spend a victim's 10/day recipient mail budget. The operator recovers with `-reset-password`.
+
+### D-127: M3 operator panel rulings
+- **Status:** Accepted (implements spec §6.2, §6.3, §6.5, §6.7, §10, §11 and §12)
+- **Decision:**
+  - The panel answers 404 to everyone else, including anonymous visitors, wrong methods, unknown sub-paths and cross-site POSTs. A signed-in operator's cross-site POST still gets 403 from `sameOrigin`.
+  - Suspension is enforced through store joins (suspended workspaces are hidden from the engine and from public pages) plus the monitor tombstone (`ForgetWorkspace`), so an in-flight Reload cannot restart a runner.
+  - Panel delete is disable, then forget, then delete. A failure leaves the user disabled. `/account` self-delete is unchanged and relies on the tombstone.
+  - Disable and delete wait for in-flight alerts (`ForgetWorkspace`), so they can take about two minutes. The panel holds one server-wide mutex across disable, enable and delete, so those requests queue behind each other. Disable and delete run detached from the client connection, so a dropped connection cannot stop them half way.
+  - Invites are identified by their stored hash, so revoke acts on the hash, not on the link text.
+  - The reset link is shown once on the response, with `Cache-Control: no-store` and no live refresh, when there is no mail. It is never put in a flash, a URL or a log. With mail it is emailed.
+  - Resend uses `base_url` for the verification link.
+  - The host search matches anywhere in the URL, not only the host.
+  - An incident that is open when a workspace is suspended stays open. Its "up" alert after re-enabling includes the suspended time.
+  - Disabled unverified users are not pruned. This amends the D-126 note and the README line on pruning, which said they were.
+  - Operators cannot be disabled, deleted or sent a reset link from the panel. Disabled users cannot be sent a reset link either. Re-enabling an operator with `-enable-user` is allowed, as the recovery path.
+  - `-enable-user` changes only the database. A running server does not resume the user's monitors until it restarts; the panel's enable restarts them directly.
