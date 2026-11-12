@@ -293,8 +293,8 @@ func TestCreateAccountAndDuplicate(t *testing.T) {
 		t.Fatalf("duplicate: %v", err)
 	}
 	// The failed attempt must not leave a workspace behind.
-	if _, err := s.WorkspaceBySlug(ctx, "b"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("orphan workspace: %v", err)
+	if n := slugRows(t, s, "b"); n != 0 {
+		t.Fatalf("orphan workspace: %d rows", n)
 	}
 	if err := markVerified(s, u.ID, now); err != nil {
 		t.Fatal(err)
@@ -875,8 +875,8 @@ func TestCreateAccountWithInvite(t *testing.T) {
 	if userCount() != before {
 		t.Fatal("mismatch wrote a user")
 	}
-	if _, err := s.WorkspaceBySlug(ctx, "b"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("mismatch wrote a workspace: %v", err)
+	if n := slugRows(t, s, "b"); n != 0 {
+		t.Fatalf("mismatch wrote a workspace: %d rows", n)
 	}
 	if _, err := s.PeekToken(ctx, TokenInvite, inv3, now); err != nil {
 		t.Fatalf("invite consumed by mismatch: %v", err)
@@ -1027,8 +1027,8 @@ func TestSetSlugAndRename(t *testing.T) {
 	if info.Slug != "gamma" || info.Name != "Renamed" {
 		t.Fatalf("info: %+v", info)
 	}
-	if _, err := s.WorkspaceBySlug(ctx, "alpha"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("old slug: %v", err)
+	if n := slugRows(t, s, "alpha"); n != 0 {
+		t.Fatalf("old slug: %d rows", n)
 	}
 }
 
@@ -1303,8 +1303,8 @@ func TestDeriveSlugFallbackAfterManyCollisions(t *testing.T) {
 	if err != nil || !ValidSlug(got) || !strings.HasPrefix(got, "xyz-") || len(got) != 8 {
 		t.Fatalf("got %q %v", got, err)
 	}
-	if _, err := s.WorkspaceBySlug(ctx, got); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("not unique: %v", err)
+	if n := slugRows(t, s, got); n != 0 {
+		t.Fatalf("not unique: %d rows", n)
 	}
 }
 
@@ -1557,4 +1557,16 @@ func TestWorkspaceBySlugUnverified(t *testing.T) {
 	if _, err := s.WorkspaceBySlug(ctx, "default"); err != nil {
 		t.Fatalf("workspace 1: %v", err)
 	}
+}
+
+// slugRows counts workspaces with a slug straight from the table.
+// WorkspaceBySlug also hides workspaces without a verified owner, so it
+// cannot prove that a workspace is absent.
+func slugRows(t *testing.T, s *Store, slug string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM workspaces WHERE slug = ?`, slug).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
