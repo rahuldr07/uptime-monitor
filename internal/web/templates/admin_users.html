@@ -2,7 +2,7 @@
 <div class="topbar">
   <div><h1>Users</h1><div class="sub">{{.Total}} account{{if ne .Total 1}}s{{end}}</div></div>
 </div>
-<div class="tabs"><a class="active" href="/admin/users">Users</a><a href="/admin/invites">Invites</a></div>
+<div class="tabs"><a class="active" href="/admin/users"><svg class="ic" aria-hidden="true"><use href="#i-users"/></svg>Users</a><a href="/admin/invites"><svg class="ic" aria-hidden="true"><use href="#i-ticket"/></svg>Invites</a></div>
 {{with .Link}}
 <div class="card block">
   <h2>Reset link for {{$.LinkEmail}}</h2>
@@ -32,28 +32,28 @@
   <td data-sort="{{.Monitors}}">{{.Monitors}}</td>
   <td class="btns">
     {{if .DisabledAt}}
-    <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm-title="Enable user?" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Enable</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm-title="Enable user?" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-circle-check"/></svg>Enable</button></form>
     {{else if not .IsOperator}}
-    <form method="post" action="/admin/users/{{.ID}}/disable" data-confirm-title="Disable user?" data-confirm-danger data-confirm="Disable {{.Email}}? They are signed out and their monitors stop.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Disable</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/disable" data-confirm-title="Disable user?" data-confirm-danger data-confirm="Disable {{.Email}}? They are signed out and their monitors stop.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-circle-pause"/></svg>Disable</button></form>
     {{end}}
     {{if and $.CanMail (not .VerifiedAt) (not .DisabledAt)}}
-    <form method="post" action="/admin/users/{{.ID}}/resend" data-confirm-title="Resend verification?" data-confirm="Send {{.Email}} a new verification email?">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Resend verification</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/resend" data-confirm-title="Resend verification?" data-confirm="Send {{.Email}} a new verification email?">{{template "admin-keep" $.Keep}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-mail"/></svg>Resend verification</button></form>
     {{end}}
     {{if and (not .IsOperator) (not .DisabledAt)}}
-    <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm-title="Reset password?" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Reset link</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm-title="Reset password?" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Reset link</button></form>
     {{end}}
-    {{if not .IsOperator}}<a class="btn sm danger" href="{{$.Keep.DeleteURL .ID}}">Delete</a>{{end}}
+    {{if not .IsOperator}}<a class="btn sm danger" href="{{$.Keep.DeleteURL .ID}}"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete</a>{{end}}
   </td>
 </tr>
 {{end}}
 </tbody>
 </table>
 </div>
-{{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}
+{{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}
 {{if or .Prev .Next}}
 <div class="btns" style="margin-top:12px">
-  {{if .Prev}}<a href="{{.Prev}}">← Previous</a>{{end}}
-  {{if .Next}}<a href="{{.Next}}">Next →</a>{{end}}
+  {{if .Prev}}<a class="btn sm" href="{{.Prev}}"><svg class="ic flip" aria-hidden="true"><use href="#i-chevron-right"/></svg>Previous</a>{{end}}
+  {{if .Next}}<a class="btn sm" href="{{.Next}}">Next<svg class="ic" aria-hidden="true"><use href="#i-chevron-right"/></svg></a>{{end}}
 </div>
 {{end}}
 {{end}}

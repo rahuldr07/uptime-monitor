@@ -524,4 +524,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues as described in
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Icons are from [Lucide](https://lucide.dev) (ISC); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -2,7 +2,7 @@
 <div class="topbar">
   <div><h1>Invites</h1><div class="sub">{{len .Invites}} open</div></div>
 </div>
-<div class="tabs"><a href="/admin/users">Users</a><a class="active" href="/admin/invites">Invites</a></div>
+<div class="tabs"><a href="/admin/users"><svg class="ic" aria-hidden="true"><use href="#i-users"/></svg>Users</a><a class="active" href="/admin/invites"><svg class="ic" aria-hidden="true"><use href="#i-ticket"/></svg>Invites</a></div>
 {{with .Link}}
 <div class="card block">
   <h2>Invite link</h2>
@@ -25,12 +25,12 @@
   <td data-sort="{{ums .CreatedAt}}">{{ts .CreatedAt}}</td>
   <td data-sort="{{ums .ExpiresAt}}">{{ts .ExpiresAt}}</td>
   <td class="btns">
-    <form method="post" action="/admin/invites/revoke" data-confirm-title="Revoke invite?" data-confirm-danger data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm">Revoke</button></form>
+    <form method="post" action="/admin/invites/revoke" data-confirm-title="Revoke invite?" data-confirm-danger data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>Revoke</button></form>
   </td>
 </tr>
 {{end}}
 </tbody>
 </table>
 </div>
-{{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No open invites</strong><p>Create one above to bring someone in.</p></div>{{end}}
+{{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No open invites</strong><p>Create one above to bring someone in.</p></div>{{end}}
 {{end}}

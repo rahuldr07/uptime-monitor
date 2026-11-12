@@ -2,15 +2,15 @@
 {{$t := .View.State.Target}}
 <div class="topbar">
   <div>
-    <h1 style="display:flex;align-items:center;gap:10px"><span class="sdot {{.View.Class}}"></span>{{$t.Name}} <span class="badge {{.View.Class}}">{{.View.Label}}</span>{{if $t.Muted}}<span class="badge">muted</span>{{end}}</h1>
+    <h1 style="display:flex;align-items:center;gap:10px"><span class="sdot {{.View.Class}}"></span>{{$t.Name}} <span class="badge {{.View.Class}}">{{template "st-ic" .View.Class}}{{.View.Label}}</span>{{if $t.Muted}}<span class="badge">muted</span>{{end}}</h1>
     {{with .View.Maint}}<div class="small" style="color:var(--accent-text);margin-top:2px">{{.Title}} · maintenance until {{ts .EndsAt}} · <a href="/maintenance">manage</a></div>{{end}}
     <div class="sub"><a href="{{$t.URL}}" rel="noopener" target="_blank" class="mono">{{$t.URL}}</a>{{if $t.Group}} · {{$t.Group}}{{end}}</div>
   </div>
   <div class="btns">
-    {{if not $t.Paused}}<form method="post" action="/targets/{{$t.ID}}/check" data-async><button type="submit">Check now</button></form>{{end}}
-    <form method="post" action="/targets/{{$t.ID}}/pause"><button type="submit">{{if $t.Paused}}Resume{{else}}Pause{{end}}</button></form>
-    <form method="post" action="/targets/{{$t.ID}}/mute"><button type="submit">{{if $t.Muted}}Unmute alerts{{else}}Mute alerts{{end}}</button></form>
-    <form method="post" action="/targets/{{$t.ID}}/delete" data-confirm-title="Delete monitor?" data-confirm="Delete {{$t.Name}} and all of its history? This cannot be undone."><button type="submit" class="danger">Delete</button></form>
+    {{if not $t.Paused}}<form method="post" action="/targets/{{$t.ID}}/check" data-async><button type="submit"><svg class="ic spin" aria-hidden="true"><use href="#i-refresh"/></svg>Check now</button></form>{{end}}
+    <form method="post" action="/targets/{{$t.ID}}/pause"><button type="submit">{{if $t.Paused}}<svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
+    <form method="post" action="/targets/{{$t.ID}}/mute"><button type="submit">{{if $t.Muted}}<svg class="ic" aria-hidden="true"><use href="#i-bell"/></svg>Unmute alerts{{else}}<svg class="ic" aria-hidden="true"><use href="#i-bell-off"/></svg>Mute alerts{{end}}</button></form>
+    <form method="post" action="/targets/{{$t.ID}}/delete" data-confirm-title="Delete monitor?" data-confirm="Delete {{$t.Name}} and all of its history? This cannot be undone."><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete</button></form>
   </div>
 </div>
 <nav class="tabs">
@@ -50,7 +50,7 @@
 {{else if eq .Tab "incidents"}}
 <div class="card block">
   {{if .Incidents}}{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" false)}}
-  {{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
+  {{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
 </div>
 
 {{else}}

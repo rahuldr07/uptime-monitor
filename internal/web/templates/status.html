@@ -4,7 +4,7 @@
   {{if .StatusDesc}}<p>{{.StatusDesc}}</p>{{end}}
 </div>
 {{if .Maint}}
-<div class="banner maint"><span>{{template "i-wrench"}}<strong>Scheduled maintenance in progress</strong> · {{range $i, $m := .Maint}}{{if $i}}, {{end}}{{$m.Title}}{{if $m.Group}} ({{$m.Group}}){{end}}{{end}}</span><span class="small">expected to end {{with index .Maint 0}}{{ts .EndsAt}}{{end}}</span></div>
+<div class="banner maint"><span><svg class="ic" aria-hidden="true"><use href="#i-wrench"/></svg><strong>Scheduled maintenance in progress</strong> · {{range $i, $m := .Maint}}{{if $i}}, {{end}}{{$m.Title}}{{if $m.Group}} ({{$m.Group}}){{end}}{{end}}</span><span class="small">expected to end {{with index .Maint 0}}{{ts .EndsAt}}{{end}}</span></div>
 {{end}}
 {{if gt .DownCount 0}}
 <div class="banner bad"><span><strong>Some systems are experiencing issues</strong></span><span class="small">{{.DownCount}} of {{.Total}} affected</span></div>
@@ -25,7 +25,7 @@
 <div class="card block">
   <div class="head">
     <span style="font-weight:500;display:flex;align-items:center;gap:8px"><span class="sdot {{.Class}}"></span>{{.State.Target.Name}}</span>
-    <span class="badge {{.Class}}">{{.Label}}</span>
+    <span class="badge {{.Class}}">{{template "st-ic" .Class}}{{.Label}}</span>
   </div>
   <div class="days" style="margin-top:10px">{{range .Days}}<i class="{{.Class}}" title="{{.Title}}"></i>{{end}}</div>
   <div class="small faint" style="display:flex;justify-content:space-between;margin-top:6px"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today</span></div>

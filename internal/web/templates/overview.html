@@ -2,8 +2,8 @@
 <div class="topbar">
   <div><h1>Overview</h1><div class="sub"><span class="live"></span> Live · {{.Total}} monitor{{if ne .Total 1}}s{{end}}</div></div>
   <div class="btns">
-    <div class="search">{{template "i-search"}}<input data-search placeholder="Search monitors  /" aria-label="Search monitors"></div>
-    <button type="button" class="primary" data-action="open-panel">{{template "i-plus"}}New monitor</button>
+    <div class="search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input data-search placeholder="Search monitors  /" aria-label="Search monitors"></div>
+    <button type="button" class="primary" data-action="open-panel"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>New monitor</button>
   </div>
 </div>
 {{if eq .Total 0}}
@@ -11,8 +11,8 @@
   <h2>Welcome. Three steps to your first status page.</h2>
   <div class="guide">
     <div class="step"><span class="n">1</span><h3>Add a monitor</h3><p>Paste a URL. We check it every 30 seconds by default and record every result.</p><div><button type="button" class="primary sm" data-action="open-panel">Add monitor</button></div></div>
-    <div class="step{{if .HasChannel}} done{{end}}"><span class="n">{{if .HasChannel}}{{template "i-check"}}{{else}}2{{end}}</span><h3>Connect an alert channel</h3><p>Telegram, Slack or email. You get one message when something goes down and one when it recovers.</p><div><a class="btn sm" href="/alerts">{{if .HasChannel}}Edit channels{{else}}Set up alerts{{end}}</a></div></div>
-    <div class="step"><span class="n">3</span><h3>Share the status page</h3><p>A public, read-only page with 90 days of history. Give it a title and share the link.</p><div><a class="btn sm" href="{{.StatusURL}}" target="_blank" rel="noopener">Open status page</a></div></div>
+    <div class="step{{if .HasChannel}} done{{end}}"><span class="n">{{if .HasChannel}}<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>{{else}}2{{end}}</span><h3>Connect an alert channel</h3><p>Telegram, Slack or email. You get one message when something goes down and one when it recovers.</p><div><a class="btn sm" href="/alerts">{{if .HasChannel}}Edit channels{{else}}Set up alerts{{end}}</a></div></div>
+    <div class="step"><span class="n">3</span><h3>Share the status page</h3><p>A public, read-only page with 90 days of history. Give it a title and share the link.</p><div><a class="btn sm" href="{{.StatusURL}}" target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="#i-external"/></svg>Open status page</a></div></div>
   </div>
 </div>
 {{else}}
@@ -46,7 +46,7 @@
   {{range .Rows}}
   <tr data-id="{{.State.Target.ID}}" data-k="{{.Class}}" data-href="/targets/{{.State.Target.ID}}" data-label="{{.State.Target.Name}}" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
     <td><span class="sdot {{.Class}}"></span></td>
-    <td data-sort="{{.State.Target.Name}}"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts .EndsAt}}">maintenance</span>{{end}}
+    <td data-sort="{{.State.Target.Name}}"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts .EndsAt}}"><svg class="ic" aria-hidden="true"><use href="#i-wrench"/></svg>maintenance</span>{{end}}
       {{if eq .Class "down"}}<span class="sub err">{{with .State.Last}}{{.Error}}{{end}} · down {{dur .DownFor}}</span>
       {{else if eq .Class "paused"}}<span class="sub">paused</span>
       {{else if eq .Class "maint"}}<span class="sub">{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts .Maint.EndsAt}}</span>
@@ -56,8 +56,8 @@
     <td data-sort="{{pctv .Up24}}">{{pct .Up24}}</td>
     <td data-sort="{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}}{{end}}">{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}} ms{{else}}<span class="faint">—</span>{{end}}</td>
     <td class="acts">
-      {{if not .State.Target.Paused}}<form method="post" action="/targets/{{.State.Target.ID}}/check" data-async><button type="submit" class="ghost sm">Check</button></form>{{end}}
-      <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="ghost sm">{{if .State.Target.Paused}}Resume{{else}}Pause{{end}}</button></form>
+      {{if not .State.Target.Paused}}<form method="post" action="/targets/{{.State.Target.ID}}/check" data-async><button type="submit" class="ghost sm"><svg class="ic spin" aria-hidden="true"><use href="#i-refresh"/></svg>Check</button></form>{{end}}
+      <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="ghost sm">{{if .State.Target.Paused}}<svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
     </td>
   </tr>
   {{end}}

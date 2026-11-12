@@ -8,5 +8,5 @@
 </div>
 {{if .Incidents}}
 {{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" true)}}
-{{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents{{if .Filter.OngoingOnly}} ongoing{{end}}</strong><p>Good news.</p></div>{{end}}
+{{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents{{if .Filter.OngoingOnly}} ongoing{{end}}</strong><p>Good news.</p></div>{{end}}
 {{end}}

@@ -9,6 +9,9 @@
     else { document.documentElement.setAttribute('data-theme', t); }
     document.cookie = 'theme=' + t + ';path=/;max-age=31536000;samesite=lax';
     $$('[data-theme-label]').forEach(function (el) { el.textContent = t === 'auto' ? 'Auto' : t === 'dark' ? 'Dark' : 'Light'; });
+    $$('[data-theme-icon]').forEach(function (el) { // sun when light, moon when dark, sun-moon when auto
+      var cur = $('.ic:not(.swap-out)', el); if (cur) swapIcon(cur, t === 'auto' ? 'i-sun-moon' : t === 'dark' ? 'i-moon' : 'i-sun', 200);
+    });
   };
   window.cycleTheme = function () {
     var cur = document.documentElement.getAttribute('data-theme') || 'auto';
@@ -39,8 +42,8 @@
     setTimeout(function () { t.remove(); }, reduced() ? 0 : 120);
   }
   function restartAnim(el, cls) {
-    if (cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); return; }
-    el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+    if (cls) { el.classList.remove(cls); void el.getBoundingClientRect(); el.classList.add(cls); return; }
+    el.style.animation = 'none'; void el.getBoundingClientRect(); el.style.animation = '';
   }
   window.toast = function (msg, kind) {
     kind = kind || '';
@@ -54,7 +57,7 @@
     }
     var t = document.createElement('div');
     t.className = 'toast' + (kind ? ' ' + kind : ''); t._msg = msg; t._kind = kind;
-    t.appendChild(icon(kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : 'i-info'));
+    t.appendChild(icon(kindIcon(kind)));
     var m = document.createElement('span'); m.className = 'toast-msg'; m.textContent = msg; t.appendChild(m);
     var x = document.createElement('button'); x.type = 'button'; x.className = 'toast-x'; x.setAttribute('aria-label', 'Dismiss');
     x.appendChild(icon('i-x')); x.addEventListener('click', function () { dismissToast(t); });
@@ -99,7 +102,7 @@
         $('#confirm-msg').textContent = f.getAttribute('data-confirm');
         var head = $('.dlg-head', d), yes = $('button[value=yes]', d);
         head.classList.toggle('danger', danger);
-        $('use', head).setAttribute('href', danger ? '#i-alert' : '#i-info');
+        $('use', head).setAttribute('href', danger ? '#i-warn' : '#i-info');
         yes.className = danger ? 'danger' : 'primary';
         d.returnValue = '';
         d.showModal();
@@ -173,6 +176,23 @@
     s.setAttribute('class', 'ic'); s.setAttribute('aria-hidden', 'true'); u.setAttribute('href', '#' + id); s.appendChild(u);
     return s;
   }
+  // ok | error | warn | info -> sprite id
+  function kindIcon(kind) { return kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : kind === 'warn' ? 'i-warn' : 'i-info'; }
+  // Replaces an icon with another one: the old svg fades out while the new one fades in on top of it (CSS .ic-swap).
+  // Only the outer svgs animate; the symbols in the sprite are never touched. Reduced motion swaps the glyph in place.
+  function swapIcon(old, id, ms) {
+    var use = $('use', old);
+    if (use && use.getAttribute('href') === '#' + id) return old;
+    if (reduced() || !old.parentNode) { if (use) use.setAttribute('href', '#' + id); return old; }
+    var wrap = old.parentNode;
+    if (!wrap.classList.contains('ic-swap')) {
+      wrap = document.createElement('span'); wrap.className = 'ic-swap';
+      old.parentNode.insertBefore(wrap, old); wrap.appendChild(old);
+    }
+    var nu = icon(id); nu.classList.add('swap-in'); old.classList.add('swap-out'); wrap.appendChild(nu);
+    setTimeout(function () { old.remove(); nu.classList.remove('swap-in'); }, ms || 150);
+    return nu;
+  }
   function clearResult(r) { r.className = 'alert'; r.hidden = true; r.textContent = ''; }
   // kind: ok | error | info; title is shown bold above detail when both are given
   function showResult(r, kind, title, detail) {
@@ -180,7 +200,7 @@
     var d = document.createElement('div');
     if (detail) { var b = document.createElement('strong'); b.textContent = title; d.appendChild(b); d.appendChild(document.createTextNode(detail)); }
     else d.textContent = title;
-    r.appendChild(icon(kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : 'i-info')); r.appendChild(d);
+    r.appendChild(icon(kindIcon(kind))); r.appendChild(d);
     r.hidden = false;
   }
   function wirePanel() {
@@ -612,8 +632,7 @@
     if (searchLabel) {
       var sw = mk('div', 'search dt-search'); q = mk('input', 'dt-q'); q.type = 'search'; q.placeholder = searchLabel; q.setAttribute('aria-label', searchLabel);
       q.setAttribute('autocomplete', 'off'); q.value = S.q; q.id = 'dt-' + T.id + '-q';
-      sw.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="m21 21-6-6"/></svg>';
-      sw.appendChild(q); bar.appendChild(sw);
+      sw.appendChild(icon('i-search')); sw.appendChild(q); bar.appendChild(sw);
       q.addEventListener('input', function () { T.setQuery(q.value); });
     }
     var spec = (root.getAttribute('data-pills') || '').split(',').map(function (p) { var a = p.split(':'); return a[0] ? { key: a[0], label: a[1] || a[0] } : null; }).filter(Boolean);
@@ -638,7 +657,8 @@
     var inline = !q && !spec.length; // nothing to filter: the View button joins the summary line instead of a bar of its own
     var grow = mk('span', 'dt-grow');
     var vb = mk('button', 'dt-view sm'), vlab = mk('span'); vb.type = 'button'; vb.id = 'dt-' + T.id + '-view'; vb.setAttribute('aria-haspopup', 'menu'); vb.setAttribute('aria-expanded', 'false'); vb.setAttribute('aria-label', 'View: density and columns');
-    vlab.textContent = 'View'; vb.appendChild(vlab); vb.appendChild(icon('i-chevron'));
+    vlab.textContent = 'View'; vb.appendChild(icon('i-columns')); vb.appendChild(vlab);
+    var vc = icon('i-chevron'); vc.classList.add('chev'); vb.appendChild(vc);
     vb.addEventListener('click', function () { vb.focus({ preventScroll: true }); T.viewMenu(); });
     vb.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.viewMenu(); } });
     (inline ? sum : bar).appendChild(grow); (inline ? sum : bar).appendChild(vb);
@@ -664,14 +684,14 @@
 
     table.parentNode.insertBefore(box, table); box.appendChild(wrap); wrap.appendChild(table);
     var edge = mk('span', 'dt-edge'), eb = mk('button', 'dt-edge-more'); edge.setAttribute('aria-hidden', 'true');
-    eb.type = 'button'; eb.tabIndex = -1; eb.textContent = 'More columns →'; edge.appendChild(eb); box.appendChild(edge);
+    eb.type = 'button'; eb.tabIndex = -1; eb.appendChild(document.createTextNode('More columns')); eb.appendChild(icon('i-chevron-right')); edge.appendChild(eb); box.appendChild(edge);
     eb.addEventListener('click', function () { wrap.scrollBy({ left: wrap.clientWidth * 0.8, behavior: 'smooth' }); });
     wrap.addEventListener('scroll', function () { T.edge(); }, { passive: true });
     if (!inline) root.insertBefore(bar, box); root.insertBefore(sum, box); root.appendChild(foot); root.appendChild(live);
     T.sizeSel = sizeSel;
 
     // headers: sort button, column menu, resize grip
-    var ARROW = { asc: 'M8 13V3M4 7l4-4 4 4', desc: 'M8 3v10M4 9l4 4 4-4', none: 'M5 6l3-3 3 3M5 10l3 3 3-3' }, NS = 'http://www.w3.org/2000/svg';
+    var ARROW = { asc: 'i-arrow-up', desc: 'i-arrow-down', none: 'i-sort' };
     function drag(c, g) {
       var d = null;
       function up() { if (!d) return; d = null; dtDragging = false; g.classList.remove('on'); savePrefs(); }
@@ -695,19 +715,17 @@
     T.cols.forEach(function (c) {
       var th = c.th, span = mk('span', 'dt-th');
       if (c.canSort) {
-        var b = mk('button', 'dt-sort'), sv = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+        var b = mk('button', 'dt-sort'), sv = icon(ARROW.none);
         b.type = 'button'; b.id = 'dt-' + T.id + '-sort-' + c.i; b.appendChild(document.createTextNode(c.label));
-        sv.setAttribute('viewBox', '0 0 16 16'); sv.setAttribute('class', 'dt-arrow'); sv.setAttribute('aria-hidden', 'true'); sv.appendChild(p); b.appendChild(sv);
-        span.appendChild(b); c.path = p; c.btn = b;
+        sv.classList.add('dt-arrow'); b.appendChild(sv);
+        span.appendChild(b); c.arrow = sv; c.btn = b;
         b.addEventListener('click', function () { T.sortBy(c); });
       } else while (th.firstChild) span.appendChild(th.firstChild);
       th.textContent = ''; th.appendChild(span);
       if (c.pin) return; // the actions column has no menu or grip
-      var hm = mk('button', 'dt-hm'), kv = document.createElementNS(NS, 'svg');
+      var hm = mk('button', 'dt-hm');
       hm.type = 'button'; hm.id = 'dt-' + T.id + '-colmenu-' + c.i; hm.setAttribute('aria-haspopup', 'menu'); hm.setAttribute('aria-expanded', 'false'); hm.setAttribute('aria-label', c.label + ' column menu');
-      kv.setAttribute('viewBox', '0 0 24 24'); kv.setAttribute('aria-hidden', 'true'); kv.setAttribute('width', '14'); kv.setAttribute('height', '14'); kv.setAttribute('fill', 'currentColor');
-      [5, 12, 19].forEach(function (x) { var ci = document.createElementNS(NS, 'circle'); ci.setAttribute('cx', x); ci.setAttribute('cy', 12); ci.setAttribute('r', 1.8); kv.appendChild(ci); });
-      hm.appendChild(kv); span.appendChild(hm);
+      hm.appendChild(icon('i-more')); span.appendChild(hm);
       hm.addEventListener('click', function () { hm.focus({ preventScroll: true }); T.colMenu(c, hm); });
       hm.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.colMenu(c, hm); } });
       var g = mk('div', 'dt-grip'); g.setAttribute('role', 'separator'); g.setAttribute('aria-orientation', 'vertical'); g.tabIndex = 0;
@@ -962,7 +980,12 @@
         if (!c.canSort) return;
         var d = sc === c ? S.sort.dir : 'none';
         c.th.setAttribute('aria-sort', d === 'none' ? 'none' : d === 'asc' ? 'ascending' : 'descending');
-        c.path.setAttribute('d', ARROW[d]); c.btn.classList.toggle('on', d !== 'none');
+        if (c.dir !== d) { // fade the arrow when the direction changes (not on the first render)
+          $('use', c.arrow).setAttribute('href', '#' + ARROW[d]);
+          if (c.dir) restartAnim(c.arrow, 'fade');
+          c.dir = d;
+        }
+        c.btn.classList.toggle('on', d !== 'none');
       });
       // pills
       pillBtns.forEach(function (b) { b.setAttribute('aria-pressed', b._key === S.pill ? 'true' : 'false'); });
@@ -988,7 +1011,7 @@
           var step = function (to, label, way) {
             var b = mk('button', 'dt-pg dt-step'); b.type = 'button'; b.id = 'dt-' + T.id + '-' + way; b.setAttribute('aria-label', label); b.setAttribute('data-step', way);
             b.setAttribute('aria-disabled', to < 0 || to >= pages ? 'true' : 'false');
-            var ic = icon('i-chevron'); ic.setAttribute('class', 'ic dt-chev ' + way); b.appendChild(ic);
+            var ic = icon('i-chevron-right'); ic.setAttribute('class', 'ic dt-chev ' + way); b.appendChild(ic);
             b.addEventListener('click', function () { if (to >= 0 && to < pages) T.goto(to, way); });
             return b;
           };
@@ -1096,7 +1119,7 @@
       while (field && anchor.parentNode !== field) anchor = anchor.parentNode;
       anchor.parentNode.insertBefore(p, anchor.nextSibling);
     }
-    p.textContent = ''; p.appendChild(icon('i-x'));
+    p.textContent = ''; p.appendChild(icon('i-alert'));
     var t = document.createElement('span'); t.textContent = msg; p.appendChild(t);
     el.setAttribute('aria-invalid', 'true');
     ids.push(id); el.setAttribute('aria-describedby', ids.join(' '));
@@ -1204,24 +1227,36 @@
           if (nb) { nb.focus({ preventScroll: true }); try { nb.setSelectionRange(dq.a, dq.b); } catch (e) { } }
         }
         if (qv) { var nq = $('input[data-search]'); if (nq) { nq.value = qv; nq.dispatchEvent(new Event('input')); } }
-        markUpdated();
+        markUpdated(); dotState(); beat();
       })
       .catch(function () { })
       .then(function () { refreshing = false; if (pending) { pending = false; schedule(); } });
   };
   function schedule() { clearTimeout(timer); timer = setTimeout(refresh, 250); }
+  // The live dot rests; it pulses a few times (CSS, finite) after each update or reconnect, then stops (WCAG 2.2.2).
+  // It is looked up each time because a refresh replaces #content, and with it the dot.
+  var liveOff = false;
+  function dotState() { var d = $('.live'); if (d) d.classList.toggle('off', liveOff); }
+  function beat() { var d = $('.live'); if (d && !liveOff) restartAnim(d, 'beat'); }
+  // Infinite animations (the Check spinner) stop while the tab is hidden.
+  document.addEventListener('visibilitychange', function () { document.documentElement.classList.toggle('paused', document.hidden); });
   function connect() {
     if (!window.EventSource || !document.body.hasAttribute('data-live')) return;
     var es = new EventSource('/events');
-    var dot = $('.live');
-    es.onopen = function () { if (dot) dot.classList.remove('off'); schedule(); }; // catch up on anything missed while disconnected
-    es.onmessage = function () { schedule(); };
-    es.onerror = function () { if (dot) dot.classList.add('off'); };
+    es.onopen = function () { liveOff = false; dotState(); beat(); schedule(); }; // catch up on anything missed while disconnected
+    es.onmessage = function () { beat(); schedule(); };
+    es.onerror = function () { liveOff = true; dotState(); };
   }
 
   function copyField(btn) {
     var inp = $(btn.getAttribute('data-copy-target')); if (!inp) return;
-    var done = function () { toast('Link copied', 'ok'); };
+    var done = function () {
+      toast('Link copied', 'ok');
+      var cur = $('.ic:not(.swap-out)', btn); // clipboard-check for about 1.5s, then back
+      if (!btn._copied && cur) { btn._copied = true; swapIcon(cur, 'i-copied', 150); }
+      clearTimeout(btn._ct);
+      btn._ct = setTimeout(function () { var c2 = $('.ic:not(.swap-out)', btn); btn._copied = false; if (c2) swapIcon(c2, 'i-copy', 150); }, 1500);
+    };
     var fallback = function () {
       inp.focus(); inp.select();
       var ok = false; try { ok = document.execCommand('copy'); } catch (e) { }
