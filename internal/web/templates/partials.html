@@ -35,6 +35,6 @@
 
 {{define "auth-error"}}{{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}{{end}}
 
-{{define "oauth-buttons"}}{{if .}}<div class="oauth">{{range .}}<a class="btn" href="{{.Href}}"><svg class="ic" aria-hidden="true"><use href="#i-log-in"/></svg>Continue with {{.Label}}</a>{{end}}</div><div class="or" role="separator"><span>or</span></div>{{end}}{{end}}
+{{define "oauth-buttons"}}{{if .}}<div class="oauth">{{range .}}<a class="btn" href="{{.Href}}">Continue with {{.Label}}</a>{{end}}</div><div class="or" aria-hidden="true"><span>or</span></div>{{end}}{{end}}
 
-{{define "reauth-notice"}}{{range .}}<div style="margin:8px 0"><p class="muted small" style="margin:0 0 8px">For your security, sign in again with {{.Label}} to continue.</p><div class="btns"><a class="btn" href="{{.Href}}"><svg class="ic" aria-hidden="true"><use href="#i-log-in"/></svg>Sign in with {{.Label}}</a></div></div>{{else}}<p class="muted small" style="margin:8px 0">For your security, sign in again to continue. Use Forgot password on the sign-in page if you need a way in.</p>{{end}}{{end}}
+{{define "reauth-notice"}}{{$what := .What}}{{range .Links}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div><p style="margin:0 0 8px">To {{$what}}, sign in again with {{.Label}} first.</p><a class="btn" href="{{.Href}}">Sign in again with {{.Label}}</a></div></div>{{else}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div>To {{$what}}, sign in again first. Use Forgot password on the sign-in page if you need a way in.</div></div>{{end}}{{end}}

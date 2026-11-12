@@ -8,10 +8,10 @@
     {{template "oauth-buttons" .Providers}}
     <form method="post" action="/signup">
       <input type="hidden" name="invite" value="{{.Invite}}">
-      <div class="field"><label>Email</label><input name="email" type="email" value="{{.Email}}" {{if .EmailLocked}}readonly{{else}}autofocus{{end}} required autocomplete="username"></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required minlength="10" autocomplete="new-password"></div>
-      <div class="field"><label>Confirm password</label><input name="confirm" type="password" data-match="password" required minlength="10" autocomplete="new-password"></div>
-      <div class="field"><label>Workspace name</label><input name="workspace" autocomplete="organization" value="{{.WorkspaceName}}" required maxlength="60"></div>
+      <div class="field"><label for="su-email">Email</label><input id="su-email" name="email" type="email" value="{{.Email}}" {{if .EmailLocked}}readonly{{else}}autofocus{{end}} required autocomplete="username"></div>
+      <div class="field"><label for="su-password">Password</label><input id="su-password" name="password" type="password" required minlength="10" autocomplete="new-password"></div>
+      <div class="field"><label for="su-confirm">Confirm password</label><input id="su-confirm" name="confirm" type="password" data-match="password" required minlength="10" autocomplete="new-password"></div>
+      <div class="field"><label for="su-workspace">Workspace name</label><input id="su-workspace" name="workspace" autocomplete="organization" value="{{.WorkspaceName}}" required maxlength="60"></div>
       <div class="btns" style="margin-top:14px"><button type="submit" class="primary">Create account</button></div>
     </form>
     {{else}}

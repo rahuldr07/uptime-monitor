@@ -7,8 +7,8 @@
     {{template "oauth-buttons" .Providers}}
     <form method="post" action="/login">
       <input type="hidden" name="next" value="{{.Next}}">
-      <div class="field"><label>Email</label><input name="email" type="email" value="{{.Email}}" autofocus required autocomplete="username"></div>
-      <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label for="login-email">Email</label><input id="login-email" name="email" type="email" value="{{.Email}}" autofocus required autocomplete="username"></div>
+      <div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" required autocomplete="current-password"></div>
       <div style="margin-top:14px"><button type="submit" class="primary">Sign in</button></div>
     </form>
     {{if .Resend}}

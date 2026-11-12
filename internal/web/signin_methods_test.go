@@ -47,7 +47,7 @@ func TestSetFirstPasswordRecentAuth(t *testing.T) {
 	o.advance(recentAuthWindow + time.Second)
 	resp, body := o.post(t, c, "/account/password", newPW)
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Sign in again to continue") ||
-		!strings.Contains(body, "For your security, sign in again with Google to continue") ||
+		!strings.Contains(body, "To set a password, connect another account or delete your account, sign in again with Google first.") ||
 		!strings.Contains(body, `/auth/google/start?intent=reauth`) {
 		t.Fatalf("outside window: %d %s", resp.StatusCode, body)
 	}
@@ -55,7 +55,7 @@ func TestSetFirstPasswordRecentAuth(t *testing.T) {
 		t.Fatal("password set outside the window")
 	}
 	_, body = o.get(t, c, "/account")
-	if strings.Contains(body, "Set a password</button>") || !strings.Contains(body, "Sign in with Google") {
+	if strings.Contains(body, "Set a password</button>") || !strings.Contains(body, "Sign in again with Google") {
 		t.Errorf("account page outside window: %s", body)
 	}
 
@@ -263,7 +263,7 @@ func TestAdminProviderBadges(t *testing.T) {
 	for _, r := range rows[1:] {
 		for _, email := range []string{"both@example.com", "gonly@example.com", "plain@example.com"} {
 			if strings.Contains(r, `data-label="`+email+`"`) {
-				got[email] = [2]bool{strings.Contains(r, `<span class="badge">Google</span>`), strings.Contains(r, `<span class="badge">GitHub</span>`)}
+				got[email] = [2]bool{strings.Contains(r, `<span class="badge" title="Signs in with Google">Google</span>`), strings.Contains(r, `<span class="badge" title="Signs in with GitHub">GitHub</span>`)}
 			}
 		}
 	}
@@ -370,7 +370,7 @@ func TestLinkNeedsRecentAuthSocialOnly(t *testing.T) {
 	}
 	_, body := o.get(t, c, "/account")
 	if strings.Contains(body, `/auth/github/start?intent=link`) || strings.Contains(body, "/connect") ||
-		strings.Count(body, "For your security, sign in again with Google to continue") != 1 {
+		strings.Count(body, "To set a password, connect another account or delete your account, sign in again with Google first.") != 1 {
 		t.Errorf("account page outside window: %s", body)
 	}
 	if ids, _ := o.st.Identities(t.Context(), u.ID); len(ids) != 1 {
@@ -409,7 +409,7 @@ func TestConnectEndpointAndPageHints(t *testing.T) {
 	// A sole sign-in method has no Disconnect, only a hint.
 	c, _ := o.socialClient(t, "person@example.com", "google", "12345")
 	_, body = o.get(t, c, "/account")
-	if strings.Contains(body, "/account/identities/google/delete") || !strings.Contains(body, "Your only way to sign in") {
+	if strings.Contains(body, "/account/identities/google/delete") || !strings.Contains(body, "This is your only way to sign in") {
 		t.Errorf("sole method: %s", body)
 	}
 	// No state cookie from a callback for an unknown provider.

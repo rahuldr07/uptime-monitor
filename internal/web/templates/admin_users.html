@@ -26,7 +26,7 @@
     {{if .VerifiedAt}}<span class="badge up">verified</span>{{else}}<span class="badge paused">unverified</span>{{end}}
     {{if .DisabledAt}}<span class="badge down">disabled</span>{{end}}
     {{if .IsOperator}}<span class="badge accent">operator</span>{{end}}
-    {{range index $.Badges .ID}}<span class="badge">{{.}}</span>{{end}}</td>
+    {{range index $.Badges .ID}}<span class="badge" title="Signs in with {{.}}">{{.}}</span>{{end}}</td>
   <td data-sort="{{.WorkspaceName}}">{{if .WorkspaceSlug}}<a href="/s/{{.WorkspaceSlug}}">{{.WorkspaceName}}</a> <span class="faint small">{{.WorkspaceSlug}}</span>{{else}}<span class="faint">—</span>{{end}}</td>
   <td data-sort="{{ums .CreatedAt}}" style="white-space:nowrap">{{ts .CreatedAt}}</td>
   <td data-sort="{{ums .LastSeenAt}}" style="white-space:nowrap">{{with .LastSeenAt}}{{ago .}}{{else}}<span class="faint">never</span>{{end}}</td>

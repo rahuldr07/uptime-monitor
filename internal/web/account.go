@@ -40,6 +40,7 @@ type accountData struct {
 	CanDelete   bool // operators cannot delete their account here
 	HasPassword bool
 	Providers   []accountProvider
+	SignInLabel string      // the connected providers, for "You sign in with …"
 	SoleMethod  bool        // the only way to sign in is one provider: it cannot be disconnected
 	Recent      bool        // auth_at is within the window
 	NeedReauth  bool        // no password and no recent sign-in: sensitive forms are replaced by reauth links
@@ -99,6 +100,12 @@ func (s *Server) accountView(r *http.Request, a *authCtx) (accountData, error) {
 			if i.Provider == name {
 				p.Connected, p.Email = true, i.Email
 			}
+		}
+		if p.Connected {
+			if d.SignInLabel != "" {
+				d.SignInLabel += " or "
+			}
+			d.SignInLabel += p.Label
 		}
 		if p.Enabled || p.Connected {
 			d.Providers = append(d.Providers, p)
