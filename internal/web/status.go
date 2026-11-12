@@ -280,9 +280,9 @@ func (s *Server) statusLimited(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // statusRedirect sends /status to the signed-in user's status page, or to
-// the operator's (workspace 1) for everyone else.
+// the operator's workspace for everyone else.
 func (s *Server) statusRedirect(w http.ResponseWriter, r *http.Request) {
-	ws := s.sys.Workspace(operatorWorkspaceID)
+	ws := s.sys.Workspace(store.OperatorWorkspaceID)
 	if a, ok := s.currentAuth(r); ok {
 		ws = a.WS
 	}
@@ -385,11 +385,14 @@ func (s *Server) statusOwnerCode(w http.ResponseWriter, r *http.Request, a *auth
 	d.base = s.base(r, a, "status", d.StatusTitle)
 	d.Error = errMsg
 	d.Slug, d.WSName = info.Slug, info.Name
-	scheme := "http"
-	if s.isHTTPS(r) {
-		scheme = "https"
+	origin := s.cfg.BaseURL
+	if origin == "" {
+		origin = "http://" + r.Host
+		if s.isHTTPS(r) {
+			origin = "https://" + r.Host
+		}
 	}
-	d.ShareURL = scheme + "://" + r.Host + "/s/" + info.Slug
+	d.ShareURL = origin + "/s/" + info.Slug
 	s.renderStatus(w, r, code, "status", d)
 }
 
@@ -504,7 +507,3 @@ func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authC
 	s.resetStatus(ws)
 	redirect(w, r, s.statusURL(r.Context(), ws), "Status page saved.")
 }
-
-// operatorWorkspaceID is the workspace of the instance operator, created
-// first; /status points anonymous visitors at it.
-const operatorWorkspaceID int64 = 1

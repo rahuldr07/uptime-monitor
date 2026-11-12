@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"uptimemon/internal/password"
 )
 
 func (e *env) openEvents(t *testing.T) *http.Response {
@@ -123,5 +125,17 @@ func TestStatusOwnerViewOnlyForOwner(t *testing.T) {
 	resp, body := e.get(t, bob, "/s/default")
 	if resp.StatusCode != http.StatusOK || strings.Contains(body, marker) {
 		t.Fatalf("another account must get the anonymous page: %d", resp.StatusCode)
+	}
+}
+
+func TestStatusShareURL(t *testing.T) {
+	e0 := newEnv(t)
+	_, body := e0.get(t, e0.op, "/s/default")
+	if !strings.Contains(body, `<span class="mono">http://127.0.0.1:`) || !strings.Contains(body, "/s/default</span>") {
+		t.Fatalf("without base_url the share link follows the request: %s", body)
+	}
+	e := newEnvConfig(t, password.New(password.Params{Memory: 64, Time: 1, Threads: 1}), `{"base_url": "https://status.example.com"}`)
+	if _, body := e.get(t, e.op, "/s/default"); !strings.Contains(body, `<span class="mono">https://status.example.com/s/default</span>`) {
+		t.Fatalf("base_url must be the share link origin: %s", body)
 	}
 }

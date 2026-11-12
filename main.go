@@ -194,9 +194,9 @@ func run(cfgPath string, logger *slog.Logger) error {
 		logger.Warn("admin_password is ignored once an account exists")
 	}
 	// seedOperator puts the config file's targets and alert settings into the
-	// operator's workspace (workspace 1).
+	// operator's workspace.
 	seedOperator := func() error {
-		ws1 := st.Workspace(1)
+		ws1 := st.Workspace(store.OperatorWorkspaceID)
 		if err := seedTargets(ctx, ws1, cfg, logger); err != nil {
 			return err
 		}
@@ -229,7 +229,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 			if err := seedOperator(); err != nil {
 				return err
 			}
-			ts, err := st.Workspace(1).ListTargets(ctx)
+			ts, err := st.Workspace(store.OperatorWorkspaceID).ListTargets(ctx)
 			if err != nil {
 				return err
 			}

@@ -55,7 +55,7 @@ func (s *Server) passwordUnlock() bool { return s.upgraded && s.cfg.AdminPasswor
 func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	d := setupData{base: s.page(r, "Set up")}
-	ws, err := s.sys.Workspace(1).Info(r.Context())
+	ws, err := s.sys.Workspace(store.OperatorWorkspaceID).Info(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
