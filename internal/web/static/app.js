@@ -309,7 +309,7 @@
     });
     var none = mk('div', 'dd-none'); none.textContent = 'No matches'; none.hidden = true; d.none = none;
     menu.appendChild(list); menu.appendChild(none); document.body.appendChild(menu);
-    d.menu = menu; d.list = list; d.open = true; openDD = d;
+    d.menu = menu; d.list = list; d.open = true; openDD = d; d.sy = window.scrollY;
     d.wrap.classList.add('open'); d.btn.setAttribute('aria-expanded', 'true'); d.btn.setAttribute('aria-controls', list.id);
     menu.addEventListener('mousedown', function (e) { if (e.target !== d.filter) e.preventDefault(); }); // keep focus where it is
     menu.addEventListener('click', function (e) { var li = e.target.closest('.dd-opt'); if (li && li.getAttribute('aria-disabled') !== 'true') commit(d, +li.getAttribute('data-i')); });
@@ -355,7 +355,7 @@
     if (wl) { if (!wl.id) wl.id = d.id + '-lbl'; btn.setAttribute('aria-labelledby', wl.id); name = name || wl.textContent.trim(); }
     else if (s.getAttribute('aria-label')) btn.setAttribute('aria-label', s.getAttribute('aria-label'));
     d.name = name || 'Options';
-    btn.addEventListener('click', function () { if (d.open) closeMenu(d, true); else { btn.focus(); openMenu(d); } }); // focus first: Safari does not focus buttons on click
+    btn.addEventListener('click', function () { if (d.open) closeMenu(d, true); else { btn.focus({ preventScroll: true }); openMenu(d); } }); // focus first: Safari does not focus buttons on click
     btn.addEventListener('keydown', function (e) { ddKey(d, e); });
     btn.addEventListener('keyup', function (e) { if (e.key === ' ') e.preventDefault(); }); // Space must not click on release
     btn.addEventListener('focusout', function (e) { if (d.open && !d.menu.contains(e.relatedTarget)) closeMenu(d, false); });
@@ -371,7 +371,11 @@
   document.addEventListener('mousedown', function (e) {
     var d = openDD; if (d && !d.menu.contains(e.target) && !d.btn.contains(e.target)) closeMenu(d, false);
   }, true);
-  window.addEventListener('scroll', function (e) { var d = openDD; if (d && !d.menu.contains(e.target)) closeMenu(d, false); }, true);
+  window.addEventListener('scroll', function (e) {
+    var d = openDD; if (!d || d.menu.contains(e.target)) return;
+    if (e.target === document && window.scrollY === d.sy) return; // a late scroll event from before the menu opened (the page did not move since)
+    closeMenu(d, false);
+  }, true);
   window.addEventListener('resize', function () { if (openDD) closeMenu(openDD, false); });
 
   // ---- data tables ----
@@ -483,7 +487,7 @@
       b.addEventListener('mouseover', function () { b.focus({ preventScroll: true }); });
       menu.appendChild(b); btns.push(b);
     });
-    m.menu = menu; btn._pm = m; openDD = m;
+    m.menu = menu; btn._pm = m; openDD = m; m.sy = window.scrollY;
     m.close = function (refocus) {
       if (!m.open) return;
       m.open = false; if (openDD === m) openDD = null;
@@ -524,9 +528,9 @@
     T.rows.forEach(function (r) { r.id = r.tr.getAttribute('data-id') || String(r.idx); r.tr._r = r; });
     if (select) { // a leading checkbox column; column index i of the markup is cell i + lead
       var hrow = $('thead tr', table), th0 = mk('th', 'dt-tick');
-      hcb = mk('input'); hcb.type = 'checkbox'; th0.appendChild(hcb); hrow.insertBefore(th0, hrow.firstChild);
+      hcb = mk('input'); hcb.id = 'dt-' + T.id + '-tickall'; hcb.type = 'checkbox'; th0.appendChild(hcb); hrow.insertBefore(th0, hrow.firstChild);
       T.rows.forEach(function (r) {
-        var td = mk('td', 'dt-tick'), cb = mk('input'); cb.type = 'checkbox'; td.appendChild(cb); r.tr.insertBefore(td, r.tr.firstChild); r.cb = cb;
+        var td = mk('td', 'dt-tick'), cb = mk('input'); cb.id = 'dt-' + T.id + '-tick-' + r.id; cb.type = 'checkbox'; td.appendChild(cb); r.tr.insertBefore(td, r.tr.firstChild); r.cb = cb;
       });
     }
     var ths = $$('thead th', table).slice(lead);
@@ -594,7 +598,7 @@
     var q = null, pillBtns = [], more = null, sizeSel = null;
     if (searchLabel) {
       var sw = mk('div', 'search dt-search'); q = mk('input', 'dt-q'); q.type = 'search'; q.placeholder = searchLabel; q.setAttribute('aria-label', searchLabel);
-      q.setAttribute('autocomplete', 'off');
+      q.setAttribute('autocomplete', 'off'); q.value = S.q; q.id = 'dt-' + T.id + '-q';
       sw.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="m21 21-6-6"/></svg>';
       sw.appendChild(q); bar.appendChild(sw);
       q.addEventListener('input', function () { T.setQuery(q.value); });
@@ -605,12 +609,12 @@
       var out = spec.length > 5 ? spec.slice(0, 4) : spec, rest = spec.slice(out.length), pills = mk('div', 'dt-pills');
       pills.setAttribute('role', 'group'); pills.setAttribute('aria-label', 'Quick views');
       out.forEach(function (p) {
-        var b = mk('button', 'dt-pill'), n = mk('span', 'dt-n'); b.type = 'button'; b.appendChild(document.createTextNode(p.label + ' ')); n.textContent = p.count; b.appendChild(n);
+        var b = mk('button', 'dt-pill'), n = mk('span', 'dt-n'); b.type = 'button'; b.id = 'dt-' + T.id + '-pill-' + p.key; b.appendChild(document.createTextNode(p.label + ' ')); n.textContent = p.count; b.appendChild(n);
         b.addEventListener('click', function () { T.setPill(p.key); });
         b._key = p.key; pillBtns.push(b); pills.appendChild(b);
       });
       if (rest.length) {
-        more = mk('select', 'dt-more'); more.setAttribute('aria-label', 'More views'); more.style.width = 'auto';
+        more = mk('select', 'dt-more'); more.id = 'dt-' + T.id + '-more'; more.setAttribute('aria-label', 'More views'); more.style.width = 'auto';
         var o0 = mk('option'); o0.value = ''; o0.text = 'More'; more.add(o0);
         rest.forEach(function (p) { var o = mk('option'); o.value = p.key; o.text = p.label + ' (' + p.count + ')'; more.add(o); });
         more.addEventListener('change', function () { T.setPill(more.value || out[0].key); });
@@ -619,14 +623,14 @@
       bar.appendChild(pills);
     }
     bar.appendChild(mk('span', 'dt-grow'));
-    var vb = mk('button', 'dt-view sm'), vlab = mk('span'); vb.type = 'button'; vb.setAttribute('aria-haspopup', 'menu'); vb.setAttribute('aria-expanded', 'false'); vb.setAttribute('aria-label', 'View: density and columns');
+    var vb = mk('button', 'dt-view sm'), vlab = mk('span'); vb.type = 'button'; vb.id = 'dt-' + T.id + '-view'; vb.setAttribute('aria-haspopup', 'menu'); vb.setAttribute('aria-expanded', 'false'); vb.setAttribute('aria-label', 'View: density and columns');
     vlab.textContent = 'View'; vb.appendChild(vlab); vb.appendChild(icon('i-chevron'));
-    vb.addEventListener('click', function () { vb.focus(); T.viewMenu(); });
+    vb.addEventListener('click', function () { vb.focus({ preventScroll: true }); T.viewMenu(); });
     vb.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.viewMenu(); } });
     bar.appendChild(vb);
 
     sum.setAttribute('aria-live', 'polite'); sum.hidden = !filterable;
-    clear.type = 'button'; clear.textContent = 'Clear all'; clear.hidden = true;
+    clear.type = 'button'; clear.id = 'dt-' + T.id + '-clear'; clear.textContent = 'Clear all'; clear.hidden = true;
     clear.addEventListener('click', function () { T.clearAll(); });
     sum.appendChild(sumT); sum.appendChild(clear);
 
@@ -636,7 +640,7 @@
     foot.setAttribute('aria-label', 'Pages of ' + T.noun); foot.hidden = true;
     var cnt = mk('p', 'dt-count'), size = mk('span', 'dt-size'), pg = mk('div', 'dt-pages');
     if (mode === 'client') {
-      sizeSel = mk('select', 'dt-sizesel'); sizeSel.setAttribute('aria-label', 'Rows per page'); sizeSel.style.width = 'auto';
+      sizeSel = mk('select', 'dt-sizesel'); sizeSel.id = 'dt-' + T.id + '-size'; sizeSel.setAttribute('aria-label', 'Rows per page'); sizeSel.style.width = 'auto';
       DT_SIZES.forEach(function (n) { var o = mk('option'); o.value = n; o.text = n; sizeSel.add(o); });
       var sl = mk('span', 'dt-rows'); sl.textContent = 'Rows per page'; sl.setAttribute('aria-hidden', 'true');
       size.appendChild(sl); size.appendChild(sizeSel);
@@ -678,7 +682,7 @@
       var th = c.th, span = mk('span', 'dt-th');
       if (c.canSort) {
         var b = mk('button', 'dt-sort'), sv = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
-        b.type = 'button'; b.appendChild(document.createTextNode(c.label));
+        b.type = 'button'; b.id = 'dt-' + T.id + '-sort-' + c.i; b.appendChild(document.createTextNode(c.label));
         sv.setAttribute('viewBox', '0 0 16 16'); sv.setAttribute('class', 'dt-arrow'); sv.setAttribute('aria-hidden', 'true'); sv.appendChild(p); b.appendChild(sv);
         span.appendChild(b); c.path = p; c.btn = b;
         b.addEventListener('click', function () { T.sortBy(c); });
@@ -686,14 +690,14 @@
       th.textContent = ''; th.appendChild(span);
       if (c.pin) return; // the actions column has no menu or grip
       var hm = mk('button', 'dt-hm'), kv = document.createElementNS(NS, 'svg');
-      hm.type = 'button'; hm.setAttribute('aria-haspopup', 'menu'); hm.setAttribute('aria-expanded', 'false'); hm.setAttribute('aria-label', c.label + ' column menu');
+      hm.type = 'button'; hm.id = 'dt-' + T.id + '-colmenu-' + c.i; hm.setAttribute('aria-haspopup', 'menu'); hm.setAttribute('aria-expanded', 'false'); hm.setAttribute('aria-label', c.label + ' column menu');
       kv.setAttribute('viewBox', '0 0 24 24'); kv.setAttribute('aria-hidden', 'true'); kv.setAttribute('width', '14'); kv.setAttribute('height', '14'); kv.setAttribute('fill', 'currentColor');
       [5, 12, 19].forEach(function (x) { var ci = document.createElementNS(NS, 'circle'); ci.setAttribute('cx', x); ci.setAttribute('cy', 12); ci.setAttribute('r', 1.8); kv.appendChild(ci); });
       hm.appendChild(kv); span.appendChild(hm);
-      hm.addEventListener('click', function () { hm.focus(); T.colMenu(c, hm); });
+      hm.addEventListener('click', function () { hm.focus({ preventScroll: true }); T.colMenu(c, hm); });
       hm.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.colMenu(c, hm); } });
       var g = mk('div', 'dt-grip'); g.setAttribute('role', 'separator'); g.setAttribute('aria-orientation', 'vertical'); g.tabIndex = 0;
-      g.setAttribute('aria-label', 'Resize ' + c.label); g.setAttribute('aria-valuemin', DT_MIN); g.setAttribute('aria-valuemax', DT_MAX);
+      g.id = 'dt-' + T.id + '-grip-' + c.i; g.setAttribute('aria-label', 'Resize ' + c.label); g.setAttribute('aria-valuemin', DT_MIN); g.setAttribute('aria-valuemax', DT_MAX);
       th.appendChild(g); c.grip = g; drag(c, g);
     });
 
@@ -721,7 +725,10 @@
       }
       return r.text;
     }
-    function firstDir(c) { var v = T.rows.length ? rowVal(T.rows[0], c.i) : undefined; return typeof v === 'number' ? 'desc' : 'asc'; }
+    function firstDir(c) { // like TanStack: numbers sort descending first, text ascending; judged by the first defined value
+      for (var n = 0; n < T.rows.length; n++) { var v = rowVal(T.rows[n], c.i); if (v !== undefined) return typeof v === 'number' ? 'desc' : 'asc'; }
+      return 'asc';
+    }
 
     T.setQuery = function (v) {
       if (v === S.q) return;
@@ -925,7 +932,7 @@
       if (!list.length) {
         if (!none) {
           none = mk('tr', 'dt-empty'); var td = mk('td'), p = mk('span'), cb = mk('button', 'dt-link');
-          p.className = 'dt-empty-t'; cb.type = 'button'; cb.textContent = 'Clear filters'; cb.addEventListener('click', function () { T.clearAll(); });
+          p.className = 'dt-empty-t'; cb.type = 'button'; cb.id = 'dt-' + T.id + '-clear-empty'; cb.textContent = 'Clear filters'; cb.addEventListener('click', function () { T.clearAll(); });
           td.appendChild(p); td.appendChild(cb); none.appendChild(td); tbody.appendChild(none);
         }
         $('.dt-empty-t', none).textContent = emptyText + ' ';
@@ -962,7 +969,7 @@
         pg.innerHTML = '';
         if (pages > 1) {
           var step = function (to, label, way) {
-            var b = mk('button', 'dt-pg dt-step'); b.type = 'button'; b.setAttribute('aria-label', label); b.setAttribute('data-step', way);
+            var b = mk('button', 'dt-pg dt-step'); b.type = 'button'; b.id = 'dt-' + T.id + '-' + way; b.setAttribute('aria-label', label); b.setAttribute('data-step', way);
             b.setAttribute('aria-disabled', to < 0 || to >= pages ? 'true' : 'false');
             var ic = icon('i-chevron'); ic.setAttribute('class', 'ic dt-chev ' + way); b.appendChild(ic);
             b.addEventListener('click', function () { if (to >= 0 && to < pages) T.goto(to, way); });
@@ -972,7 +979,7 @@
             var s = mk('span', 'dt-plist');
             arr.forEach(function (n) {
               if (n === 'gap') { var g = mk('span', 'dt-gap'); g.textContent = '…'; g.setAttribute('aria-hidden', 'true'); s.appendChild(g); return; }
-              var b = mk('button', 'dt-pg'); b.type = 'button'; b.textContent = n + 1; b.setAttribute('aria-label', 'Page ' + (n + 1));
+              var b = mk('button', 'dt-pg'); b.type = 'button'; b.id = 'dt-' + T.id + '-pg-' + n; b.textContent = n + 1; b.setAttribute('aria-label', 'Page ' + (n + 1));
               if (n === S.page) b.setAttribute('aria-current', 'page');
               b.addEventListener('click', function () { if (n !== S.page) T.goto(n, n); });
               s.appendChild(b);
@@ -1102,12 +1109,24 @@
   }, true);
 
   // ---- live refresh over SSE ----
-  var refreshing = false, pending = false, timer = null;
+  var refreshing = false, pending = false, timer = null, pressing = false, pressTimer = null;
+  // A refresh between pointerdown and click would replace the control under the pointer and lose the click, so hold
+  // while a press inside #content is in flight; the release reschedules a held refresh (pending is never left parked).
+  document.addEventListener('pointerdown', function (e) {
+    if (!(e.target.closest && e.target.closest('#content'))) return;
+    pressing = true; clearTimeout(pressTimer); pressTimer = setTimeout(releasePress, 5000); // safety net if the release is lost
+  }, true);
+  function releasePress() {
+    clearTimeout(pressTimer);
+    setTimeout(function () { pressing = false; if (pending && !refreshing) { pending = false; schedule(); } }, 0);
+  }
+  ['pointerup', 'pointercancel', 'click'].forEach(function (t) { document.addEventListener(t, function () { if (pressing) releasePress(); }, true); });
   function editing() {
     var a = document.activeElement;
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
     if ($('#content[data-no-refresh]')) return true;
     if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing
+    if (pressing) return true;                                     // a press is in flight; the click must land on the control it started on
     if (dtDragging) return true;                                   // a column is being resized
     if ($('.dd-menu')) return true;                                // a dropdown is open; replacing it would drop the menu
     var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
@@ -1116,11 +1135,14 @@
   // Identity of a focusable element across a re-render: id, else href, else form action + button text, else name, else data-action + text.
   // An element with none of these is never restored, so focus cannot land on a different row's control.
   function focusKey(el) {
-    if (el._sel) return 'sel:' + (el._sel.name || el._sel.id); // a dropdown button: its native select is the identity (the button id is regenerated)
+    if (el._sel) { var sk = el._sel.name || el._sel.id; return sk ? 'sel:' + sk : ''; } // a dropdown button: its native select is the identity (the button id is regenerated)
     if (el.id) return 'id:' + el.id;
     var h = el.getAttribute('href'); if (h) return 'href:' + h;
     var f = el.form || (el.closest && el.closest('form'));
-    if (f && f.getAttribute('action')) return 'form:' + f.getAttribute('action') + '|' + el.textContent.trim() + '|' + (el.name || '');
+    if (f && f.getAttribute('action')) { // the same action + label repeats per row (invite Revoke, per-channel test), so add the button value and the form's id field
+      var idf = f.querySelector('[name=id]');
+      return 'form:' + f.getAttribute('action') + '|' + el.textContent.trim() + '|' + (el.name || '') + '|' + (el.value || '') + '|' + (idf ? idf.value : '');
+    }
     if (el.name) return 'name:' + el.name;
     var da = el.getAttribute('data-action'); if (da) return 'act:' + da + '|' + el.textContent.trim();
     return '';
@@ -1145,8 +1167,8 @@
         main.innerHTML = html;
         wire(main);
         if (fk && document.activeElement !== act) { // keep the keyboard position across a refresh, but only on the same element
-          var again = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; })[0];
-          if (again) again.focus({ preventScroll: true });
+          var m = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; });
+          if (m.length === 1) m[0].focus({ preventScroll: true }); // an ambiguous key restores nothing
         }
         if (dq) { // the in-table search box has no identity key of its own; find it by its table
           var nb = $('.dt[data-table="' + dq.id + '"] .dt-q', main);
