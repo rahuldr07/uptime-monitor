@@ -149,7 +149,7 @@ New optional key:
 ## 8. Changes needed for empty passwords
 
 - **`loginPost`:** an account with an empty hash runs `VerifyDummy` and fails with the generic `msgBadLogin` and status 401, the same timing and response as an unknown email. It must never return 500.
-- **`checkCurrent`** (used by password change, account delete and admin delete): for an account with no password it must never call `Verify` on the empty hash. A posted `current` value is refused with "Sign in again to continue." (403), and the caller shows the §7 reauth links. It never returns 500.
+- **`checkCurrent`** (used by password change, account delete, admin delete, disconnecting a provider (`/account/identities/{provider}/delete`) and confirming a password before connecting one (`/account/identities/{provider}/connect`)): for an account with no password it must never call `Verify` on the empty hash. A posted `current` value is refused with "Sign in again to continue." (403), and the caller shows the §7 reauth links. It never returns 500.
 - **Forgot and reset:** unchanged. A reset link sets a password for a social-only account. That's acceptable, because whoever controls the email already controls the account through reset.
 - **Admin delete:** unchanged. It uses the operator's own password, or §7 if the operator is social-only.
 - **Setup:** unchanged. The first operator always sets a password.

@@ -34,6 +34,6 @@ func signInMethodMail(base, provider string, added bool, at time.Time) (subject,
 		verb, subject = "added to", "A sign-in method was added to your account"
 	}
 	return subject,
-		fmt.Sprintf("The %s sign-in method was %s your account on %s.\n\nIf this was not you, reset your password and sign out everywhere from your Account page:\n\n%s/forgot\n%s/account\n",
+		fmt.Sprintf("The %s sign-in method was %s your account on %s.\n\nIf this was not you, disconnect it under Sign-in methods on your Account page, then reset your password and sign out everywhere:\n\n%s/forgot\n%s/account\n",
 			provider, verb, at.UTC().Format("2006-01-02 15:04 UTC"), base, base)
 }
