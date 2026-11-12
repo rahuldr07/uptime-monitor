@@ -2,7 +2,7 @@
 <div class="login">
   <div class="card">
     <h1>Sign up</h1>
-    {{if .Invite}}
+    {{if and (or .Invite .Open) (not .Hint)}}
     <p class="muted small" style="margin:4px 0 16px">Create your account and workspace.</p>
     <form method="post" action="/signup">
       <input type="hidden" name="invite" value="{{.Invite}}">

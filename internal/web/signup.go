@@ -27,18 +27,22 @@ type signupData struct {
 	EmailLocked   bool // the invite is bound to Email
 	WorkspaceName string
 	Hint          string // shown instead of the form
+	Open          bool   // open sign-up: the form needs no invite
 }
 
 func (s *Server) signupPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	d := signupData{base: s.page(r, "Sign up")}
+	d := signupData{base: s.page(r, "Sign up"), Open: s.cfg.Signup == "open"}
 	raw := r.URL.Query().Get("invite")
 	if raw == "" {
-		if s.cfg.Signup != "invite" {
+		switch s.cfg.Signup {
+		case "invite":
+			d.Hint = msgInviteOnly
+		case "open":
+		default:
 			http.NotFound(w, r)
 			return
 		}
-		d.Hint = msgInviteOnly
 		s.render(w, r, "signup", d)
 		return
 	}
@@ -61,11 +65,14 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r, s.cfg.ProxyHops())
 	addr := clientKey(r, s.cfg.ProxyHops())
 	raw := r.FormValue("invite")
-	if raw == "" && s.cfg.Signup != "invite" {
+	if raw == "" && s.cfg.Signup == "closed" {
 		http.NotFound(w, r)
 		return
 	}
-	d := signupData{base: s.page(r, "Sign up"), Invite: raw,
+	// Open mode without an invite: every attempt keeps its address slot and
+	// the outcome never depends on whether the email has an account.
+	open := raw == "" && s.cfg.Signup == "open"
+	d := signupData{base: s.page(r, "Sign up"), Invite: raw, Open: open,
 		Email: strings.TrimSpace(r.FormValue("email")), WorkspaceName: strings.TrimSpace(r.FormValue("workspace"))}
 	fail := func(code int, msg string) {
 		d.Error = msg
@@ -79,7 +86,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusTooManyRequests, msgTooMany)
 		return
 	}
-	refundAddr, refundGlobal := true, false
+	refundAddr, refundGlobal := !open, false
 	defer func() {
 		if refundAddr {
 			s.signupByAddr.Undo(addr)
@@ -106,16 +113,18 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Invite, peeked once.
-	tok, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now())
-	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return
+	if !open {
+		tok, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now())
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		d.EmailLocked = tok.Email != ""
 	}
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	d.EmailLocked = tok.Email != ""
 	if d.Error != "" {
 		refundAddr = false
 		s.renderStatus(w, r, http.StatusUnprocessableEntity, "signup", d)
@@ -146,7 +155,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	// 6. Create the account; the workspace cap is checked in the transaction.
 	// A failure leaves the invite unused.
 	u, _, err := s.sys.CreateAccount(ctx, store.AccountInput{Email: email, PasswordHash: phc,
-		WorkspaceName: d.WorkspaceName, Verified: true, InviteToken: raw,
+		WorkspaceName: d.WorkspaceName, Verified: !open, InviteToken: raw,
 		MaxWorkspaces: *s.cfg.Limits.MaxWorkspaces, Now: s.now()})
 	switch {
 	case errors.Is(err, store.ErrWorkspaceCap):
@@ -156,6 +165,11 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrEmailTaken):
 		refundGlobal = false
 		s.logger.Warn("sign-up duplicate", "event", "signup_duplicate", "ip", ip)
+		if open {
+			s.ownerNotice(context.WithoutCancel(ctx), email)
+			s.checkEmail(w, r)
+			return
+		}
 		fail(http.StatusUnprocessableEntity, msgEmailTaken)
 		return
 	case errors.Is(err, store.ErrInviteEmail):
@@ -175,6 +189,13 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	// 7. Success. The session must survive a client that disconnects now.
 	ctx = context.WithoutCancel(ctx)
 	s.logger.Info("sign-up", "event", "signup", "user_id", u.ID, "ip", ip)
+	if open {
+		if err := s.sendVerify(ctx, u); err != nil {
+			s.logger.Error("sign-up: cannot send verification", "err", err, "user_id", u.ID)
+		}
+		s.checkEmail(w, r)
+		return
+	}
 	sess, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)
@@ -182,4 +203,9 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// checkEmail is the answer to an open sign-up, new address or not.
+func (s *Server) checkEmail(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "signup", signupData{base: s.page(r, "Sign up"), Open: true, Hint: msgCheckEmail})
 }

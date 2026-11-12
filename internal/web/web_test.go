@@ -38,6 +38,7 @@ type env struct {
 	op     *http.Client // signed in as the operator
 	opWS   *store.WS
 	dbPath string
+	mail   *fakeMailer // nil unless built by newEnvMail
 }
 
 const (
@@ -58,6 +59,12 @@ func newEnvWith(t *testing.T, hasher *password.Hasher) *env {
 
 // newEnvConfig is newEnvWith with a JSON config.
 func newEnvConfig(t *testing.T, hasher *password.Hasher, cfgJSON string) *env {
+	t.Helper()
+	return buildEnv(t, hasher, cfgJSON, false)
+}
+
+// buildEnv is newEnvConfig with an optional recording mailer.
+func buildEnv(t *testing.T, hasher *password.Hasher, cfgJSON string, withMail bool) *env {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	st, err := store.Open(dbPath)
@@ -82,7 +89,12 @@ func newEnvConfig(t *testing.T, hasher *password.Hasher, cfgJSON string) *env {
 	if err := e.mon.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Options{Config: cfg, Store: st, Monitor: e.mon, Logger: slog.Default(), Now: now, Hasher: e.hash})
+	o := Options{Config: cfg, Store: st, Monitor: e.mon, Logger: slog.Default(), Now: now, Hasher: e.hash}
+	if withMail {
+		e.mail = &fakeMailer{}
+		o.Mail = e.mail
+	}
+	s, err := New(o)
 	if err != nil {
 		t.Fatal(err)
 	}

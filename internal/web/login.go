@@ -27,7 +27,8 @@ const (
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
 		strings.HasPrefix(next, "/login") || strings.HasPrefix(next, "/setup") ||
-		strings.HasPrefix(next, "/reset") || strings.HasPrefix(next, "/signup") || strings.ContainsAny(next, "\\\r\n\t ") {
+		strings.HasPrefix(next, "/reset") || strings.HasPrefix(next, "/signup") ||
+		strings.HasPrefix(next, "/verify") || strings.HasPrefix(next, "/forgot") || strings.ContainsAny(next, "\\\r\n\t ") {
 		return "/"
 	}
 	for _, c := range next {
@@ -113,16 +114,18 @@ type loginData struct {
 	Next       string
 	Email      string
 	SignupMode string
+	Mail       bool // system mail is configured: show Forgot password
+	Resend     bool // show the resend form (unverified account)
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next")), SignupMode: s.cfg.Signup}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next")), SignupMode: s.cfg.Signup, Mail: s.mail != nil}
 	d.Flash = flashFrom(r)
 	s.render(w, r, "login", d)
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
-	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email")), SignupMode: s.cfg.Signup}
+	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email")), SignupMode: s.cfg.Signup, Mail: s.mail != nil}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "login", d)
@@ -233,7 +236,8 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		if u.DisabledAt != nil {
 			fail(http.StatusForbidden, msgDisabled)
 		} else {
-			fail(http.StatusUnauthorized, msgBadLogin)
+			d.Resend = s.mail != nil
+			fail(http.StatusForbidden, msgUnverified)
 		}
 		return
 	}

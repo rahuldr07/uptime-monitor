@@ -1,0 +1,20 @@
+{{define "content"}}
+<div class="login">
+  <div class="card">
+    <h1>Confirm your email</h1>
+    {{if .Token}}
+    <form method="post" action="/verify">
+      <input type="hidden" name="token" value="{{.Token}}">
+      <div style="margin-top:14px"><button type="submit" class="primary">Confirm your email</button></div>
+    </form>
+    {{else if .Resend}}
+    <form method="post" action="/verify/resend">
+      <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
+      <div style="margin-top:14px"><button type="submit" class="primary">Send a new link</button></div>
+    </form>
+    {{else}}
+    <p class="muted" style="margin:8px 0 0"><a href="/login">Back to sign in</a></p>
+    {{end}}
+  </div>
+</div>
+{{end}}

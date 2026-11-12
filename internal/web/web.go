@@ -57,6 +57,9 @@ type Server struct {
 	setupLimiter  *ratelimit.Limiter
 	signupByAddr  *ratelimit.Limiter // sign-ups per client address
 	signupGlobal  *ratelimit.Limiter // sign-ups across the instance, key "all"
+	mail          Mailer
+	mailByAddr    *ratelimit.Limiter // forgot and resend, per client address
+	dupNotice     *ratelimit.Limiter // duplicate sign-up notices, per user ID
 	passwordCheck *ratelimit.Limiter // current-password checks, per user
 	createLimiter *ratelimit.Limiter // monitor creations, per workspace
 	checkTarget   *ratelimit.Limiter // Check now, per target
@@ -69,6 +72,13 @@ type Server struct {
 	statusCache pageCache
 }
 
+// Mailer queues system email. Send charges the budgets first and calls
+// compose only when the message will be sent (see internal/mail).
+type Mailer interface {
+	Send(to string, compose func() (subject, body string, err error)) error
+	Notice(to, subject, body string)
+}
+
 // Options configure a Server.
 type Options struct {
 	Config  *config.Config
@@ -77,6 +87,7 @@ type Options struct {
 	Logger  *slog.Logger     // nil means slog.Default(), as in monitor.New
 	Now     func() time.Time // nil means time.Now
 
+	Mail       Mailer           // nil means no system mail
 	Hasher     *password.Hasher // nil means password.Default()
 	SetupMode  bool             // no account exists yet; only the setup flow is served
 	Upgraded   bool             // the database predates accounts
@@ -95,7 +106,10 @@ func New(o Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now,
+	if cfg.Signup == "open" && o.Mail == nil {
+		return nil, errors.New(`web: signup "open" needs Options.Mail`)
+	}
+	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now, mail: o.Mail,
 		hasher: o.Hasher, upgraded: o.Upgraded, afterSetup: o.AfterSetup,
 		pages: map[string]*template.Template{}}
 	if s.hasher == nil {
@@ -119,6 +133,10 @@ func New(o Options) (*Server, error) {
 	s.signupByAddr.Now = now
 	s.signupGlobal = ratelimit.New(time.Hour, *cfg.Limits.SignupsPerHour, 0)
 	s.signupGlobal.Now = now
+	s.mailByAddr = ratelimit.New(time.Hour, 10, 0)
+	s.mailByAddr.Now = now
+	s.dupNotice = ratelimit.New(24*time.Hour, 1, 0)
+	s.dupNotice.Now = now
 	s.passwordCheck = ratelimit.New(passwordCheckWindow, passwordCheckMax, 0)
 	s.passwordCheck.Now = now
 	s.createLimiter = ratelimit.New(time.Hour, 30, 0)
@@ -186,7 +204,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "login", "setup", "reset", "signup"} {
+	for _, page := range []string{"status", "login", "setup", "reset", "signup", "verify"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)
