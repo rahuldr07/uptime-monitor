@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"database/sql"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -345,7 +347,31 @@ func TestAdminDelete(t *testing.T) {
 	waitFor(t, "first probe", func() bool { return n.Load() > 0 })
 	id := strconv.FormatInt(e.userID(t, "bob@example.com"), 10)
 
-	resp, body := e.get(t, e.op, "/admin/users/"+id+"/delete?q=bob")
+	if r, _ := e.get(t, e.client(t), "/s/bob"); r.StatusCode != http.StatusOK {
+		t.Fatalf("anonymous status page: %d", r.StatusCode)
+	}
+	cached := func() bool {
+		e.srv.statusCache.mu.Lock()
+		defer e.srv.statusCache.mu.Unlock()
+		for k := range e.srv.statusCache.entries {
+			if wsOf(k) == bws.ID() {
+				return true
+			}
+		}
+		return false
+	}
+	if !cached() {
+		t.Fatal("no status cache entry before delete")
+	}
+	_, list := e.get(t, e.op, "/admin/users?q=bob&host=")
+	m := regexp.MustCompile(`href="(/admin/users/` + id + `/delete[^"]*)"`).FindStringSubmatch(list)
+	if m == nil {
+		t.Fatalf("no delete link on the filtered list: %s", list)
+	}
+	resp, body := e.get(t, e.op, html.UnescapeString(m[1]))
+	if !strings.Contains(body, `name="q" value="bob"`) {
+		t.Errorf("confirmation page lost the filter: %s", body)
+	}
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "bob@example.com") || !strings.Contains(body, `type="password"`) {
 		t.Fatalf("confirmation page: %d %s", resp.StatusCode, body)
 	}
@@ -372,13 +398,9 @@ func TestAdminDelete(t *testing.T) {
 	if _, ok := e.mon.Get(bws.ID(), tg.ID); ok {
 		t.Error("runner survived")
 	}
-	e.srv.statusCache.mu.Lock()
-	for k := range e.srv.statusCache.entries {
-		if wsOf(k) == bws.ID() {
-			t.Errorf("cache entry survived: %q", k)
-		}
+	if cached() {
+		t.Error("status cache entry survived")
 	}
-	e.srv.statusCache.mu.Unlock()
 
 	opID := strconv.FormatInt(e.userID(t, opEmail), 10)
 	resp = e.adminPost(t, "/admin/users/"+opID+"/delete", url.Values{"current": {testSecret}})
@@ -390,6 +412,40 @@ func TestAdminDelete(t *testing.T) {
 	}
 	if !e.userExists(t, opEmail) {
 		t.Error("operator deleted")
+	}
+}
+
+func TestAdminDeleteFailureLeavesUserDisabled(t *testing.T) {
+	e := newEnv(t)
+	var buf syncBuf
+	e.srv.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+	e.account(t, "bob@example.com")
+	id := e.userID(t, "bob@example.com")
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER no_user_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	resp := e.adminPost(t, "/admin/users/"+strconv.FormatInt(id, 10)+"/delete", url.Values{"current": {testSecret}})
+	if body := e.follow(t, resp); !strings.Contains(body, "Delete failed; the user is left disabled.") {
+		t.Errorf("flash: %s", body)
+	}
+	u, err := e.st.UserByID(context.Background(), id)
+	if err != nil || u.DisabledAt == nil {
+		t.Errorf("user after failed delete: %+v %v", u, err)
+	}
+	if out := buf.String(); !strings.Contains(out, `"result":"failed"`) || !strings.Contains(out, `"ip"`) {
+		t.Errorf("failure log: %s", out)
+	}
+}
+
+func TestAdminBadUserID(t *testing.T) {
+	e := newEnv(t)
+	if r := e.adminPost(t, "/admin/users/abc/disable", url.Values{}); r.StatusCode != http.StatusNotFound {
+		t.Errorf("non-numeric id: %d, want 404", r.StatusCode)
 	}
 }
 
@@ -441,7 +497,7 @@ func TestAdminResetLinkWithMail(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || strings.Contains(body, "/reset?token=") {
 		t.Fatalf("with mail: %d %s", resp.StatusCode, body)
 	}
-	if b := e.follow(t, resp); !strings.Contains(b, "Reset email queued.") || strings.Contains(b, "/reset?token=") {
+	if b := e.follow(t, resp); !strings.Contains(b, "Reset email queued (subject to mail limits).") || strings.Contains(b, "/reset?token=") {
 		t.Errorf("flash: %s", b)
 	}
 	sent := e.mail.all()
@@ -459,7 +515,7 @@ func TestAdminResendVerification(t *testing.T) {
 	}
 	e.account(t, "bob@example.com")
 	resp := e.adminPost(t, "/admin/users/"+strconv.FormatInt(e.userID(t, "new@example.com"), 10)+"/resend", url.Values{})
-	if body := e.follow(t, resp); !strings.Contains(body, "Verification email queued.") {
+	if body := e.follow(t, resp); !strings.Contains(body, "Verification email queued (subject to mail limits).") {
 		t.Errorf("flash: %s", body)
 	}
 	sent := e.mail.all()
@@ -495,7 +551,7 @@ func TestOperatorActionLogged(t *testing.T) {
 	id := e.userID(t, "bob@example.com")
 	e.adminPost(t, "/admin/users/"+strconv.FormatInt(id, 10)+"/disable", url.Values{})
 	out := buf.String()
-	for _, want := range []string{`"event":"operator_action"`, `"action":"disable"`, `"user_id":` + strconv.FormatInt(e.userID(t, opEmail), 10),
+	for _, want := range []string{`"event":"operator_action"`, `"action":"disable"`, `"ip":`, `"user_id":` + strconv.FormatInt(e.userID(t, opEmail), 10),
 		`"target_user_id":` + strconv.FormatInt(id, 10)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log lacks %s:\n%s", want, out)

@@ -21,8 +21,8 @@ const (
 	msgNoResetOp       = "Operators cannot be sent a reset link."
 	msgNoResetDisabled = "Disabled users cannot be sent a reset link."
 	msgDeleteFailed    = "Delete failed; the user is left disabled."
-	msgVerifyQueued    = "Verification email queued."
-	msgResetQueued     = "Reset email queued."
+	msgVerifyQueued    = "Verification email queued (subject to mail limits)."
+	msgResetQueued     = "Reset email queued (subject to mail limits)."
 
 	adminFieldMax = 200
 	adminPageMax  = 1_000_000
@@ -140,6 +140,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, a *authCtx) 
 func (s *Server) adminDisable(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
+	extendDeadline(w)
 	ctx := context.WithoutCancel(r.Context())
 	id, ok := pathUserID(w, r)
 	if !ok {
@@ -224,8 +225,8 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Minute)
-	defer cancel()
+	extendDeadline(w)
+	ctx := context.WithoutCancel(r.Context())
 	ids, err := s.sys.SetUserDisabled(ctx, u.ID, true, s.now())
 	switch {
 	case isNotFound(err):
@@ -241,9 +242,12 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 	for _, wsID := range ids {
 		s.mon.ForgetWorkspace(wsID)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
 	deleted, err := s.sys.DeleteAccount(ctx, u.ID)
 	if err != nil {
-		s.logger.Error("operator delete failed", "err", err, "user_id", a.User.ID, "target_user_id", u.ID)
+		s.logger.Error("operator delete failed", "event", "operator_action", "action", "delete", "result", "failed",
+			"err", err, "user_id", a.User.ID, "target_user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 		adminDone(w, r, msgDeleteFailed)
 		return
 	}
@@ -325,6 +329,22 @@ func (s *Server) adminResetLink(w http.ResponseWriter, r *http.Request, a *authC
 	s.operatorAction(r, a, "reset_link", u.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, r, "admin_users", d)
+}
+
+// extendDeadline lets a slow ForgetWorkspace wait finish before the server's
+// write timeout can cut the response. Unsupported writers are left alone.
+func extendDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(4 * time.Minute))
+}
+
+// DeleteURL is the confirmation page of user id, with the kept state.
+func (k adminKeep) DeleteURL(id int64) string {
+	u := k.URL(k.Page)
+	path := "/admin/users/" + strconv.FormatInt(id, 10) + "/delete"
+	if i := strings.IndexByte(u, '?'); i >= 0 {
+		return path + u[i:]
+	}
+	return path
 }
 
 func pathUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
