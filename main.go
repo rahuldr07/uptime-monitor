@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"uptimemon/internal/config"
+	"uptimemon/internal/mail"
 	"uptimemon/internal/monitor"
+	"uptimemon/internal/netguard"
 	"uptimemon/internal/notify"
 	"uptimemon/internal/store"
 	"uptimemon/internal/web"
@@ -148,6 +150,11 @@ func run(cfgPath string, logger *slog.Logger) error {
 	if cfg.TrustProxy && !cfg.HTTPSBase() {
 		logger.Warn("trust_proxy is set without an https base_url: set base_url to your https address so session cookies are always Secure")
 	}
+	if cfg.Mail != nil {
+		logger.Info("system mail on", "smtp_host", cfg.Mail.SMTPHost)
+	} else {
+		logger.Info("system mail off")
+	}
 	logger.Info("starting", "version", version, "config", cfgPath, "listen", cfg.Listen, "db", cfg.DB)
 	st, err := store.Open(cfg.DB)
 	if err != nil {
@@ -207,6 +214,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 		return err
 	}
 	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger,
+		Mail:      newMailer(ctx, cfg, logger),
 		SetupMode: setup, Upgraded: upgraded,
 		AfterSetup: func(ctx context.Context) error {
 			if err := seedOperator(); err != nil {
@@ -238,7 +246,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 			errCh <- err
 		}
 	}()
-	go pruneLoop(ctx, st, cfg.Retention.Duration, logger)
+	go pruneLoop(ctx, st, mon, cfg.Retention.Duration, logger)
 
 	select {
 	case <-ctx.Done():
@@ -420,7 +428,25 @@ func seedNotify(ctx context.Context, ws *store.WS, cfg *config.Config) error {
 	return ws.SetSetting(ctx, "notify", string(b))
 }
 
-func pruneLoop(ctx context.Context, st *store.Store, retention time.Duration, logger *slog.Logger) {
+// newMailer returns the system mail queue and starts its worker, or a literal
+// nil Mailer when no mail is configured. The host is the operator's choice,
+// so private addresses are allowed (D-126).
+func newMailer(ctx context.Context, cfg *config.Config, logger *slog.Logger) web.Mailer {
+	if cfg.Mail == nil {
+		return nil
+	}
+	m := cfg.Mail
+	sender := notify.Email{Host: m.SMTPHost, Port: m.SMTPPort, Username: m.Username, Password: m.Password,
+		From: m.From, RequireTLS: *m.RequireTLS, Dial: netguard.Dialer(true, 30*time.Second).DialContext}
+	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, Logger: logger})
+	go q.Run(ctx)
+	return q
+}
+
+// unverifiedMaxAge is how long an account may stay unverified.
+const unverifiedMaxAge = 48 * time.Hour
+
+func pruneLoop(ctx context.Context, st *store.Store, mon *monitor.Monitor, retention time.Duration, logger *slog.Logger) {
 	prune := func() {
 		n, err := st.Prune(ctx, time.Now().Add(-retention))
 		if err != nil && ctx.Err() == nil {
@@ -436,6 +462,16 @@ func pruneLoop(ctx context.Context, st *store.Store, retention time.Duration, lo
 		}
 		if _, err := st.PruneTokens(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			logger.Error("prune tokens", "err", err)
+		}
+		ids, err := st.PruneUnverified(ctx, time.Now().Add(-unverifiedMaxAge))
+		for _, id := range ids {
+			mon.ForgetWorkspace(id)
+		}
+		if err != nil && ctx.Err() == nil {
+			logger.Error("prune unverified", "err", err)
+		}
+		if len(ids) > 0 {
+			logger.Info("pruned unverified accounts", "event", "account_pruned", "count", len(ids))
 		}
 	}
 	prune()

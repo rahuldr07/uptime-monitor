@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"uptimemon/internal/config"
 	"uptimemon/internal/store"
+	"uptimemon/internal/web"
 
 	_ "modernc.org/sqlite"
 )
@@ -176,5 +179,21 @@ func TestUserAgentString(t *testing.T) {
 	}
 	if got := userAgent("1.2.3", ""); got != "uptime-monitor/1.2.3" {
 		t.Errorf("without base_url: %q", got)
+	}
+}
+
+func TestNewMailer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	perHour := 500
+	cfg := &config.Config{Limits: config.Limits{MailPerHour: &perHour}}
+	var m web.Mailer = newMailer(ctx, cfg, slog.Default())
+	if m != nil {
+		t.Fatalf("without mail, newMailer must return a nil interface, got %#v", m)
+	}
+	tls := true
+	cfg.Mail = &config.Mail{SMTPHost: "smtp.example.com", SMTPPort: 587, From: "a@example.com", RequireTLS: &tls}
+	if m = newMailer(ctx, cfg, slog.Default()); m == nil {
+		t.Fatal("with mail, newMailer must return a mailer")
 	}
 }
