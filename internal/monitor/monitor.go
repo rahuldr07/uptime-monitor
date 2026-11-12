@@ -122,6 +122,10 @@ func (b *Bus) publish(ev Event) {
 	}
 }
 
+// minReprobeGap is the shortest time between a check and the probe an edit
+// of the probe config triggers.
+const minReprobeGap = 10 * time.Second
+
 // Monitor runs one goroutine per target.
 type Monitor struct {
 	Events Bus
@@ -136,6 +140,7 @@ type Monitor struct {
 	now        func() time.Time
 	retryBase  time.Duration
 	userAgent  string
+	reprobeGap time.Duration // minimum time between a check and the probe an edit triggers
 
 	notifMu   sync.Mutex // guards notifiers; never held with mu or around loadNotif
 	notifiers map[int64]notify.Multi
@@ -185,6 +190,7 @@ func New(o Options) *Monitor {
 		now:        o.Now,
 		retryBase:  o.RetryBase,
 		userAgent:  o.UserAgent,
+		reprobeGap: minReprobeGap,
 		notifiers:  map[int64]notify.Multi{},
 		states:     map[int64]*state{},
 		cancels:    map[int64]context.CancelFunc{},
@@ -429,15 +435,16 @@ func (m *Monitor) RemoveWorkspace(ws int64) {
 	for _, id := range ids {
 		m.Remove(id)
 	}
+	// Detach the group before waiting (a racing alert makes a fresh one via
+	// alertGroup), so an Add never lands on a group that is being Waited.
+	// ForgetWorkspace's second pass waits for any such fresh group.
 	m.mu.Lock()
 	g := m.wsAlerts[ws]
+	delete(m.wsAlerts, ws)
 	m.mu.Unlock()
 	if g != nil {
 		g.Wait()
 	}
-	m.mu.Lock()
-	delete(m.wsAlerts, ws)
-	m.mu.Unlock()
 	m.notifMu.Lock()
 	delete(m.notifiers, ws)
 	m.notifMu.Unlock()
@@ -533,14 +540,32 @@ func (m *Monitor) run(ctx context.Context, id int64) {
 	if st == nil {
 		return
 	}
-	// A reload restarts this loop. Do not probe again when the last check is
-	// still fresh, unless the edit changed what is probed.
+	// A reload restarts this loop. Work out when the first probe is due so a
+	// restart neither re-probes a fresh target nor lets a probe slip by up to
+	// two intervals. An edit that changed what is probed waits at least
+	// reprobeGap after the last check, so scripted edits cannot flood probes.
 	m.mu.Lock()
-	fresh := st.Last != nil && m.now().Sub(st.Last.CheckedAt) < interval && !st.reprobe
-	m.mu.Unlock()
-	if !fresh {
-		m.CheckNow(ctx, id)
+	var delay time.Duration
+	if last := st.Last; last != nil {
+		now := m.now()
+		switch {
+		case st.reprobe:
+			delay = last.CheckedAt.Add(m.reprobeGap).Sub(now)
+		case now.Sub(last.CheckedAt) < interval:
+			delay = last.CheckedAt.Add(interval).Sub(now)
+		}
 	}
+	m.mu.Unlock()
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+	m.CheckNow(ctx, id)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

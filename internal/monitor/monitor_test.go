@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -311,7 +312,9 @@ func TestConcurrentCheckNowIsSerialised(t *testing.T) {
 			} else {
 				atomic.StoreInt32(&f.status, 200)
 			}
-			f.mon.CheckNow(context.Background(), f.target.ID)
+			// checkClaimed, not CheckNow: the busy flag would turn most
+			// of these calls into no-ops and leave checkMu untested.
+			f.mon.checkClaimed(context.Background(), f.target.ID, f.mon.states[f.target.ID])
 		}(i)
 	}
 	wg.Wait()
@@ -788,6 +791,7 @@ func TestReloadDoesNotReprobeFreshTarget(t *testing.T) {
 // check is still fresh; the clock does not move and CheckNow is not called.
 func TestReloadProbesAtOnceWhenProbeConfigChanged(t *testing.T) {
 	f := setup(t, 1)
+	f.mon.reprobeGap = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := f.mon.Start(ctx); err != nil {
@@ -838,6 +842,7 @@ func TestReloadProbesAtOnceWhenProbeConfigChanged(t *testing.T) {
 // pending probe: the new runner still probes at once.
 func TestReprobeSurvivesCancelledProbe(t *testing.T) {
 	f := setup(t, 1)
+	f.mon.reprobeGap = 50 * time.Millisecond
 	var block atomic.Bool
 	entered := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -974,13 +979,19 @@ func TestReloadRacingForgetWorkspaceStartsNoRunner(t *testing.T) {
 func TestConcurrentReloadsLeaveOneRunner(t *testing.T) {
 	f := setup(t, 1)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if err := f.mon.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); f.mon.Reload(ctx, f.target.ID) }()
+		go func() {
+			defer wg.Done()
+			if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+				t.Error(err)
+			}
+		}()
 	}
 	wg.Wait()
 	f.mon.mu.Lock()
@@ -999,5 +1010,100 @@ func TestConcurrentReloadsLeaveOneRunner(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a replaced runner was never cancelled")
 	}
-	cancel()
+}
+
+// Rapid probe-config edits must not flood probes: the new runner waits for
+// reprobeGap after the last check, and a later Reload replaces the earlier one.
+func TestRapidProbeEditsProbeOnce(t *testing.T) {
+	f := setup(t, 1)
+	f.mon.reprobeGap = 400 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ws := f.st.Workspace(1)
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	waitFor(t, "first probe", func() bool { return count() == 1 })
+	cur, _ := f.st.TargetByID(ctx, f.target.ID)
+	for i := 0; i < 10; i++ {
+		cur.Keyword = fmt.Sprintf("kw%d", i)
+		if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := count(); n != 1 {
+		t.Fatalf("%d checks inside the gap; want 1", n)
+	}
+	waitFor(t, "one probe after the gap", func() bool { return count() == 2 })
+	time.Sleep(600 * time.Millisecond)
+	if n := count(); n != 2 {
+		t.Fatalf("%d checks after ten edits; want 2", n)
+	}
+}
+
+// A runner restarted with a nearly-due last check probes when the interval
+// since that check elapses, not a whole interval after the restart.
+func TestRestartedRunnerProbesWhenDue(t *testing.T) {
+	f := setup(t, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ws := f.st.Workspace(1)
+	// Interval is one hour; the last check is 300ms short of that.
+	if err := f.st.InsertCheck(ctx, store.Check{TargetID: f.target.ID, CheckedAt: f.now().Add(-time.Hour + 300*time.Millisecond), OK: true, StatusCode: 200}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := count(); n != 1 {
+		t.Fatalf("%d checks right after the restart; want 1", n)
+	}
+	waitFor(t, "probe when due", func() bool { return count() == 2 })
+}
+
+// Timeout and expect_status edits change what is probed, like URL and keyword.
+func TestReprobeOnTimeoutAndExpectStatusChange(t *testing.T) {
+	f := setup(t, 1)
+	f.mon.reprobeGap = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ws := f.st.Workspace(1)
+	count := func() int {
+		cs, _ := ws.RecentChecks(ctx, f.target.ID, 100)
+		return len(cs)
+	}
+	waitFor(t, "first probe", func() bool { return count() == 1 })
+	cur, _ := f.st.TargetByID(ctx, f.target.ID)
+	cur.Timeout = 3 * time.Second
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after timeout edit", func() bool { return count() == 2 })
+	cur.ExpectStatus = 200
+	if _, err := ws.UpdateTarget(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after expect_status edit", func() bool { return count() == 3 })
 }
