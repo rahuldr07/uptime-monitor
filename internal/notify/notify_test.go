@@ -281,7 +281,8 @@ func TestRestrictedNoRedirects(t *testing.T) {
 	defer first.Close()
 	cfg := config.Notify{Slack: &config.Slack{WebhookURL: first.URL}}
 
-	err := FromConfig(cfg, slog.Default(), true, true).Notify(context.Background(), Event{Target: "x"})
+	// build, not FromConfig: the test server is http, which restricted validation refuses.
+	err := build(cfg, slog.Default(), true, true).Notify(context.Background(), Event{Target: "x"})
 	if err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("restricted: want status 307 error, got %v", err)
 	}
@@ -325,5 +326,21 @@ func TestEmailSend(t *testing.T) {
 	}
 	if len(gotTo) != 1 || gotTo[0] != "u@x" || !strings.Contains(gotMsg, "Subject: Hi") || !strings.HasSuffix(gotMsg, "body") {
 		t.Errorf("to=%v msg=%q", gotTo, gotMsg)
+	}
+}
+
+func TestFromConfigRestrictedDropsInvalidChannels(t *testing.T) {
+	cfg := config.Notify{
+		Telegram: &config.Telegram{BotToken: "not-a-token", ChatID: "c"},
+		Slack:    &config.Slack{WebhookURL: "https://hooks.example.com/x"},
+		Email:    &config.Email{SMTPHost: "smtp.example.com", SMTPPort: 25, From: "a@example.com", To: []string{"b@example.com"}},
+	}
+	m := FromConfig(cfg, slog.Default(), false, true)
+	if len(m) != 1 || m[0].Name != "slack" {
+		t.Fatalf("restricted: want only slack, got %+v", m)
+	}
+	// The operator's channels are not re-checked.
+	if m := FromConfig(cfg, slog.Default(), true, false); len(m) != 3 {
+		t.Fatalf("unrestricted: want 3 channels, got %+v", m)
 	}
 }

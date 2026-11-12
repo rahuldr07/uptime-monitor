@@ -283,6 +283,17 @@ func messageID(from string) string {
 // workspaces) webhooks do not follow redirects and email requires TLS. With none configured it
 // returns a single Log channel so alerts are never silently dropped.
 func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate, restricted bool) Multi {
+	if restricted {
+		// Re-check at send time what the save form checked, so a channel
+		// stored before a rule tightened (or written to the database
+		// directly) is not used.
+		cfg = restrictedChannels(cfg, logger)
+	}
+	return build(cfg, logger, allowPrivate, restricted)
+}
+
+// build makes the notifiers for cfg without validating it.
+func build(cfg config.Notify, logger *slog.Logger, allowPrivate, restricted bool) Multi {
 	client := netguard.Client(allowPrivate, 15*time.Second)
 	if restricted {
 		// A redirect could carry the request (and its token) elsewhere.
@@ -304,6 +315,35 @@ func FromConfig(cfg config.Notify, logger *slog.Logger, allowPrivate, restricted
 		m = append(m, Named{"log", Log{Logger: logger}})
 	}
 	return m
+}
+
+// restrictedChannels returns cfg without the channels that fail the
+// non-operator validation, logging each one dropped.
+func restrictedChannels(cfg config.Notify, logger *slog.Logger) config.Notify {
+	drop := func(name string, err error) {
+		if logger != nil {
+			logger.Error("alert channel dropped: invalid for a non-operator workspace", "channel", name, "err", err)
+		}
+	}
+	if cfg.Telegram != nil {
+		if err := config.ValidateNotifyRestricted(&config.Notify{Telegram: cfg.Telegram}); err != nil {
+			drop("telegram", err)
+			cfg.Telegram = nil
+		}
+	}
+	if cfg.Slack != nil {
+		if err := config.ValidateNotifyRestricted(&config.Notify{Slack: cfg.Slack}); err != nil {
+			drop("slack", err)
+			cfg.Slack = nil
+		}
+	}
+	if cfg.Email != nil {
+		if err := config.ValidateNotifyRestricted(&config.Notify{Email: cfg.Email}); err != nil {
+			drop("email", err)
+			cfg.Email = nil
+		}
+	}
+	return cfg
 }
 
 func postJSON(ctx context.Context, client *http.Client, url string, body any, name string) error {

@@ -445,22 +445,24 @@ func (s *Server) statusMeta(ctx context.Context, ws *store.WS) (title, desc stri
 const (
 	msgBadSlug   = "Use 3–40 lowercase letters, digits and dashes."
 	msgSlugTaken = "That address is taken."
+
+	msgStatusTextLen = "Title or description too long."
 )
 
 func (s *Server) statusSettings(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
 	title := strings.TrimSpace(r.FormValue("title"))
 	desc := strings.TrimSpace(r.FormValue("description"))
-	if len(title) > 80 || len(desc) > 200 {
-		redirect(w, r, s.statusURL(r.Context(), ws), "Title or description too long.")
-		return
-	}
 	info, err := ws.Info(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	slug := strings.TrimSpace(r.FormValue("slug"))
+	if len(title) > 80 || len(desc) > 200 {
+		s.statusOwnerCode(w, r, a, info, http.StatusUnprocessableEntity, msgStatusTextLen)
+		return
+	}
+	slug := strings.ToLower(strings.TrimSpace(r.FormValue("slug")))
 	name := strings.TrimSpace(r.FormValue("name"))
 	newSlug := slug != "" && slug != info.Slug
 	newName := name != "" && name != info.Name

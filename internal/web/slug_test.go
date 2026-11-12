@@ -53,3 +53,24 @@ func TestSlugChange(t *testing.T) {
 		t.Fatalf("failed saves changed the workspace: %+v", info)
 	}
 }
+
+func TestStatusSettingsTextLengthAnd422AndSlugCase(t *testing.T) {
+	e := newEnv(t)
+	for name, f := range map[string]url.Values{
+		"title":       {"title": {strings.Repeat("x", 81)}},
+		"description": {"description": {strings.Repeat("x", 201)}},
+	} {
+		resp, body := e.post(t, e.op, "/status/settings", f)
+		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgStatusTextLen) {
+			t.Errorf("%s: %d, want 422 with %q", name, resp.StatusCode, msgStatusTextLen)
+		}
+	}
+	// An upper-case slug is lowercased, not refused.
+	resp, _ := e.post(t, e.op, "/status/settings", url.Values{"slug": {"  Mixed-Case "}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/s/mixed-case") {
+		t.Fatalf("mixed-case slug: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if info, _ := e.opWS.Info(t.Context()); info.Slug != "mixed-case" {
+		t.Fatalf("slug = %q", info.Slug)
+	}
+}
