@@ -155,8 +155,9 @@ type Monitor struct {
 	// wsAlerts counts each workspace's pending alert deliveries, so
 	// RemoveWorkspace can wait for them without waiting on other workspaces.
 	wsAlerts map[int64]*sync.WaitGroup // guarded by mu
-	// gone holds deleted workspaces (IDs are never reused). Reload starts
-	// nothing for them and apply starts no alert for them.
+	// gone holds deleted and suspended workspaces. Reload starts nothing for
+	// them and apply starts no alert for them. IDs are never reused, and
+	// RestoreWorkspace lifts a suspension.
 	gone map[int64]bool // guarded by mu
 
 	afterReloadCheck func() // tests only: runs between Reload's two lock sections

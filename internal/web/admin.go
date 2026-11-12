@@ -142,9 +142,9 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, a *authCtx) 
 // in-flight alerts (up to about two minutes), so this can be slow; the
 // request is detached so a dropped connection cannot stop it half way.
 func (s *Server) adminDisable(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	extendDeadline(w)
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
-	extendDeadline(w)
 	ctx := context.WithoutCancel(r.Context())
 	id, ok := pathUserID(w, r)
 	if !ok {
@@ -171,6 +171,7 @@ func (s *Server) adminDisable(w http.ResponseWriter, r *http.Request, a *authCtx
 
 // adminEnable lifts a suspension and restarts the user's runners.
 func (s *Server) adminEnable(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	extendDeadline(w)
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	ctx := context.WithoutCancel(r.Context())
@@ -211,6 +212,7 @@ func (s *Server) adminDeletePage(w http.ResponseWriter, r *http.Request, a *auth
 // (sessions gone, workspaces suspended), stop the runners, then delete the
 // rows. A failed delete leaves the user disabled rather than half alive.
 func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	extendDeadline(w)
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	u, ok := s.adminTarget(w, r)
@@ -229,7 +231,6 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
 		return
 	}
-	extendDeadline(w)
 	ctx := context.WithoutCancel(r.Context())
 	ids, err := s.sys.SetUserDisabled(ctx, u.ID, true, s.now())
 	switch {

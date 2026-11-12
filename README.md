@@ -164,7 +164,7 @@ The SMTP host may be a private address, since you chose it.
 
 What it sends:
 
-- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators and disabled accounts excepted (D-127).
+- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators and disabled accounts excepted (D-127). Re-enabling an unverified account older than 48 hours means the next hourly prune deletes it, so send a reset link instead (resetting verifies the address).
 - **Forgot password**: `/forgot` sends a reset link valid for 1 hour. It answers the same for every address. Completing a reset also verifies the address. `/reset` and `/verify` links open even while you are signed in; a reset signs in only a browser with no session or the same user's session.
 - **Password-change notice**: sent after a reset or a change on `/account`.
 - **Duplicate sign-up notice**: sent to the existing owner when someone signs up with their address.
@@ -279,7 +279,8 @@ after 7 days, like `-invite`.
 
 **Recovery.** `uptime-monitor -enable-user you@example.com` re-enables a disabled
 account, including an operator's, and exits. It changes only the database, so
-restart the server afterwards for that user's monitors to resume.
+restart the server afterwards for that user's monitors to resume. On a running
+server, the panel's Disable then Enable resumes the monitors without a restart.
 
 ### Status page address
 

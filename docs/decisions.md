@@ -487,5 +487,6 @@ Full design:
   - The host search matches anywhere in the URL, not only the host.
   - An incident that is open when a workspace is suspended stays open. Its "up" alert after re-enabling includes the suspended time.
   - Disabled unverified users are not pruned. This amends the D-126 note and the README line on pruning, which said they were.
+  - Re-enabling an unverified account older than 48 hours means the next hourly prune deletes it. The operator should send a reset link instead, which verifies the address.
   - Operators cannot be disabled, deleted or sent a reset link from the panel. Disabled users cannot be sent a reset link either. Re-enabling an operator with `-enable-user` is allowed, as the recovery path.
   - `-enable-user` changes only the database. A running server does not resume the user's monitors until it restarts; the panel's enable restarts them directly.

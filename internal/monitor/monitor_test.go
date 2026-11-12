@@ -1277,6 +1277,47 @@ func TestRestoreWorkspace(t *testing.T) {
 	waitFor(t, "probe after restore", func() bool { return hits.Load() > 0 })
 }
 
+// An incident open across a suspension stays open: the recovery alert's
+// DownFor covers the suspended time.
+func TestIncidentSurvivesSuspension(t *testing.T) {
+	f := setup(t, 1)
+	ctx := context.Background()
+	atomic.StoreInt32(&f.status, 503)
+	u, ws, tg := userWorkspace(t, f.st, f.srv.URL, f.now())
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(30 * time.Second)
+	f.mon.CheckNow(ctx, tg.ID)
+	f.mon.WaitAlerts()
+	if s, _ := f.mon.Get(ws, tg.ID); s.Status != Down {
+		t.Fatalf("want down: %+v", s)
+	}
+	if _, err := f.st.SetUserDisabled(ctx, u.ID, true, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.ForgetWorkspace(ws)
+	f.advance(2 * time.Hour)
+	if _, err := f.st.SetUserDisabled(ctx, u.ID, false, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.RestoreWorkspace(ws)
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := f.mon.Get(ws, tg.ID); s.Status != Down || s.IncidentID == 0 {
+		t.Fatalf("incident lost across suspension: %+v", s)
+	}
+	atomic.StoreInt32(&f.status, 200)
+	f.advance(30 * time.Second)
+	f.mon.CheckNow(ctx, tg.ID)
+	f.mon.WaitAlerts()
+	evs := f.rec.list()
+	if len(evs) != 2 || !evs[1].Up || evs[1].DownFor != 2*time.Hour+30*time.Second {
+		t.Fatalf("want up alert with DownFor=2h30s: %+v", evs)
+	}
+}
+
 // A restarted monitor probes nothing for a disabled user but still probes the operator's target.
 func TestDisabledStaysStoppedAfterRestart(t *testing.T) {
 	f := setup(t, 1)
