@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-11-12
+
+### Added
+
+- Lucide icons (ISC/MIT) across navigation, action buttons (icon with text), status badges, alerts, toasts, tables and empty states. The licence notice is in `THIRD_PARTY_NOTICES.md` and served at `/static/licenses.txt`.
+- The theme toggle shows a sun, moon or monitor icon for light, dark or auto.
+
+### Changed
+
+- Icon motion follows reduced-motion and accessibility guidance:
+  - Check spins only while a check runs, and only after 300ms.
+  - Chevrons, sort arrows and the theme icon transition in 200ms or less.
+  - The live indicator pulses briefly at most once a minute instead of continuously.
+  - All motion stops under `prefers-reduced-motion` and pauses in background tabs.
+- Pause and play icons are solid.
+- Small icons use a slightly heavier stroke.
+- The Docker image includes `LICENSE`, `THIRD_PARTY_NOTICES.md` and the Lucide licence under `/usr/share/doc/uptime-monitor/`.
+
 ## [1.0.0] - 2026-11-12
 
 First public release.
