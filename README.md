@@ -114,6 +114,10 @@ loopback address). `closed` does not, and `-invite` links then use the
 | `closed` (default) | 404 | works |
 | `invite` | explains that sign-up is by invitation | works |
 
+`closed` does not switch sign-ups off: invites already issued keep working
+until they expire. To stop new accounts, set `limits.max_workspaces` to the
+current workspace count, or delete the unused `kind='invite'` rows from `tokens`.
+
 `open` is rejected at startup until a later release adds email.
 
 Create an invitation after setup with `uptime-monitor -invite` (any holder of
@@ -137,7 +141,7 @@ exempt from the monitor, interval, host-rate and rate limits below. The
 | `max_monitors` | `20` | monitors per workspace; `0` is unlimited |
 | `min_interval` | `30s` | shortest check interval a workspace may set (at least `1s`); `0s` or unset means the default |
 | `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included, so `5` allows 4 invited accounts and `1` allows none; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
-| `signups_per_hour` | `100` | sign-ups across the instance per hour; at least `1` (use `signup: "closed"` to switch sign-ups off) |
+| `signups_per_hour` | `100` | sign-ups across the instance per hour; at least `1`. To stop new accounts, set `max_workspaces` to the current workspace count (`signup: "closed"` does not: outstanding invites keep working until they expire) |
 | `host_requests_per_second` | `1` | combined check rate to one host from all non-operator workspaces (must be positive). A monitor that would exceed it is refused with a hint to use a longer interval |
 
 Fixed limits (in memory, reset on restart; all but the last row are for non-operator workspaces):
@@ -205,8 +209,9 @@ The server refuses to start when:
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query
 - a limit is negative, `signups_per_hour` is under 1, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
 
-It logs a WARN when `allow_private_targets` is `all` while sign-up is not
-closed: every invited user could then reach your internal network.
+It logs a WARN whenever `allow_private_targets` is `all`: any non-operator
+account, including one created from an invite issued earlier under `closed`,
+could then reach your internal network.
 
 ## Upgrading
 

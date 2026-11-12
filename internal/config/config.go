@@ -260,7 +260,7 @@ func (c *Config) applyDefaults() error {
 			return fmt.Errorf("config: signup %q needs base_url", c.Signup)
 		}
 		if u, err := url.Parse(c.BaseURL); err != nil || (u.Scheme == "http" && !isLoopbackHost(u.Hostname())) {
-			return fmt.Errorf("config: signup %q needs an https base_url (http is allowed only for localhost)", c.Signup)
+			return fmt.Errorf("config: signup %q needs an https base_url (http is allowed only for localhost or a loopback address)", c.Signup)
 		}
 	}
 	if err := c.Limits.applyDefaults(); err != nil {
@@ -432,7 +432,7 @@ func (l *Limits) applyDefaults() error {
 		*l.SignupsPerHour = 100
 	}
 	if *l.SignupsPerHour < 1 {
-		return errors.New("config: limits.signups_per_hour must be at least 1 (use signup \"closed\" to switch sign-ups off)")
+		return errors.New("config: limits.signups_per_hour must be at least 1 (to stop new accounts, set limits.max_workspaces to the current workspace count)")
 	}
 	if l.HostRequestsPerSecond == nil {
 		one := 1.0

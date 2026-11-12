@@ -440,7 +440,9 @@ Full design:
     - After the commit the workspace is tombstoned (`Monitor.ForgetWorkspace`) and its runners removed again, so a `Reload` in flight cannot leave an orphan runner.
     - `Reload` cancels a runner it replaces.
     - If the delete fails, the runners are reloaded.
-  - `limits.signups_per_hour` below 1 is a startup error, because the limiter would treat 0 as 1. `signup: "closed"` switches sign-ups off.
+  - `limits.signups_per_hour` below 1 is a startup error, because the limiter would treat 0 as 1. `signup: "closed"` does not switch sign-ups off: outstanding invites keep working until they expire (§5.2). The off switch is `limits.max_workspaces` set to the current workspace count, or deleting unused `kind='invite'` rows from `tokens`. For the same reason the `allow_private_targets: "all"` WARN fires whenever the value is `all`.
+  - `hostRateErr` is check-then-act across workspaces: two creates racing can both pass. Accepted; the create limits bound the overshoot.
+  - The runner waits at least 10 seconds after the last check before probing for an edit that changed the probe config (`minReprobeGap`), and `interval - age` after a restart when the last check is fresh, so scripted edits cannot flood outbound probes and a restart does not stretch an interval to nearly twice its length.
   - The last-operator check counts only active (not disabled) operators. The operator never sees the delete form, but the server refuses only the last operator, which matters when M3 adds more.
   - The per-host rate comparison strips a trailing dot from the host.
   - The alert-test limit is taken before the form is saved; when throttled, nothing is saved. Limits answer with an HTML 429 and `Retry-After`.
