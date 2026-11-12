@@ -1174,3 +1174,133 @@ func TestSlowTargetRapidReloadsProbeOncePerGap(t *testing.T) {
 		t.Fatalf("no probe followed the edits")
 	}
 }
+
+// countingServer answers every probe with 200 and counts them.
+func countingServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+// userWorkspace creates a non-operator account with one target probing url.
+func userWorkspace(t *testing.T, st *store.Store, url string, now time.Time) (store.User, int64, store.Target) {
+	t.Helper()
+	ctx := context.Background()
+	u, ws, err := st.CreateAccount(ctx, store.AccountInput{Email: "bob@example.com", PasswordHash: "x",
+		WorkspaceName: "Bob", Slug: "bob", Verified: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, err := ws.CreateTarget(ctx, store.Target{Name: "bob", URL: url, Interval: time.Hour, Timeout: 2 * time.Second}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u, ws.ID(), tg
+}
+
+// A Reload that read the target before a suspension must not leave a runner.
+func TestReloadDuringSuspendDoesNotLeaveRunner(t *testing.T) {
+	f := setup(t, 1)
+	srv, hits := countingServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u, ws, tg := userWorkspace(t, f.st, srv.URL, f.now())
+	forgotten := make(chan struct{})
+	f.mon.afterReloadCheck = func() {
+		if _, err := f.st.SetUserDisabled(ctx, u.ID, true, f.now()); err != nil {
+			t.Errorf("SetUserDisabled: %v", err)
+		}
+		go func() { f.mon.ForgetWorkspace(ws); close(forgotten) }()
+		waitFor(t, "tombstone", func() bool {
+			f.mon.mu.Lock()
+			defer f.mon.mu.Unlock()
+			return f.mon.gone[ws]
+		})
+	}
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.afterReloadCheck = nil
+	<-forgotten
+	f.mon.mu.Lock()
+	_, running := f.mon.cancels[tg.ID]
+	f.mon.mu.Unlock()
+	if running {
+		t.Fatal("suspended target has a runner")
+	}
+	cancel()
+	f.mon.Wait()
+	if h := hits.Load(); h != 0 {
+		t.Fatalf("suspended workspace was probed %d times", h)
+	}
+}
+
+// RestoreWorkspace lifts the tombstone so a re-enabled user's target runs again.
+func TestRestoreWorkspace(t *testing.T) {
+	f := setup(t, 1)
+	srv, hits := countingServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.mon.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u, ws, tg := userWorkspace(t, f.st, srv.URL, f.now())
+	if _, err := f.st.SetUserDisabled(ctx, u.ID, true, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.ForgetWorkspace(ws)
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.mon.Get(ws, tg.ID); ok {
+		t.Fatal("suspended target has state")
+	}
+	if _, err := f.st.SetUserDisabled(ctx, u.ID, false, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.mon.Get(ws, tg.ID); ok {
+		t.Fatal("tombstoned workspace started a runner after re-enable without RestoreWorkspace")
+	}
+	f.mon.RestoreWorkspace(ws)
+	if err := f.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "probe after restore", func() bool { return hits.Load() > 0 })
+}
+
+// A restarted monitor probes nothing for a disabled user but still probes the operator's target.
+func TestDisabledStaysStoppedAfterRestart(t *testing.T) {
+	f := setup(t, 1)
+	srv, hits := countingServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	u, ws, _ := userWorkspace(t, f.st, srv.URL, f.now())
+	if _, err := f.st.SetUserDisabled(ctx, u.ID, true, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	m2 := New(Options{Store: f.st, Client: f.srv.Client(), Now: f.now, FailureThreshold: 1})
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "operator probe", func() bool {
+		s, ok := m2.Get(1, f.target.ID)
+		return ok && s.Last != nil
+	})
+	cancel()
+	m2.Wait()
+	if h := hits.Load(); h != 0 {
+		t.Fatalf("disabled user's target probed %d times", h)
+	}
+	if got := m2.Snapshot(ws); len(got) != 0 {
+		t.Fatalf("disabled workspace has %d tracked targets", len(got))
+	}
+}

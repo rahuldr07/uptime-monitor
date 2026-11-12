@@ -462,6 +462,14 @@ func (m *Monitor) ForgetWorkspace(ws int64) {
 	m.RemoveWorkspace(ws)
 }
 
+// RestoreWorkspace lifts ForgetWorkspace's tombstone so Reload and Start
+// may run that workspace's targets again (used when a user is re-enabled).
+func (m *Monitor) RestoreWorkspace(ws int64) {
+	m.mu.Lock()
+	delete(m.gone, ws)
+	m.mu.Unlock()
+}
+
 // alertGroup returns ws's pending-alert counter. The caller holds mu.
 func (m *Monitor) alertGroup(ws int64) *sync.WaitGroup {
 	g := m.wsAlerts[ws]
