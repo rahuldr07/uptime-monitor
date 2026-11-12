@@ -33,6 +33,7 @@ const (
 	classGuest                           // signed-in users are sent to /
 	classUser                            // any signed-in user
 	classWorkspace                       // a signed-in user acting on their own workspace
+	classOperator                        // an operator; everyone else gets 404
 )
 
 type route struct {
@@ -97,6 +98,8 @@ func (s *Server) routeTable() []route {
 		{"GET", "/api/status", classWorkspace, nil, s.apiStatus},
 		{"GET", "/api/targets/{id}/checks", classWorkspace, nil, s.apiChecks},
 		{"GET", "/api/incidents", classWorkspace, nil, s.apiIncidents},
+
+		{"GET", "/admin", classOperator, nil, s.adminIndex},
 	}
 }
 
@@ -134,6 +137,11 @@ func (s *Server) routes() {
 				authed = s.apiLimited(authed)
 			}
 			h = s.requireUser(authed)
+		case classOperator:
+			if r.authed == nil {
+				panic(fmt.Sprintf("web: route %s %s has no authed handler", r.method, r.pattern))
+			}
+			h = s.requireOperator(r.authed)
 		default:
 			panic(fmt.Sprintf("web: route %s %s has no class", r.method, r.pattern))
 		}

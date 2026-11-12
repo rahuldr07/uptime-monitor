@@ -122,7 +122,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 48
+	const want = 49
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {
@@ -135,10 +135,10 @@ func TestEveryRouteClassified(t *testing.T) {
 			t.Errorf("duplicate route %s", key)
 		}
 		seen[key] = true
-		if r.class < classPublic || r.class > classWorkspace {
+		if r.class < classPublic || r.class > classOperator {
 			t.Errorf("%s: invalid class %d", key, r.class)
 		}
-		isAuthed := r.class == classUser || r.class == classWorkspace
+		isAuthed := r.class == classUser || r.class == classWorkspace || r.class == classOperator
 		if (r.authed != nil) != isAuthed {
 			t.Errorf("%s: authed handler set = %v, but class %d needs %v", key, r.authed != nil, r.class, isAuthed)
 		}

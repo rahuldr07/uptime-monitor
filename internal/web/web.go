@@ -218,7 +218,9 @@ func New(o Options) (*Server, error) {
 }
 
 // Handler returns the root handler.
-func (s *Server) Handler() http.Handler { return s.securityHeaders(s.setupGate(withAuthCache(s.mux))) }
+func (s *Server) Handler() http.Handler {
+	return s.securityHeaders(s.setupGate(s.withAuthCache(s.mux)))
+}
 
 // healthz reports ok only when the database answers, so an orchestrator
 // restarts the process if storage is wedged.
@@ -270,26 +272,29 @@ func cacheControl(h http.Handler) http.Handler {
 // ---- view models ----
 
 type base struct {
-	Title     string
-	Page      string
-	Admin     bool
-	UserEmail string
-	Flash     string
-	Error     string
-	Now       time.Time
-	Theme     string
-	Unacked   int
-	DownCount int
-	NewForm   targetForm
-	Groups    []string
-	Maint     []store.Maintenance // windows active right now
-	StatusURL string              // /s/<slug> of this workspace
+	Title      string
+	Page       string
+	Admin      bool
+	UserEmail  string
+	Flash      string
+	Error      string
+	Now        time.Time
+	Theme      string
+	Unacked    int
+	DownCount  int
+	NewForm    targetForm
+	Groups     []string
+	Maint      []store.Maintenance // windows active right now
+	StatusURL  string              // /s/<slug> of this workspace
+	IsOperator bool                // show the Admin sidebar link
+	NoRefresh  bool                // live refresh must not replace #content
 }
 
 // base builds the view model of a signed-in workspace page.
 func (s *Server) base(r *http.Request, a *authCtx, page, title string) base {
 	b := s.baseFor(r.Context(), a.WS, page, title, themeFrom(r), true)
 	b.UserEmail = a.User.Email
+	b.IsOperator = a.User.IsOperator
 	// Only signed-in flows redirect with a flash; never echo ?msg= to anonymous
 	// visitors, and only show messages the server itself signed.
 	b.Flash = flashFrom(r)

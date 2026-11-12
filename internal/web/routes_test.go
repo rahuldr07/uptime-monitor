@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 48 {
-		t.Errorf("len = %d, want 48", len(routes))
+	if len(routes) != 49 {
+		t.Errorf("len = %d, want 49", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -33,7 +33,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 			if r.handler == nil || r.authed != nil {
 				t.Errorf("%s: class %d needs handler only", key, r.class)
 			}
-		case classUser, classWorkspace:
+		case classUser, classWorkspace, classOperator:
 			if r.authed == nil || r.handler != nil {
 				t.Errorf("%s: class %d needs authed only", key, r.class)
 			}
@@ -46,10 +46,11 @@ func TestRouteTableIsComplete(t *testing.T) {
 		byClass[r.class][key] = true
 	}
 	for class, want := range map[routeClass][]string{
-		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /verify", "POST /verify", "POST /verify/resend", "GET /reset", "POST /reset"},
-		classSetup:  {"GET /setup", "POST /setup"},
-		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /forgot", "POST /forgot"},
-		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete"},
+		classPublic:   {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /verify", "POST /verify", "POST /verify/resend", "GET /reset", "POST /reset"},
+		classSetup:    {"GET /setup", "POST /setup"},
+		classGuest:    {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /forgot", "POST /forgot"},
+		classUser:     {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete"},
+		classOperator: {"GET /admin"},
 	} {
 		if len(byClass[class]) != len(want) {
 			t.Errorf("class %d routes = %v, want %v", class, byClass[class], want)
@@ -67,6 +68,17 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 	c := e.client(t)
 	for _, r := range testRoutes(t, e) {
 		path := strings.ReplaceAll(strings.Replace(r.pattern, "/{$}", "/", 1), "{id}", "1")
+		if r.class == classOperator {
+			req, _ := http.NewRequest(r.method, e.ts.URL+path, nil)
+			resp, err := c.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("%s %s anonymous: status %d, want 404", r.method, path, resp.StatusCode)
+			}
+		}
 		if r.class == classWorkspace || r.class == classUser {
 			req, _ := http.NewRequest(r.method, e.ts.URL+path, nil)
 			if r.method == "POST" {
@@ -92,8 +104,12 @@ func TestRouteTableDefaultDeny(t *testing.T) {
 				t.Fatal(err)
 			}
 			resp.Body.Close()
-			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("POST %s cross-site: status %d, want 403", path, resp.StatusCode)
+			want := http.StatusForbidden
+			if r.class == classOperator {
+				want = http.StatusNotFound
+			}
+			if resp.StatusCode != want {
+				t.Errorf("POST %s cross-site: status %d, want %d", path, resp.StatusCode, want)
 			}
 		}
 	}

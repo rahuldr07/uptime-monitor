@@ -78,10 +78,20 @@ func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
 		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash}, true
 }
 
-// withAuthCache installs the per-request cache that currentAuth fills.
-func withAuthCache(next http.Handler) http.Handler {
+// withAuthCache installs the per-request cache that currentAuth fills. It
+// also gates /admin: whatever the method, origin or sub-path, a request that
+// is not from a signed-in operator gets 404 before the mux can answer 403 or
+// 405 and reveal the panel.
+func (s *Server) withAuthCache(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authKey{}, &authResult{})))
+		r = r.WithContext(context.WithValue(r.Context(), authKey{}, &authResult{}))
+		if p := r.URL.Path; p == "/admin" || strings.HasPrefix(p, "/admin/") {
+			if a, ok := s.currentAuth(r); !ok || !a.User.IsOperator {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -121,6 +131,24 @@ func (s *Server) requireUser(h func(http.ResponseWriter, *http.Request, *authCtx
 		}
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
 	}
+}
+
+// requireOperator runs h for signed-in operators and answers 404 to everyone
+// else, anonymous included: the admin panel does not reveal that it exists.
+// The /admin gate in withAuthCache already filters; this is the second line.
+func (s *Server) requireOperator(h func(http.ResponseWriter, *http.Request, *authCtx)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a, ok := s.currentAuth(r); ok && a.User.IsOperator {
+			h(w, r, a)
+			return
+		}
+		http.NotFound(w, r)
+	}
+}
+
+// adminIndex is a placeholder landing route for the panel.
+func (s *Server) adminIndex(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
 // setupGate confines the app to the setup flow until the first account
