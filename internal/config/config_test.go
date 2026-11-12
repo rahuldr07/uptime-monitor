@@ -204,17 +204,17 @@ func TestMailRequireTLSFalse(t *testing.T) {
 
 func TestMailValidation(t *testing.T) {
 	const base = `,"base_url":"https://up.example.com","mail":`
-	for _, tc := range []struct{ name, mail string }{
-		{"no smtp_host", `{"from":"up@example.com"}`},
-		{"no from", `{"smtp_host":"smtp.example.com"}`},
-		{"port -1", `{"smtp_host":"smtp.example.com","from":"up@example.com","smtp_port":-1}`},
-		{"port 70000", `{"smtp_host":"smtp.example.com","from":"up@example.com","smtp_port":70000}`},
-		{"unparsable from", `{"smtp_host":"smtp.example.com","from":"not an address"}`},
-		{"from with display name", `{"smtp_host":"smtp.example.com","from":"Uptime <up@example.com>"}`},
+	for _, tc := range []struct{ name, mail, want string }{
+		{"no smtp_host", `{"from":"up@example.com"}`, "mail needs smtp_host and from"},
+		{"no from", `{"smtp_host":"smtp.example.com"}`, "mail needs smtp_host and from"},
+		{"port -1", `{"smtp_host":"smtp.example.com","from":"up@example.com","smtp_port":-1}`, "smtp_port -1 is out of range"},
+		{"port 70000", `{"smtp_host":"smtp.example.com","from":"up@example.com","smtp_port":70000}`, "smtp_port 70000 is out of range"},
+		{"unparsable from", `{"smtp_host":"smtp.example.com","from":"not an address"}`, "must be a bare address"},
+		{"from with display name", `{"smtp_host":"smtp.example.com","from":"Uptime <up@example.com>"}`, "must be a bare address"},
 	} {
 		_, err := Parse([]byte(`{"signup":"closed"` + base + tc.mail + `}`))
-		if err == nil || !strings.Contains(err.Error(), "config: mail") {
-			t.Errorf("%s: err = %v, want a config mail error", tc.name, err)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want one containing %q", tc.name, err, tc.want)
 		}
 	}
 }
