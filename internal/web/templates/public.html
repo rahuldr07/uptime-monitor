@@ -12,7 +12,7 @@
 {{template "sprite"}}
 <div class="status-wrap">
 {{with .Flash}}<div data-flash>{{.}}</div>{{end}}
-{{with .Error}}<div class="alert error" role="alert"><svg class="ic"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
+{{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
 <div id="content"{{if .Error}} data-no-refresh{{end}}>{{template "content" .}}</div>
 </div>
 <div class="toasts"></div>

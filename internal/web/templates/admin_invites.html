@@ -7,7 +7,7 @@
 <div class="card block">
   <h2>Invite link</h2>
   <p class="muted small" style="margin:6px 0 10px">Shown once. It works for 7 days; send it to the invitee yourself. Leaving this page discards it.</p>
-  <div class="copyrow"><input id="onetime" readonly value="{{.}}" aria-label="Invite link"><button type="button" data-action="copy" data-copy-target="#onetime"><svg class="ic"><use href="#i-copy"/></svg>Copy</button></div>
+  <div class="copyrow"><input id="onetime" readonly value="{{.}}" aria-label="Invite link"><button type="button" data-action="copy" data-copy-target="#onetime"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button></div>
 </div>
 {{end}}
 <form method="post" action="/admin/invites" class="btns" style="margin-bottom:12px">
@@ -24,11 +24,11 @@
   <td>{{ts .CreatedAt}}</td>
   <td>{{ts .ExpiresAt}}</td>
   <td class="btns">
-    <form method="post" action="/admin/invites/revoke" data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm">Revoke</button></form>
+    <form method="post" action="/admin/invites/revoke" data-confirm-title="Revoke invite?" data-confirm-danger data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm">Revoke</button></form>
   </td>
 </tr>
 {{end}}
 </table>
 </div>
-{{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No open invites</strong><p>Create one above to bring someone in.</p></div>{{end}}
+{{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No open invites</strong><p>Create one above to bring someone in.</p></div>{{end}}
 {{end}}

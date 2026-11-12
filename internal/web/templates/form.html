@@ -6,7 +6,7 @@
     <div class="field"><label>Check every</label><input name="interval" value="{{.Interval}}" placeholder="30s"><div class="help">e.g. 30s, 2m, 1h</div></div>
     <div class="field"><label>Timeout</label><input name="timeout" value="{{.Timeout}}" placeholder="10s"></div>
   </div>
-  <details class="adv"{{if or .ExpectStatus .Keyword .Group}} open{{end}}><summary><svg class="ic"><use href="#i-chevron"/></svg>Advanced</summary>
+  <details class="adv"{{if or .ExpectStatus .Keyword .Group}} open{{end}}><summary><svg class="ic" aria-hidden="true"><use href="#i-chevron"/></svg>Advanced</summary>
     <div class="frow" style="margin-bottom:12px">
       <div class="field"><label>Expected status</label><input name="expect_status" value="{{.ExpectStatus}}" placeholder="any 2xx/3xx" inputmode="numeric"></div>
       <div class="field"><label>Body must contain</label><input name="keyword" value="{{.Keyword}}" placeholder="ok"></div>

@@ -7,7 +7,7 @@
 <div class="card block">
   <h2>Reset link for {{$.LinkEmail}}</h2>
   <p class="muted small" style="margin:6px 0 10px">Shown once. It works for one hour; send it to the user yourself. Leaving this page discards it.</p>
-  <div class="copyrow"><input id="onetime" readonly value="{{.}}" aria-label="Reset link"><button type="button" data-action="copy" data-copy-target="#onetime"><svg class="ic"><use href="#i-copy"/></svg>Copy</button></div>
+  <div class="copyrow"><input id="onetime" readonly value="{{.}}" aria-label="Reset link"><button type="button" data-action="copy" data-copy-target="#onetime"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button></div>
 </div>
 {{end}}
 <form method="get" action="/admin/users" class="btns" style="margin-bottom:12px">
@@ -31,15 +31,15 @@
   <td>{{.Monitors}}</td>
   <td class="btns">
     {{if .DisabledAt}}
-    <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Enable</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm-title="Enable user?" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Enable</button></form>
     {{else if not .IsOperator}}
-    <form method="post" action="/admin/users/{{.ID}}/disable" data-confirm="Disable {{.Email}}? They are signed out and their monitors stop.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Disable</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/disable" data-confirm-title="Disable user?" data-confirm-danger data-confirm="Disable {{.Email}}? They are signed out and their monitors stop.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Disable</button></form>
     {{end}}
     {{if and $.CanMail (not .VerifiedAt) (not .DisabledAt)}}
-    <form method="post" action="/admin/users/{{.ID}}/resend" data-confirm="Send {{.Email}} a new verification email?">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Resend verification</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/resend" data-confirm-title="Resend verification?" data-confirm="Send {{.Email}} a new verification email?">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Resend verification</button></form>
     {{end}}
     {{if and (not .IsOperator) (not .DisabledAt)}}
-    <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Reset link</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm-title="Reset password?" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Reset link</button></form>
     {{end}}
     {{if not .IsOperator}}<a class="btn sm" href="{{$.Keep.DeleteURL .ID}}">Delete</a>{{end}}
   </td>
@@ -47,7 +47,7 @@
 {{end}}
 </table>
 </div>
-{{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}
+{{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}
 {{if or .Prev .Next}}
 <div class="btns" style="margin-top:12px">
   {{if .Prev}}<a href="{{.Prev}}">← Previous</a>{{end}}

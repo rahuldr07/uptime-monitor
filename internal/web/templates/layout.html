@@ -28,17 +28,21 @@
 </aside>
 <main class="main">
 {{with .Flash}}<div data-flash>{{.}}</div>{{end}}
-{{with .Error}}<div class="alert error" role="alert"><svg class="ic"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
+{{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
 <div id="content"{{if or .Error .NoRefresh}} data-no-refresh{{end}}>{{template "content" .}}</div>
 <footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
 </main>
 </div>
-<div class="scrim" data-action="close-panel"></div>
-<aside class="panel" id="panel" aria-label="New monitor">
-  <div class="head"><h2>New monitor</h2><button type="button" class="ghost sm" data-action="close-panel" aria-label="Close">✕</button></div>
+<div class="scrim" data-action="close-panel" aria-hidden="true"></div>
+<aside class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" tabindex="-1">
+  <div class="head"><h2 id="panel-title">New monitor</h2><button type="button" class="ghost sm" data-action="close-panel" aria-label="Close">✕</button></div>
   {{template "monitor-form" .NewForm}}
 </aside>
-<dialog id="confirm"><form method="dialog"><p>Are you sure?</p><div class="btns"><button value="yes" class="danger">Yes, continue</button><button value="no">Cancel</button></div></form></dialog>
+<dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-msg"><form method="dialog">
+  <div class="dlg-head"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><h2 id="confirm-title">Are you sure?</h2></div>
+  <p id="confirm-msg"></p>
+  <div class="btns"><button value="no" autofocus>Cancel</button><button value="yes" class="danger">Yes, continue</button></div>
+</form></dialog>
 <div class="toasts"></div>
 </body>
 </html>{{end}}

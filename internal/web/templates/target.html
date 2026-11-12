@@ -10,7 +10,7 @@
     {{if not $t.Paused}}<form method="post" action="/targets/{{$t.ID}}/check" data-async><button type="submit">Check now</button></form>{{end}}
     <form method="post" action="/targets/{{$t.ID}}/pause"><button type="submit">{{if $t.Paused}}Resume{{else}}Pause{{end}}</button></form>
     <form method="post" action="/targets/{{$t.ID}}/mute"><button type="submit">{{if $t.Muted}}Unmute alerts{{else}}Mute alerts{{end}}</button></form>
-    <form method="post" action="/targets/{{$t.ID}}/delete" data-confirm="Delete {{$t.Name}} and all of its history? This cannot be undone."><button type="submit" class="danger">Delete</button></form>
+    <form method="post" action="/targets/{{$t.ID}}/delete" data-confirm-title="Delete monitor?" data-confirm="Delete {{$t.Name}} and all of its history? This cannot be undone."><button type="submit" class="danger">Delete</button></form>
   </div>
 </div>
 <nav class="tabs">
@@ -50,7 +50,7 @@
 {{else if eq .Tab "incidents"}}
 <div class="card block">
   {{if .Incidents}}{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" false)}}
-  {{else}}<div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
+  {{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
 </div>
 
 {{else}}
