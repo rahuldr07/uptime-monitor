@@ -5,6 +5,7 @@
     <h1>Sign up</h1>
     {{if and (or .Invite .Open) (not .Hint)}}
     <p class="muted small" style="margin:4px 0 16px">Create your account and workspace.</p>
+    {{template "oauth-buttons" .Providers}}
     <form method="post" action="/signup">
       <input type="hidden" name="invite" value="{{.Invite}}">
       <div class="field"><label>Email</label><input name="email" type="email" value="{{.Email}}" {{if .EmailLocked}}readonly{{else}}autofocus{{end}} required autocomplete="username"></div>

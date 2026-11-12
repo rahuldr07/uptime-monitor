@@ -64,7 +64,7 @@ func newEnvConfig(t *testing.T, hasher *password.Hasher, cfgJSON string) *env {
 }
 
 // buildEnv is newEnvConfig with an optional recording mailer.
-func buildEnv(t *testing.T, hasher *password.Hasher, cfgJSON string, withMail bool) *env {
+func buildEnv(t *testing.T, hasher *password.Hasher, cfgJSON string, withMail bool, mods ...func(*Options)) *env {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	st, err := store.Open(dbPath)
@@ -93,6 +93,9 @@ func buildEnv(t *testing.T, hasher *password.Hasher, cfgJSON string, withMail bo
 	if withMail {
 		e.mail = &fakeMailer{}
 		o.Mail = e.mail
+	}
+	for _, m := range mods {
+		m(&o)
 	}
 	s, err := New(o)
 	if err != nil {
@@ -601,7 +604,7 @@ func (j *cookieJar) Cookies(_ *url.URL) []*http.Cookie {
 }
 
 func TestSafeNextAndCSRF(t *testing.T) {
-	for _, bad := range []string{`/\evil.com`, "//evil.com", "/ evil", "/x\r\nSet-Cookie:a", "https://e", "/login?next=/", "/@evil"} {
+	for _, bad := range []string{`/\evil.com`, "//evil.com", "/ evil", "/x\r\nSet-Cookie:a", "https://e", "/login?next=/", "/@evil", "/auth/google/start", "/auth/github/callback"} {
 		if got := safeNext(bad); got != "/" && bad != "/@evil" {
 			t.Errorf("safeNext(%q) = %q", bad, got)
 		}

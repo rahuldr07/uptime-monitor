@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -24,6 +25,9 @@ type authCtx struct {
 	// sessionHash identifies the current session, so a password change can
 	// keep it while revoking the rest.
 	sessionHash string
+	// AuthAt is when the session last authenticated for real; nil for old sessions.
+	AuthAt      *time.Time
+	HasPassword bool
 }
 
 type authKey struct{}
@@ -75,7 +79,7 @@ func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
 		return nil, false
 	}
 	return &authCtx{User: au.User, WS: au.WS, Workspace: au.Workspace,
-		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash}, true
+		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash, AuthAt: au.AuthAt, HasPassword: au.HasPassword}, true
 }
 
 // withAuthCache installs the per-request cache that currentAuth fills. It

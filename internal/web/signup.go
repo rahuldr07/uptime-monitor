@@ -28,6 +28,7 @@ type signupData struct {
 	WorkspaceName string
 	Hint          string // shown instead of the form
 	Open          bool   // open sign-up: the form needs no invite
+	Providers     []oauthLink
 }
 
 func (s *Server) signupPage(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +44,9 @@ func (s *Server) signupPage(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		if d.Hint == "" {
+			d.Providers = s.oauthLinks("", "")
+		}
 		s.render(w, r, "signup", d)
 		return
 	}
@@ -55,6 +59,9 @@ func (s *Server) signupPage(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.fail(w, err)
 		return
+	}
+	if d.Hint == "" {
+		d.Providers = s.oauthLinks("", d.Invite)
 	}
 	s.render(w, r, "signup", d)
 }

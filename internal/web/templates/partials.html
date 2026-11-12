@@ -34,3 +34,5 @@
 {{define "admin-keep"}}<input type="hidden" name="q" value="{{.Q}}"><input type="hidden" name="host" value="{{.Host}}"><input type="hidden" name="page" value="{{.Page}}">{{end}}
 
 {{define "auth-error"}}{{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}{{end}}
+
+{{define "oauth-buttons"}}{{if .}}<div class="oauth">{{range .}}<a class="btn" href="{{.Href}}"><svg class="ic" aria-hidden="true"><use href="#i-log-in"/></svg>Continue with {{.Label}}</a>{{end}}</div><div class="or" role="separator"><span>or</span></div>{{end}}{{end}}

@@ -28,7 +28,7 @@ func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
 		strings.HasPrefix(next, "/login") || strings.HasPrefix(next, "/setup") ||
 		strings.HasPrefix(next, "/reset") || strings.HasPrefix(next, "/signup") ||
-		strings.HasPrefix(next, "/verify") || strings.HasPrefix(next, "/forgot") || strings.ContainsAny(next, "\\\r\n\t ") {
+		strings.HasPrefix(next, "/verify") || strings.HasPrefix(next, "/forgot") || strings.HasPrefix(next, "/auth") || strings.ContainsAny(next, "\\\r\n\t ") {
 		return "/"
 	}
 	for _, c := range next {
@@ -116,16 +116,19 @@ type loginData struct {
 	SignupMode string
 	Mail       bool // system mail is configured: show Forgot password
 	Resend     bool // show the resend form (unverified account)
+	Providers  []oauthLink
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.URL.Query().Get("next")), SignupMode: s.cfg.Signup, Mail: s.mail != nil}
+	d.Providers = s.oauthLinks(d.Next, "")
 	d.Flash = flashFrom(r)
 	s.render(w, r, "login", d)
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	d := loginData{base: s.page(r, "Sign in"), Next: safeNext(r.FormValue("next")), Email: strings.TrimSpace(r.FormValue("email")), SignupMode: s.cfg.Signup, Mail: s.mail != nil}
+	d.Providers = s.oauthLinks(d.Next, "")
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "login", d)
@@ -195,6 +198,8 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		u, phc, err = s.sys.UserByEmail(ctx, email)
 	}
 	known := err == nil
+	// An account with no password (social-only) is checked like an unknown one.
+	hasPassword := known && phc != ""
 	if err != nil && !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrInvalidEmail) {
 		s.fail(w, err)
 		return
@@ -209,7 +214,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var ok bool
-	if known {
+	if hasPassword {
 		ok, err = s.hasher.Verify(ctx, phc, r.FormValue("password"))
 	} else {
 		err = s.hasher.VerifyDummy(ctx)

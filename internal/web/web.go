@@ -23,6 +23,7 @@ import (
 
 	"github.com/rahuldr07/uptime-monitor/internal/config"
 	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/oauth"
 	"github.com/rahuldr07/uptime-monitor/internal/password"
 	"github.com/rahuldr07/uptime-monitor/internal/ratelimit"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
@@ -50,6 +51,10 @@ type Server struct {
 	loginByEmail  *ratelimit.Limiter
 	loginSlow     *ratelimit.Limiter
 	deviceKey     []byte // HMAC key for device cookies, fresh per process
+	oauthKey      []byte // HMAC key for the OAuth state cookie, fresh per process
+	oauth         map[string]*oauth.Provider
+	oauthList     []*oauth.Provider  // enabled providers, in button order
+	oauthByAddr   *ratelimit.Limiter // OAuth starts and callbacks, per client address
 	statusLimiter *ratelimit.Limiter
 	apiLimiter    *ratelimit.Limiter // JSON API, per session
 
@@ -95,6 +100,7 @@ type Options struct {
 	SetupMode  bool             // no account exists yet; only the setup flow is served
 	Upgraded   bool             // the database predates accounts
 	AfterSetup func(ctx context.Context) error
+	OAuth      []*oauth.Provider // enabled sign-in providers; none means no OAuth routes answer
 }
 
 // New builds a Server. Config, Store and Monitor are required.
@@ -130,6 +136,17 @@ func New(o Options) (*Server, error) {
 	if _, err := rand.Read(s.deviceKey); err != nil {
 		return nil, fmt.Errorf("web: device key: %w", err)
 	}
+	s.oauthKey = make([]byte, 32)
+	if _, err := rand.Read(s.oauthKey); err != nil {
+		return nil, fmt.Errorf("web: oauth key: %w", err)
+	}
+	s.oauth = map[string]*oauth.Provider{}
+	for _, p := range o.OAuth {
+		s.oauth[p.Name()] = p
+		s.oauthList = append(s.oauthList, p)
+	}
+	s.oauthByAddr = ratelimit.New(time.Minute, oauthPerMinute, 0)
+	s.oauthByAddr.Now = now
 	s.setupLimiter = ratelimit.New(setupWindow, setupMaxAttempts, 0)
 	s.setupLimiter.Now = now
 	s.signupByAddr = ratelimit.New(time.Hour, signupPerAddrHour, 0)

@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	msgSignInAgain     = "Sign in again to continue"
 	msgBadCurrent      = "Current password is incorrect."
 	msgPasswordChanged = "Password changed. Other sessions were signed out."
 	msgSignedOutAll    = "Signed out everywhere."
@@ -84,6 +85,12 @@ func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *aut
 	phc, err := s.sys.PasswordHash(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
+		return false
+	}
+	// A social-only account has no password to check; it must sign in again
+	// with its provider instead. The empty hash is never verified.
+	if phc == "" {
+		fail(http.StatusForbidden, msgSignInAgain)
 		return false
 	}
 	// The slot is reserved before the hash and refunded unless the guess was

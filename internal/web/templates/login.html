@@ -4,6 +4,7 @@
     {{template "auth-error" .}}
     <h1>Sign in</h1>
     <p class="muted small" style="margin:4px 0 16px">Sign in to manage monitors and alerts. The <a href="/status">status page</a> is public.</p>
+    {{template "oauth-buttons" .Providers}}
     <form method="post" action="/login">
       <input type="hidden" name="next" value="{{.Next}}">
       <div class="field"><label>Email</label><input name="email" type="email" value="{{.Email}}" autofocus required autocomplete="username"></div>

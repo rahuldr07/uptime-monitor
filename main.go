@@ -22,6 +22,7 @@ import (
 	"github.com/rahuldr07/uptime-monitor/internal/monitor"
 	"github.com/rahuldr07/uptime-monitor/internal/netguard"
 	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/oauth"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 	"github.com/rahuldr07/uptime-monitor/internal/web"
 )
@@ -224,6 +225,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 	}
 	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger,
 		Mail:      newMailer(ctx, cfg, logger),
+		OAuth:     newOAuth(cfg),
 		SetupMode: setup, Upgraded: upgraded,
 		AfterSetup: func(ctx context.Context) error {
 			if err := seedOperator(); err != nil {
@@ -475,6 +477,21 @@ func newMailer(ctx context.Context, cfg *config.Config, logger *slog.Logger) web
 	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, Logger: logger})
 	go q.Run(ctx)
 	return q
+}
+
+// newOAuth builds the enabled sign-in providers, or nil when there are none.
+func newOAuth(cfg *config.Config) []*oauth.Provider {
+	if cfg.OAuth == nil {
+		return nil
+	}
+	var out []*oauth.Provider
+	if g := cfg.OAuth.Google; g != nil {
+		out = append(out, oauth.Google(g.ClientID, g.ClientSecret))
+	}
+	if g := cfg.OAuth.GitHub; g != nil {
+		out = append(out, oauth.GitHub(g.ClientID, g.ClientSecret))
+	}
+	return out
 }
 
 // unverifiedMaxAge is how long an account may stay unverified.

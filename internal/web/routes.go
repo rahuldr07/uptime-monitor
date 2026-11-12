@@ -56,6 +56,8 @@ func (s *Server) routeTable() []route {
 		{"GET", "/verify", classPublic, s.verifyPage, nil},
 		{"POST", "/verify", classPublic, s.verifyPost, nil},
 		{"POST", "/verify/resend", classPublic, s.verifyResend, nil},
+		{"GET", "/auth/{provider}/start", classPublic, s.oauthStart, nil},
+		{"GET", "/auth/{provider}/callback", classPublic, s.oauthCallback, nil},
 		{"GET", "/reset", classPublic, s.resetPage, nil},
 		{"POST", "/reset", classPublic, s.resetPost, nil},
 		{"GET", "/setup", classSetup, s.setupPage, nil},
