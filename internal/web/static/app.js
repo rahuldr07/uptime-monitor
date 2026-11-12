@@ -383,7 +383,7 @@
   // Rows stay in the DOM: filtering and paging set tr.hidden, sorting reorders the <tbody>. State (query, pill,
   // sort, page) lives in dtState keyed by data-table, so a live refresh that replaces #content re-applies it.
   var DT_KEY = 'uptime.tables', DT_SIZES = [25, 50, 100], dtPrefs = null, dtState = {}, dtLive = [];
-  var DT_MIN = 64, DT_MAX = 640, dtDragging = false;
+  var DT_MIN = 64, DT_FLOOR = 8, DT_MAX = 640, dtDragging = false;
   function isRec(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
   function readPrefs() {
     var p = { density: '', size: 25, columns: {}, widths: {} }, raw = null;
@@ -398,7 +398,7 @@
     });
     if (isRec(raw.widths)) Object.keys(raw.widths).forEach(function (t) {
       if (!isRec(raw.widths[t])) return;
-      var o = {}; Object.keys(raw.widths[t]).forEach(function (c) { var w = raw.widths[t][c]; if (typeof w === 'number' && isFinite(w) && w >= DT_MIN && w <= DT_MAX) o[c] = w; });
+      var o = {}; Object.keys(raw.widths[t]).forEach(function (c) { var w = raw.widths[t][c]; if (typeof w === 'number' && isFinite(w) && w >= DT_FLOOR && w <= DT_MAX) o[c] = w; });
       p.widths[t] = o;
     });
     return p;
@@ -445,7 +445,20 @@
     if (shown === 0) return 'No ' + noun + tail + '.' + (parts.length ? ' Take a filter off to see more.' : '');
     return 'Showing ' + shown + ' of ' + total + ' ' + singular(total, noun) + (parts.length ? ', ' + parts.join(', ') : '') + '.';
   }
-  function clampW(px) { return Math.round(Math.min(DT_MAX, Math.max(DT_MIN, px))); }
+  function clampW(px, min) { return Math.ceil(Math.min(DT_MAX, Math.max(min || DT_MIN, px))); }
+  function colMin(c) { return c.w && c.w < DT_MIN ? c.w : DT_MIN; } // a data-w below 64 (the overview status dot) is that column's own minimum
+  function dtById(id) { return dtLive.filter(function (t) { return t.id === id; }).pop(); }
+  // a bulk bar whose table is no longer on the page goes away (its Copy would read detached rows)
+  function dropBulk() {
+    $$('.dt-bulk').forEach(function (b) {
+      var id = b.getAttribute('data-for');
+      if (!$('.dt[data-table="' + id + '"]')) { b.remove(); if (dtState[id]) dtState[id].bulk = null; }
+    });
+  }
+  function sameHref(h) { // a same-origin path only
+    if (!h || !/^\/[^\/\\]/.test(h)) return false;
+    try { return new URL(h, location.href).origin === location.origin; } catch (e) { return false; }
+  }
   function rangeIds(ids, from, to) { // kit tableGrid.ts
     var a = ids.indexOf(from), b = ids.indexOf(to);
     if (a < 0 || b < 0) return [to];
@@ -516,7 +529,6 @@
     var topbar = root.hasAttribute('data-topbar-search') && mode !== 'server' ? $('input[data-search]') : null;
     var searchLabel = mode === 'server' ? '' : root.getAttribute('data-search');
     var S = dtState[T.id] || (dtState[T.id] = { q: '', pill: 'all', sort: null, page: 0, sel: {} });
-    $$('.dt-bulk').forEach(function (b) { if (b.getAttribute('data-for') === T.id) b.remove(); }); // the previous render's bar
     T.topbar = topbar;
     if (topbar) { if (S.q && !topbar.value) topbar.value = S.q; else S.q = topbar.value; }
 
@@ -666,8 +678,8 @@
         try { g.setPointerCapture(e.pointerId); } catch (x) { }
         d = { x: e.clientX, w: c.th.getBoundingClientRect().width }; dtDragging = true; g.classList.add('on');
       });
-      g.addEventListener('pointermove', function (e) { if (d) T.widen(c, d.w + e.clientX - d.x, false); });
-      g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+      g.addEventListener('pointermove', function (e) { if (!d) return; if (e.buttons === 0) { up(); return; } T.widen(c, d.w + e.clientX - d.x, false); });
+      g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up); g.addEventListener('lostpointercapture', up);
       g.addEventListener('click', function (e) { e.stopPropagation(); });
       g.addEventListener('dblclick', function () { T.fitCol(c); });
       g.addEventListener('keydown', function (e) {
@@ -792,7 +804,7 @@
       T.cols.forEach(function (c) {
         var px = any && !c.off && w[c.id] ? w[c.id] : 0;
         c.th.style.width = px ? px + 'px' : ''; c.th.style.minWidth = px ? px + 'px' : c.w ? c.w + 'px' : '';
-        if (!c.off) total += w[c.id] || c.w || 160;
+        if (!c.off && getComputedStyle(c.th).display !== 'none') total += w[c.id] || c.w || 160; // not columns a breakpoint hides
       });
       table.style.tableLayout = any ? 'fixed' : ''; table.style.width = any ? total + 'px' : ''; table.style.minWidth = any ? '100%' : '';
       T.cols.forEach(function (c) { if (c.grip) c.grip.setAttribute('aria-valuenow', Math.round(c.th.getBoundingClientRect().width)); });
@@ -800,9 +812,9 @@
     T.widen = function (c, px, save) { // px undefined resets this column
       var w = savedWidths();
       if (px !== undefined && !Object.keys(w).length) { // first resize: freeze every other column at its measured width
-        T.cols.forEach(function (o) { if (o !== c && !o.off) w[o.id] = clampW(o.th.getBoundingClientRect().width); });
+        T.cols.forEach(function (o) { if (o !== c && !o.off && o.th.offsetWidth) w[o.id] = clampW(o.th.getBoundingClientRect().width, colMin(o)); });
       }
-      if (px === undefined) delete w[c.id]; else w[c.id] = clampW(px);
+      if (px === undefined) delete w[c.id]; else w[c.id] = clampW(px, colMin(c));
       T.applyWidths(); T.fit(); if (save !== false) savePrefs();
     };
     T.resetWidths = function () { delete prefs().widths[T.pk]; savePrefs(); T.applyWidths(); T.fit(); };
@@ -830,7 +842,6 @@
 
     // selection (data-select): ids live in S.sel, so it survives a live refresh; filtered-out rows drop out at render
     T.cur = -1; // the row cursor and the range anchor live in S (by row id), so a live rebuild keeps them
-    var bulk = null;
     T.paintSel = function () {
       var list = T.list || [], n = 0;
       list.forEach(function (r) { if (S.sel[r.id]) n++; });
@@ -841,15 +852,17 @@
       if (!select) return;
       hcb.checked = n > 0 && n === list.length; hcb.indeterminate = n > 0 && n < list.length;
       hcb.setAttribute('aria-label', 'Select all ' + list.length + ' ' + T.noun);
-      if (!n) { if (bulk) { bulk.remove(); bulk = null; } return; }
-      if (!bulk) {
-        bulk = mk('div', 'dt-bulk'); bulk.setAttribute('role', 'region'); bulk.setAttribute('aria-label', 'Selected ' + T.noun); bulk.setAttribute('data-for', T.id);
+      if (!n) { if (S.bulk) { S.bulk.remove(); S.bulk = null; } return; }
+      if (!S.bulk) { // one bar per table id, kept across live refreshes (a rebuilt bar would drop keyboard focus and a press in flight)
+        var bulk = S.bulk = mk('div', 'dt-bulk'), id = T.id, noun = T.noun, now = function () { return dtById(id); };
+        bulk.setAttribute('role', 'region'); bulk.setAttribute('aria-label', 'Selected ' + noun); bulk.setAttribute('data-for', id);
         var cn = mk('span'), cb = mk('button'), xb = mk('button'); cn.appendChild(mk('b')); cn.appendChild(document.createTextNode(' selected'));
-        cb.type = 'button'; cb.appendChild(icon('i-copy')); cb.appendChild(document.createTextNode('Copy')); cb.addEventListener('click', function () { T.copy(); });
-        xb.type = 'button'; xb.setAttribute('aria-label', 'Clear selection'); xb.appendChild(icon('i-x')); xb.addEventListener('click', function () { T.clearSel(); });
-        bulk.appendChild(cn); bulk.appendChild(cb); bulk.appendChild(xb); document.body.appendChild(bulk);
+        cb.type = 'button'; cb.appendChild(icon('i-copy')); cb.appendChild(document.createTextNode('Copy')); cb.addEventListener('click', function () { var t = now(); if (t) t.copy(); });
+        xb.type = 'button'; xb.setAttribute('aria-label', 'Clear selection'); xb.appendChild(icon('i-x')); xb.addEventListener('click', function () { var t = now(); if (t) t.clearSel(); });
+        bulk.appendChild(cn); bulk.appendChild(cb); bulk.appendChild(xb);
       }
-      $('b', bulk).textContent = n;
+      if (!S.bulk.parentNode) document.body.appendChild(S.bulk);
+      $('b', S.bulk).textContent = n;
     };
     T.clearSel = function () { S.sel = {}; T.paintSel(); };
     T.copy = function () { // the visible columns of the selected rows, in table order, as TSV
@@ -878,7 +891,7 @@
       var h = tr.getAttribute('data-href');
       if (!h || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
       if (window.getSelection && String(getSelection())) return; // the user was selecting text
-      if (/^\/[^\/\\]/.test(h)) location.href = h;
+      if (sameHref(h)) location.href = h;
     });
     // keyboard: the focused region moves a row cursor (kit useRowPick)
     function move(to, extend) {
@@ -895,7 +908,7 @@
       else if (k === 'Home') move(0, e.shiftKey);
       else if (k === 'End') move(rows.length - 1, e.shiftKey);
       else if (k === ' ' && r && select) tick(r, false);
-      else if (k === 'Enter' && r && r.tr.getAttribute('data-href') && /^\/[^\/\\]/.test(r.tr.getAttribute('data-href'))) location.href = r.tr.getAttribute('data-href');
+      else if (k === 'Enter' && r && sameHref(r.tr.getAttribute('data-href'))) location.href = r.tr.getAttribute('data-href');
       else if (k === 'Escape' && Object.keys(S.sel).length) T.clearSel();
       else return;
       e.preventDefault();
@@ -1019,7 +1032,7 @@
   var dtNarrow = null;
   window.addEventListener('resize', function () {
     var n = window.matchMedia && matchMedia('(max-width:639px)').matches; // the page list has 5 slots when narrow, 7 otherwise
-    dtLive.forEach(function (t) { if (dtNarrow !== null && n !== dtNarrow) t.render(); else t.fit(); });
+    dtLive.forEach(function (t) { t.applyWidths(); if (dtNarrow !== null && n !== dtNarrow) t.render(); else t.fit(); });
     dtNarrow = n;
   });
 
@@ -1119,7 +1132,7 @@
   // A refresh between pointerdown and click would replace the control under the pointer and lose the click, so hold
   // while a press inside #content is in flight; the release reschedules a held refresh (pending is never left parked).
   document.addEventListener('pointerdown', function (e) {
-    if (!(e.target.closest && e.target.closest('#content'))) return;
+    if (!(e.target.closest && e.target.closest('#content, .dt-bulk'))) return;
     pressing = true; clearTimeout(pressTimer); pressTimer = setTimeout(releasePress, 5000); // safety net if the release is lost
   }, true);
   function releasePress() {
@@ -1171,7 +1184,7 @@
         var fk = act && main.contains(act) ? focusKey(act) : '', ftag = fk ? act.tagName : '';
         var dq = act && act.classList && act.classList.contains('dt-q') ? { id: act.closest('.dt').getAttribute('data-table'), a: act.selectionStart, b: act.selectionEnd } : null;
         main.innerHTML = html;
-        wire(main);
+        wire(main); dropBulk();
         if (fk && document.activeElement !== act) { // keep the keyboard position across a refresh, but only on the same element
           var m = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; });
           if (m.length === 1) m[0].focus({ preventScroll: true }); // an ambiguous key restores nothing
@@ -1234,7 +1247,7 @@
     if (e.key === 'Tab' && document.body.classList.contains('panel-open') && !(t && t.closest && t.closest('dialog'))) { panelTab(e); return; }
     if (t && t.closest && t.closest('.dd, .dd-menu')) { if (e.key === 'Escape') closePanel(); return; } // dropdowns own their keys
     if (t && t.closest && t.closest('dialog')) return;
-    if (t && t.classList && t.classList.contains('dt-wrap')) return; // a table region owns its keys (arrows, Space, Enter, Escape)
+    if (t && t.classList && t.classList.contains('dt-wrap') && /^(Arrow(Up|Down|Left|Right)|Home|End| |Enter|Escape)$/.test(e.key)) return; // a table region owns only its own keys; / n t still work
     if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) { if (e.key === 'Escape') { e.target.blur(); closePanel(); } return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape') closePanel();

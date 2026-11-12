@@ -121,11 +121,10 @@ td.btns{display:table-cell;text-align:right;white-space:nowrap}td.btns form{disp
 .dt-box{position:relative;min-width:0}
 .dt th.dt-tick,.dt td.dt-tick{width:44px;min-width:44px;max-width:44px;padding:0 0 0 14px}
 .dt th.dt-tick input,.dt td.dt-tick input{vertical-align:middle}
-.dt[data-select] th:nth-child(2),.dt[data-select] td:nth-child(2){position:sticky;left:44px;z-index:1;background:var(--card)}
-.dt[data-select] th:nth-child(2){z-index:3;background:var(--card2)}
-.dt[data-select] td:nth-child(2){box-shadow:1px 0 0 var(--border)}
-.dt tbody tr[aria-selected=true]>td{background:var(--accent-bg)}
-.dt tbody tr[aria-selected=true]:hover>td{background:var(--accent-bg)}
+:where(.dt[data-select] th:nth-child(2),.dt[data-select] td:nth-child(2)){position:sticky;left:44px;z-index:1;background:var(--card)}
+:where(.dt[data-select] th:nth-child(2)){z-index:3;background:var(--card2)}
+:where(.dt[data-select] td:nth-child(2)){box-shadow:1px 0 0 var(--border)}
+.dt tbody tr[aria-selected=true]>td,.dt tbody tr[aria-selected=true]:hover>td,.dt tbody tr[aria-selected=true]:focus-within>td{background:linear-gradient(var(--accent-bg),var(--accent-bg)),var(--card)}
 .dt tbody tr.dt-click{cursor:pointer}
 .dt-wrap:focus .is-focus>td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
 .dt-wrap:focus .is-focus>td:first-child{box-shadow:inset 1px 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
