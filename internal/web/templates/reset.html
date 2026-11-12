@@ -6,7 +6,7 @@
     <form method="post" action="/reset">
       <input type="hidden" name="token" value="{{.Token}}">
       <div class="field"><label>New password</label><input name="password" type="password" autofocus required minlength="10" autocomplete="new-password"></div>
-      <div class="field"><label>Confirm new password</label><input name="confirm" type="password" required minlength="10" autocomplete="new-password"></div>
+      <div class="field"><label>Confirm new password</label><input name="confirm" type="password" data-match="password" required minlength="10" autocomplete="new-password"></div>
       <div style="margin-top:14px"><button type="submit" class="primary">Set password</button></div>
     </form>
     {{else}}

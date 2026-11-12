@@ -16,20 +16,62 @@
   };
 
   // ---- toasts ----
-  function toastHost() {
+  // Live regions are created once at load (a region only announces what is inserted after it exists):
+  // polite for ok/info, assertive for errors. Dismissal is the end of the CSS countdown on .toast-bar,
+  // so pausing that animation (hover/focus) pauses dismissal. Errors have no bar and stay until closed.
+  var toastN = 0, MAX_TOASTS = 4;
+  var reduced = function () { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; };
+  function toastRegions() {
     var h = $('.toasts');
     if (!h) { h = document.createElement('div'); h.className = 'toasts'; document.body.appendChild(h); }
+    if (!h._live) {
+      h._live = true; h.textContent = '';
+      h.setAttribute('role', 'region'); h.setAttribute('aria-label', 'Notifications');
+      var p = document.createElement('div'); p.className = 'toasts-live'; p.setAttribute('aria-live', 'polite');
+      var a = document.createElement('div'); a.className = 'toasts-live'; a.setAttribute('role', 'alert'); a.setAttribute('aria-live', 'assertive');
+      h.appendChild(p); h.appendChild(a); h._polite = p; h._assertive = a;
+    }
     return h;
   }
+  function dismissToast(t) {
+    if (!t.parentNode || t._leaving) return;
+    t._leaving = true; t.classList.add('leaving');
+    setTimeout(function () { t.remove(); }, reduced() ? 0 : 120);
+  }
+  function restartAnim(el, cls) {
+    if (cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); return; }
+    el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  }
   window.toast = function (msg, kind) {
+    kind = kind || '';
+    var h = toastRegions(), live = kind === 'error' ? h._assertive : h._polite;
+    var all = $$('.toast', h).filter(function (x) { return !x._leaving; });
+    for (var i = 0; i < all.length; i++) {
+      if (all[i]._msg === msg && all[i]._kind === kind) { // duplicate: restart the clock, pulse once
+        var bar = $('.toast-bar', all[i]); if (bar) restartAnim(bar);
+        restartAnim(all[i], 'pulse'); return;
+      }
+    }
     var t = document.createElement('div');
-    t.className = 'toast' + (kind ? ' ' + kind : '');
-    t.textContent = msg;
-    var x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
-    x.onclick = function () { t.remove(); };
+    t.className = 'toast' + (kind ? ' ' + kind : ''); t._msg = msg; t._kind = kind; t._n = ++toastN;
+    t.appendChild(icon(kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : 'i-info'));
+    var m = document.createElement('span'); m.className = 'toast-msg'; m.textContent = msg; t.appendChild(m);
+    var x = document.createElement('button'); x.type = 'button'; x.className = 'toast-x'; x.setAttribute('aria-label', 'Dismiss');
+    x.appendChild(icon('i-x')); x.addEventListener('click', function () { dismissToast(t); });
     t.appendChild(x);
-    toastHost().appendChild(t);
-    setTimeout(function () { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(function () { t.remove(); }, 300); }, 4500);
+    if (kind !== 'error') {
+      var b = document.createElement('span'); b.className = 'toast-bar'; b.setAttribute('aria-hidden', 'true');
+      b.addEventListener('animationend', function () { dismissToast(t); });
+      t.appendChild(b);
+    }
+    all.push(t);
+    while (all.length > MAX_TOASTS) { // drop the oldest non-error, else the oldest
+      var pick = null;
+      for (var j = 0; j < all.length - 1; j++) { if (all[j]._kind !== 'error') { pick = all[j]; break; } }
+      if (!pick) pick = all[0];
+      all.splice(all.indexOf(pick), 1); pick.remove();
+    }
+    live.appendChild(t);
   };
   function liftFlash() {
     $$('[data-flash]').forEach(function (el) {
@@ -65,7 +107,8 @@
       if (f._wired) return; f._wired = true;
       f.addEventListener('submit', function (e) {
         e.preventDefault();
-        var btn = f.querySelector('button[type=submit]'); if (btn) btn.disabled = true;
+        if (f._busy) return; f._busy = true;
+        var btn = f.querySelector('button[type=submit]'); if (btn) btn.setAttribute('aria-busy', 'true');
         fetch(f.action, { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
           .then(function (r) { if (r.status === 401) { sessionExpired(); throw 0; } return r.json().then(function (j) { j._status = r.status; return j; }); })
           .then(function (j) {
@@ -74,7 +117,7 @@
             if (j.redirect) { location.href = j.redirect; } else { refresh(); }
           })
           .catch(function () { toast('Request failed', 'error'); })
-          .then(function () { if (btn) btn.disabled = false; });
+          .then(function () { f._busy = false; if (btn) btn.removeAttribute('aria-busy'); });
       });
     });
   }
@@ -124,6 +167,8 @@
     });
     f.addEventListener('submit', function (e) {
       e.preventDefault();
+      if (f._busy) return; f._busy = true;
+      var sb = f.querySelector('button[type=submit]'); if (sb) sb.setAttribute('aria-busy', 'true');
       fetch(f.action, { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
         .then(function (x) { if (x.status === 401) { sessionExpired(); throw 0; } return x.json(); })
         .then(function (j) {
@@ -131,7 +176,8 @@
           closePanel(); f.reset();
           if (j.redirect) location.href = j.redirect; else refresh();
         })
-        .catch(function () { toast('Could not create the monitor', 'error'); });
+        .catch(function () { toast('Could not create the monitor', 'error'); })
+        .then(function () { f._busy = false; if (sb) sb.removeAttribute('aria-busy'); });
     });
   }
 
@@ -144,12 +190,97 @@
     });
   }
 
+  // ---- inline validation ----
+  // Capture-phase submit listener, so it runs before the confirm/async/panel handlers. novalidate is added
+  // by JS only: without JS the browser (and then the server) validates as before.
+  var CONSTRAINTS = '[required],[minlength],[maxlength],[pattern],[min],[max],[type=email],[type=url],[data-match]';
+  var vid = 0;
+  function validatable(f) {
+    return Array.prototype.slice.call(f.elements).filter(function (el) {
+      return el.name && el.willValidate && !el.disabled && el.type !== 'hidden';
+    });
+  }
+  function fieldMessage(el) {
+    var v = el.validity, val = el.value, type = (el.getAttribute('type') || '').toLowerCase();
+    if (v.valueMissing) return 'Required.';
+    if (v.typeMismatch && type === 'email') return 'Enter a full email address, like name@example.com.';
+    if (v.typeMismatch && type === 'url') return 'Enter a full URL that starts with http:// or https://.';
+    // measured by hand: the browser's tooShort only fires after a user edit, not for filled or prefilled values
+    if (val && el.minLength > 0 && val.length < el.minLength) return 'Use at least ' + el.minLength + ' characters.';
+    if (val && el.maxLength >= 0 && val.length > el.maxLength) return 'Use at most ' + el.maxLength + ' characters.';
+    if (v.patternMismatch) return el.getAttribute('data-msg') || el.title || 'Use the format shown.';
+    if (v.rangeUnderflow) return 'Must be at least ' + el.min + '.';
+    if (v.rangeOverflow) return 'Must be at most ' + el.max + '.';
+    if (v.badInput) return 'Enter a valid value.';
+    if (!v.valid) return el.validationMessage || 'Invalid value.';
+    var m = el.getAttribute('data-match');
+    if (m && el.form && el.form.elements[m] && el.form.elements[m].value !== val) return "Doesn't match the field above.";
+    return '';
+  }
+  function setFieldMsg(el, msg) {
+    if (!el.id && !el._mid) el._mid = 'f' + (++vid);
+    var id = (el.id || el._mid) + '-msg', p = document.getElementById(id);
+    var ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (x) { return x && x !== id; });
+    if (!msg) {
+      if (p) p.remove();
+      el.removeAttribute('aria-invalid');
+      if (ids.length) el.setAttribute('aria-describedby', ids.join(' ')); else el.removeAttribute('aria-describedby');
+      return;
+    }
+    if (!p) {
+      p = document.createElement('p'); p.className = 'field-msg'; p.id = id;
+      var anchor = el, field = el.closest('.field');
+      while (field && anchor.parentNode !== field) anchor = anchor.parentNode;
+      anchor.parentNode.insertBefore(p, anchor.nextSibling);
+    }
+    p.textContent = ''; p.appendChild(icon('i-x'));
+    var t = document.createElement('span'); t.textContent = msg; p.appendChild(t);
+    el.setAttribute('aria-invalid', 'true');
+    ids.push(id); el.setAttribute('aria-describedby', ids.join(' '));
+  }
+  function checkField(el) { var m = fieldMessage(el); setFieldMsg(el, m); return !m; }
+  function wireValidation(root) {
+    $$('form', root).forEach(function (f) {
+      if (f._vw) return;
+      if (!f.querySelector(CONSTRAINTS)) return;
+      f._vw = true; f.setAttribute('novalidate', '');
+    });
+  }
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f || !f._vw || (e.submitter && e.submitter.formNoValidate)) return;
+    var bad = validatable(f).filter(function (el) { return !checkField(el); });
+    if (!bad.length) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    f._failed = true;
+    bad[0].focus();
+  }, true);
+  document.addEventListener('input', function (e) {
+    var el = e.target, f = el && el.form; if (!f || !f._vw) return;
+    el._touched = true;
+    if (f._failed) validatable(f).forEach(function (x) {
+      if (x === el || x.hasAttribute('aria-invalid') || (x._touched && x.getAttribute('data-match') === el.name)) checkField(x);
+    });
+  }, true);
+  document.addEventListener('focusout', function (e) {
+    var el = e.target, f = el && el.form; if (!f || !f._vw || !el.willValidate || el.type === 'hidden') return;
+    // moving to a submit button: skip, or the message pushes the button away mid-click and the click is lost
+    var to = e.relatedTarget; if (to && to.form === f && to.type === 'submit') return;
+    if (el._touched || f._failed) checkField(el);
+  }, true);
+  document.addEventListener('reset', function (e) {
+    var f = e.target; if (!f || !f._vw) return;
+    f._failed = false;
+    setTimeout(function () { validatable(f).forEach(function (el) { el._touched = false; setFieldMsg(el, ''); }); }, 0);
+  }, true);
+
   // ---- live refresh over SSE ----
   var refreshing = false, pending = false, timer = null;
   function editing() {
     var a = document.activeElement;
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
-    if ($('#content[data-no-refresh]')) return true;              // a form re-rendered with a validation error
+    if ($('#content[data-no-refresh]')) return true;
+    if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing              // a form re-rendered with a validation error
     var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
     return $$('#content form').some(function (f) { return f._dirty; }); // unsaved edits
   }
@@ -236,9 +367,9 @@
   function wireTZ(root) {
     $$('input[name=tz_offset]', root).forEach(function (i) { i.value = String(new Date().getTimezoneOffset()); });
   }
-  function wire(root) { wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
+  function wire(root) { wireValidation(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
   document.addEventListener('DOMContentLoaded', function () {
-    liftFlash(); wire(document); wirePanel(); connect();
+    toastRegions(); liftFlash(); wire(document); wirePanel(); connect();
     markUpdated();
     setInterval(tickUpdated, 5000);
   });
