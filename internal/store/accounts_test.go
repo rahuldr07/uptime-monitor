@@ -1346,3 +1346,215 @@ func TestCreateAccountWorkspaceCap(t *testing.T) {
 		t.Fatalf("MaxWorkspaces 0 is unlimited: %v", err)
 	}
 }
+
+func TestVerifyToken(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateToken(ctx, TokenVerify, u.ID, 24*time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.VerifyEmail(ctx, raw, now.Add(time.Minute))
+	if err != nil || got.ID != u.ID || got.VerifiedAt == nil {
+		t.Fatalf("verify: %+v %v", got, err)
+	}
+	if _, err := s.VerifyEmail(ctx, raw, now.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reuse: %v", err)
+	}
+	raw2, _ := s.CreateToken(ctx, TokenVerify, u.ID, 24*time.Hour, now)
+	if _, err := s.VerifyEmail(ctx, raw2, now.Add(25*time.Hour)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired: %v", err)
+	}
+	reset, _ := s.CreateToken(ctx, TokenReset, u.ID, time.Hour, now)
+	if _, err := s.VerifyEmail(ctx, reset, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reset token: %v", err)
+	}
+	if _, err := s.CreateToken(ctx, TokenVerify, 0, time.Hour, now); err == nil {
+		t.Fatal("verify token without a user accepted")
+	}
+}
+
+func TestVerifyTokenDisabledUser(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.CreateToken(ctx, TokenVerify, u.ID, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, now.UnixMilli(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PeekToken(ctx, TokenVerify, raw, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("peek: %v", err)
+	}
+	if _, err := s.VerifyEmail(ctx, raw, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("verify: %v", err)
+	}
+	if got, _ := userByID(s, u.ID); got.VerifiedAt != nil {
+		t.Fatal("disabled user was verified")
+	}
+}
+
+func TestNewVerifyTokenReplacesOld(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, _ := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: now})
+	first, _ := s.CreateToken(ctx, TokenVerify, u.ID, time.Hour, now)
+	second, _ := s.CreateToken(ctx, TokenVerify, u.ID, time.Hour, now)
+	if _, err := s.VerifyEmail(ctx, first, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old token: %v", err)
+	}
+	if _, err := s.VerifyEmail(ctx, second, now); err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+}
+
+func TestSetPasswordDeletesVerifyTokens(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, _ := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: now})
+	raw, _ := s.CreateToken(ctx, TokenVerify, u.ID, time.Hour, now)
+	if err := s.SetPassword(ctx, u.ID, "new", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.VerifyEmail(ctx, raw, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("verify after password change: %v", err)
+	}
+}
+
+func TestPruneUnverified(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-49 * time.Hour)
+	stale, wsStale, err := s.CreateAccount(ctx, AccountInput{Email: "stale@b.co", PasswordHash: "x", WorkspaceName: "Stale", Slug: "stale", Now: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := seedWS(t, s, wsStale, "stale", old)
+	if _, err := s.CreateToken(ctx, TokenVerify, stale.ID, 24*time.Hour, old); err != nil {
+		t.Fatal(err)
+	}
+	fresh, wsFresh, _ := s.CreateAccount(ctx, AccountInput{Email: "fresh@b.co", PasswordHash: "x", WorkspaceName: "Fresh", Slug: "fresh", Now: now.Add(-time.Hour)})
+	verified, wsVerified, _ := s.CreateAccount(ctx, AccountInput{Email: "ver@b.co", PasswordHash: "x", WorkspaceName: "Ver", Slug: "ver", Now: old})
+	if err := markVerified(s, verified.ID, old); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO users (email, password_hash, is_operator, created_at) VALUES ('op@b.co', 'x', 1, ?)`, old.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opID, _ := res.LastInsertId()
+
+	ids, err := s.PruneUnverified(ctx, now.Add(-48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != wsStale.ID() {
+		t.Fatalf("deleted workspaces %v, want [%d]", ids, wsStale.ID())
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count(`SELECT COUNT(*) FROM users WHERE id = ?`, stale.ID) != 0 {
+		t.Error("stale user survived")
+	}
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM workspaces WHERE id = ?`,
+		`SELECT COUNT(*) FROM memberships WHERE workspace_id = ?`,
+		`SELECT COUNT(*) FROM targets WHERE workspace_id = ?`,
+	} {
+		if n := count(q, wsStale.ID()); n != 0 {
+			t.Errorf("%s: %d rows left", q, n)
+		}
+	}
+	if n := count(`SELECT COUNT(*) FROM checks WHERE target_id = ?`, fx.target.ID); n != 0 {
+		t.Errorf("checks left: %d", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM tokens WHERE user_id = ?`, stale.ID); n != 0 {
+		t.Errorf("tokens left: %d", n)
+	}
+	for _, id := range []int64{fresh.ID, verified.ID, opID} {
+		if count(`SELECT COUNT(*) FROM users WHERE id = ?`, id) != 1 {
+			t.Errorf("user %d was deleted", id)
+		}
+	}
+	for _, w := range []*WS{wsFresh, wsVerified} {
+		if count(`SELECT COUNT(*) FROM workspaces WHERE id = ?`, w.ID()) != 1 {
+			t.Errorf("workspace %d was deleted", w.ID())
+		}
+	}
+}
+
+func TestPruneUnverifiedRechecksInTransaction(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-49 * time.Hour)
+	u, _, _ := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: old})
+	raw, _ := s.CreateToken(ctx, TokenVerify, u.ID, 72*time.Hour, old)
+	if _, err := s.VerifyEmail(ctx, raw, now); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.PruneUnverified(ctx, now.Add(-48*time.Hour))
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("prune verified: %v %v", ids, err)
+	}
+	if _, err := userByID(s, u.ID); err != nil {
+		t.Fatalf("verified user gone: %v", err)
+	}
+}
+
+func TestCreateAccountCapBeforeDuplicate(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "a", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.CountWorkspaces(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A2", MaxWorkspaces: n, Now: now})
+	if !errors.Is(err, ErrWorkspaceCap) {
+		t.Fatalf("duplicate at cap: %v", err)
+	}
+}
+
+func TestWorkspaceBySlugUnverified(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	u, _, _ := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "alpha", Now: now})
+	if _, err := s.WorkspaceBySlug(ctx, "alpha"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unverified owner: %v", err)
+	}
+	raw, _ := s.CreateToken(ctx, TokenVerify, u.ID, time.Hour, now)
+	if _, err := s.VerifyEmail(ctx, raw, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WorkspaceBySlug(ctx, "alpha"); err != nil {
+		t.Fatalf("verified owner: %v", err)
+	}
+	if _, err := s.WorkspaceBySlug(ctx, "default"); err != nil {
+		t.Fatalf("workspace 1: %v", err)
+	}
+}

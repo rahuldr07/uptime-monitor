@@ -47,6 +47,8 @@ type TokenKind string
 const (
 	TokenSetup TokenKind = "setup"
 	TokenReset TokenKind = "reset"
+	// TokenVerify confirms an email address. It needs a user.
+	TokenVerify TokenKind = "verify"
 	// TokenInvite admits one new sign-up. It has no user and may be bound to
 	// an email.
 	TokenInvite TokenKind = "invite"
@@ -61,9 +63,9 @@ type Token struct {
 }
 
 // tokenLive is the condition for an unused, unexpired token of a kind whose
-// holder, for reset tokens, is not disabled. Arguments: kind, now.
+// holder, for reset and verify tokens, is not disabled. Arguments: kind, now.
 const tokenLive = `kind = ? AND used_at IS NULL AND expires_at > ?
-	AND (kind <> 'reset' OR user_id IN (SELECT id FROM users WHERE disabled_at IS NULL))`
+	AND (kind NOT IN ('reset','verify') OR user_id IN (SELECT id FROM users WHERE disabled_at IS NULL))`
 
 // CreateToken issues a token of kind for userID (0 for setup) and returns the
 // raw value, which is never stored. Earlier unused tokens of the same kind
@@ -74,9 +76,9 @@ func (s *Store) CreateToken(ctx context.Context, kind TokenKind, userID int64, t
 		if userID != 0 {
 			return "", errors.New("store: setup token takes no user")
 		}
-	case TokenReset:
+	case TokenReset, TokenVerify:
 		if userID <= 0 {
-			return "", errors.New("store: reset token needs a user")
+			return "", fmt.Errorf("store: %s token needs a user", kind)
 		}
 	default:
 		return "", fmt.Errorf("store: unsupported token kind %q", kind)
@@ -147,8 +149,8 @@ func scanToken(sc scanner) (Token, error) {
 }
 
 // PeekToken checks a token without consuming it. It returns ErrNotFound when
-// the token is unknown, of another kind, used, expired, or a reset token of a
-// disabled user.
+// the token is unknown, of another kind, used, expired, or a reset or verify
+// token of a disabled user.
 func (s *Store) PeekToken(ctx context.Context, kind TokenKind, raw string, now time.Time) (Token, error) {
 	return peekToken(ctx, s.db, kind, raw, now)
 }

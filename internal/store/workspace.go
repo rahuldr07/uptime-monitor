@@ -228,9 +228,15 @@ func (w *WS) Info(ctx context.Context) (Workspace, error) {
 	return ws, err
 }
 
-// WorkspaceBySlug looks a workspace up by its slug, or returns ErrNotFound.
+// WorkspaceBySlug looks a workspace up by its slug, or returns ErrNotFound. A
+// workspace none of whose owners is verified is not found (an unverified
+// account's status page is 404); the operator workspace is always found.
 func (s *Store) WorkspaceBySlug(ctx context.Context, slug string) (Workspace, error) {
-	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, `SELECT `+workspaceCols+` FROM workspaces WHERE slug = ?`, slug))
+	ws, err := scanWorkspace(s.db.QueryRowContext(ctx,
+		`SELECT `+workspaceCols+` FROM workspaces WHERE slug = ? AND (id = ? OR EXISTS (
+		   SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+		   WHERE m.workspace_id = workspaces.id AND m.role = 'owner' AND u.verified_at IS NOT NULL))`,
+		slug, OperatorWorkspaceID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workspace{}, ErrNotFound
 	}

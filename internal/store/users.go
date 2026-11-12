@@ -383,3 +383,29 @@ func (s *Store) ResetPassword(ctx context.Context, raw, phc string, now time.Tim
 	}
 	return u, nil
 }
+
+// VerifyEmail consumes a verify token and marks the address verified in one
+// transaction. A token that is unknown, used, expired, of another kind or
+// held by a disabled user is ErrNotFound.
+func (s *Store) VerifyEmail(ctx context.Context, raw string, now time.Time) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	t, err := consumeToken(ctx, tx, TokenVerify, raw, now)
+	if err != nil {
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET verified_at = ? WHERE id = ? AND verified_at IS NULL`, now.UnixMilli(), t.UserID); err != nil {
+		return User{}, err
+	}
+	u, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, t.UserID))
+	if err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
