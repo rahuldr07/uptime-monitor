@@ -15,7 +15,7 @@
 <div class="card block">
   <h2>Sessions</h2>
   <p class="muted small" style="margin:6px 0 12px">Sign out on every device, including this one.</p>
-  <form method="post" action="/account/signout-all" data-confirm-title="Sign out everywhere?" data-confirm="Sign out everywhere? You will need to sign in again."><button type="submit">Sign out everywhere</button></form>
+  <form method="post" action="/account/signout-all" data-confirm-title="Sign out everywhere?" data-confirm="Sign out everywhere? You will need to sign in again."><button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out everywhere</button></form>
 </div>
 {{if .CanDelete}}
 <div class="card block">
@@ -23,7 +23,7 @@
   <p class="muted small" style="margin:6px 0 12px">Permanently deletes your account, your workspace, its monitors and all of their history.</p>
   <form method="post" action="/account/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
     <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
-    <div style="margin-top:14px"><button type="submit" class="danger">Delete account</button></div>
+    <div style="margin-top:14px"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete account</button></div>
   </form>
 </div>
 {{end}}

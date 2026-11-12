@@ -15,11 +15,11 @@ h1,h2,h3{font-weight:600;margin:0}h1{font-size:18px}h2{font-size:14px}h3{font-si
 .side .brand .dot.bad{background:var(--bad);box-shadow:none}
 .side a.nav{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:0;border-left:2px solid transparent;color:var(--muted);font-size:13px}
 .side a.nav:hover{background:var(--card2);text-decoration:none;color:var(--text)}.side a.nav.active{background:var(--card2);color:var(--text);font-weight:600;border-left-color:var(--accent)}
-.side a.nav .ic{opacity:.8}.side a.nav:hover .ic,.side a.nav.active .ic{opacity:1}
+
 .side .count{margin-left:auto;font-size:11px;line-height:1.4;padding:0 6px;border-radius:3px;background:transparent;border:1px solid currentColor;color:var(--bad-text);font-weight:600}.side .count.maint{color:var(--info-text)}
 .side .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);padding-top:12px;border-top:1px solid var(--border)}
 .side .foot button,.side .foot .btn{width:100%;justify-content:flex-start}
-.side .foot>a{padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side .foot button{padding-left:11px;gap:10px}.side .foot button .ic{opacity:.8}
+.side .foot>a{padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side .foot button{padding-left:11px;gap:10px}.side .foot button .ic{width:16px;height:16px;stroke-width:1.5}
 .main{flex:1;min-width:0;padding:22px 28px 60px;max-width:1240px}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap}
 .topbar .sub{font-size:12px;color:var(--faint);margin-top:2px;display:flex;gap:6px;align-items:center}
@@ -35,7 +35,7 @@ h1,h2,h3{font-weight:600;margin:0}h1{font-size:18px}h2{font-size:14px}h3{font-si
 .tile .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.tile .v{font-size:19px;font-weight:600;margin-top:2px}
 .tile .v.ok{color:var(--ok-text)}.tile .v.bad{color:var(--bad-text)}.tile .v.warn{color:var(--warn-text)}
 .banner{padding:10px 14px;border-radius:var(--radius);border-left:2px solid currentColor;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap;font-size:13px}
-.banner.ok{background:var(--ok-bg);color:var(--ok-text)}.banner.bad{background:var(--bad-bg);color:var(--bad-text)}.banner.warn{background:var(--warn-bg);color:var(--warn-text)}.banner.maint{background:var(--info-bg);color:var(--info-text)}.banner.maint .ic{margin-right:6px}.banner a{text-decoration:underline}
+.banner.ok{background:var(--ok-bg);color:var(--ok-text)}.banner.bad{background:var(--bad-bg);color:var(--bad-text)}.banner.warn{background:var(--warn-bg);color:var(--warn-text)}.banner.maint{background:var(--info-bg);color:var(--info-text)}.banner .ic{margin-right:6px}.banner a{text-decoration:underline}
 /* status bits */
 .sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--faint);display:inline-block}
 .sdot.up{background:var(--ok)}.sdot.down{background:var(--bad)}.sdot.paused{background:var(--warn)}.sdot.maint{background:var(--info)}
@@ -215,7 +215,9 @@ button[aria-busy=true]:has(.ic.spin)::before{content:none}button[aria-busy=true]
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){button[aria-busy=true]::before{animation:none}}
 .ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
-.ic.lg{width:20px;height:20px}.ic.flip{transform:rotate(180deg)}
+.ic.lg{width:20px;height:20px}.ic.solid{fill:currentColor}
+button.sm .ic,.btn.sm .ic,.dt-view .ic,.dd-btn .ic,.dd-opt .ic,.pm-item .ic,.field-msg .ic,.toast-x .ic,details.adv summary .ic,.dt-chev,.dt-arrow,.dt-hm .ic{stroke-width:1.75}
+.badge .ic{stroke-width:2}.ic.flip{transform:rotate(180deg)}
 .ic-swap{display:inline-grid;flex:none}.ic-swap>.ic{grid-area:1/1}
 /* icon motion: transform and opacity on the outer svg only; every rule below needs no-preference */
 @media(prefers-reduced-motion:no-preference){
@@ -331,3 +333,4 @@ dialog[open]{animation:dlg-in .14s ease-out}dialog[open]::backdrop{animation:dlg
 .group-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}
 @media(max-width:900px){.shell{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;align-items:center;gap:4px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.side .brand{padding:0 8px 0 0}.side a.nav span.t{position:absolute;left:-9999px}.side .foot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}.side .foot button,.side .foot .btn{width:auto}.main{padding:16px 14px 60px}}
 .dt td.btns>a.btn,.dt td.acts>a.btn{vertical-align:middle}
+@media(max-width:480px){.dt-view .ic:not(.chev){display:none}}

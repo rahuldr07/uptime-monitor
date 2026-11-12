@@ -2,7 +2,7 @@
 <div class="topbar">
   <div><h1>Invites</h1><div class="sub">{{len .Invites}} open</div></div>
 </div>
-<div class="tabs"><a href="/admin/users"><svg class="ic" aria-hidden="true"><use href="#i-users"/></svg>Users</a><a class="active" href="/admin/invites"><svg class="ic" aria-hidden="true"><use href="#i-ticket"/></svg>Invites</a></div>
+<div class="tabs"><a href="/admin/users">Users</a><a class="active" href="/admin/invites">Invites</a></div>
 {{with .Link}}
 <div class="card block">
   <h2>Invite link</h2>
@@ -12,7 +12,7 @@
 {{end}}
 <form method="post" action="/admin/invites" class="btns" style="margin-bottom:12px">
   <input name="email" type="email" value="{{.Email}}" placeholder="Email (optional)" aria-label="Email (optional)" style="width:260px">
-  <button type="submit">Create invite</button>
+  <button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Create invite</button>
 </form>
 {{if .Invites}}
 <div class="dt" data-table="admin-invites" data-noun="invites" data-cards data-empty="No open invites.">

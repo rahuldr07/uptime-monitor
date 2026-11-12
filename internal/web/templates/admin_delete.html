@@ -7,7 +7,7 @@
   <form method="post" action="/admin/users/{{.Target.ID}}/delete" style="max-width:360px">
     {{template "admin-keep" .Keep}}
     <div class="field"><label>Your password</label><input name="current" type="password" required autocomplete="current-password"></div>
-    <div style="margin-top:14px" class="btns"><button type="submit" class="danger">Delete user</button><a href="{{.Keep.URL .Keep.Page}}">Cancel</a></div>
+    <div style="margin-top:14px" class="btns"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete user</button><a href="{{.Keep.URL .Keep.Page}}">Cancel</a></div>
   </form>
 </div>
 {{end}}

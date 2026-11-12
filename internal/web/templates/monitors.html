@@ -29,7 +29,7 @@
   <td data-sort="{{.Class}}"><span class="badge {{.Class}}">{{template "st-ic" .Class}}{{.Label}}</span></td>
   <td class="btns">
     <a class="btn sm" href="/targets/{{.State.Target.ID}}?tab=settings"><svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>Edit</a>
-    <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="sm">{{if .State.Target.Paused}}<svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
+    <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="sm">{{if .State.Target.Paused}}<svg class="ic solid" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic solid" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
     <form method="post" action="/targets/{{.State.Target.ID}}/delete" data-confirm-title="Delete monitor?" data-confirm="Delete {{.State.Target.Name}} and all of its history? This cannot be undone."><button type="submit" class="sm danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete</button></form>
   </td>
 </tr>{{end}}

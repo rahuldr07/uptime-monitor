@@ -18,10 +18,10 @@
   <a class="nav{{if eq .Page "incidents"}} active{{end}}" href="/incidents"><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg><span class="t">Incidents</span>{{if gt .Unacked 0}}<span class="count">{{.Unacked}}</span>{{end}}</a>
   <a class="nav{{if eq .Page "alerts"}} active{{end}}" href="/alerts"><svg class="ic" aria-hidden="true"><use href="#i-bell"/></svg><span class="t">Alert channels</span></a>
   <a class="nav{{if eq .Page "maintenance"}} active{{end}}" href="/maintenance"><svg class="ic" aria-hidden="true"><use href="#i-wrench"/></svg><span class="t">Maintenance</span>{{if .Maint}}<span class="count maint">{{len .Maint}}</span>{{end}}</a>
-  <a class="nav" href="{{.StatusURL}}" target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="#i-radio-tower"/></svg><span class="t">Status page</span></a>
+  <a class="nav" href="{{.StatusURL}}" target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="#i-radio"/></svg><span class="t">Status page</span></a>
   {{if .IsOperator}}<a class="nav{{if eq .Page "admin"}} active{{end}}" href="/admin"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg><span class="t">Admin</span></a>{{end}}
   <div class="foot">
-    <button type="button" class="ghost sm" data-action="theme" title="Theme (t)"><span class="ic-swap rot" data-theme-icon>{{if eq .Theme "dark"}}<svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg>{{else if eq .Theme "light"}}<svg class="ic" aria-hidden="true"><use href="#i-sun"/></svg>{{else}}<svg class="ic" aria-hidden="true"><use href="#i-sun-moon"/></svg>{{end}}</span><span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
+    <button type="button" class="ghost sm" data-action="theme" title="Theme (t)"><span class="ic-swap rot" data-theme-icon>{{if eq .Theme "dark"}}<svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg>{{else if eq .Theme "light"}}<svg class="ic" aria-hidden="true"><use href="#i-sun"/></svg>{{else}}<svg class="ic" aria-hidden="true"><use href="#i-monitor"/></svg>{{end}}</span><span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
     <a class="small muted" href="/account">{{.UserEmail}}</a>
     <form method="post" action="/logout"><button type="submit" class="ghost sm"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg><span class="t">Sign out</span></button></form>
   </div>

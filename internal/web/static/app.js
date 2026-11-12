@@ -10,7 +10,7 @@
     document.cookie = 'theme=' + t + ';path=/;max-age=31536000;samesite=lax';
     $$('[data-theme-label]').forEach(function (el) { el.textContent = t === 'auto' ? 'Auto' : t === 'dark' ? 'Dark' : 'Light'; });
     $$('[data-theme-icon]').forEach(function (el) { // sun when light, moon when dark, sun-moon when auto
-      var cur = $('.ic:not(.swap-out)', el); if (cur) swapIcon(cur, t === 'auto' ? 'i-sun-moon' : t === 'dark' ? 'i-moon' : 'i-sun', 200);
+      var cur = $('.ic:not(.swap-out)', el); if (cur) swapIcon(cur, t === 'auto' ? 'i-monitor' : t === 'dark' ? 'i-moon' : 'i-sun', 200);
     });
   };
   window.cycleTheme = function () {
@@ -132,7 +132,7 @@
           .then(function (r) { if (r.status === 401) { sessionExpired(); throw 0; } return r.json().then(function (j) { j._status = r.status; return j; }); })
           .then(function (j) {
             if (j.error) { toast(j.error, 'error'); return; }
-            if (j.message) toast(j.message, j.ok === false ? 'error' : 'ok');
+            if (j.message) toast(j.message, j.ok === false ? 'error' : /^Checking .*…$/.test(j.message) ? 'info' : 'ok'); // the pending check is not a success yet
             if (j.redirect) { location.href = j.redirect; } else { refresh(); }
           })
           .catch(function () { toast('Request failed', 'error'); })

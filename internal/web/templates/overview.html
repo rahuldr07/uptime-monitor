@@ -10,7 +10,7 @@
 <div class="card block" style="padding:26px 28px">
   <h2>Welcome. Three steps to your first status page.</h2>
   <div class="guide">
-    <div class="step"><span class="n">1</span><h3>Add a monitor</h3><p>Paste a URL. We check it every 30 seconds by default and record every result.</p><div><button type="button" class="primary sm" data-action="open-panel">Add monitor</button></div></div>
+    <div class="step"><span class="n">1</span><h3>Add a monitor</h3><p>Paste a URL. We check it every 30 seconds by default and record every result.</p><div><button type="button" class="primary sm" data-action="open-panel"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Add monitor</button></div></div>
     <div class="step{{if .HasChannel}} done{{end}}"><span class="n">{{if .HasChannel}}<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>{{else}}2{{end}}</span><h3>Connect an alert channel</h3><p>Telegram, Slack or email. You get one message when something goes down and one when it recovers.</p><div><a class="btn sm" href="/alerts">{{if .HasChannel}}Edit channels{{else}}Set up alerts{{end}}</a></div></div>
     <div class="step"><span class="n">3</span><h3>Share the status page</h3><p>A public, read-only page with 90 days of history. Give it a title and share the link.</p><div><a class="btn sm" href="{{.StatusURL}}" target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="#i-external"/></svg>Open status page</a></div></div>
   </div>
@@ -18,11 +18,11 @@
 {{else}}
 {{template "maint-banner" .}}
 {{if gt .Down 0}}
-<div class="banner bad"><span><strong>{{.Down}} of {{.Total}}</strong> monitors down</span>{{with .LongestDown}}<span class="small"><a href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a> down for {{dur .DownFor}}</span>{{end}}</div>
+<div class="banner bad"><span><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg><strong>{{.Down}} of {{.Total}}</strong> monitors down</span>{{with .LongestDown}}<span class="small"><a href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a> down for {{dur .DownFor}}</span>{{end}}</div>
 {{else if gt .Pending 0}}
 <div class="banner warn"><span>Waiting for first checks</span><span class="small">{{.Pending}} monitor(s) not checked yet</span></div>
 {{else}}
-<div class="banner ok"><span>All systems operational</span><span class="small">{{.Up}} up{{if gt .PausedN 0}} · {{.PausedN}} paused{{end}}</span></div>
+<div class="banner ok"><span><svg class="ic" aria-hidden="true"><use href="#i-circle-check"/></svg>All systems operational</span><span class="small">{{.Up}} up{{if gt .PausedN 0}} · {{.PausedN}} paused{{end}}</span></div>
 {{end}}
 <div class="tiles">
   <div class="tile"><div class="l">Up</div><div class="v ok">{{.Up}}</div></div>
@@ -57,7 +57,7 @@
     <td data-sort="{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}}{{end}}">{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}} ms{{else}}<span class="faint">—</span>{{end}}</td>
     <td class="acts">
       {{if not .State.Target.Paused}}<form method="post" action="/targets/{{.State.Target.ID}}/check" data-async><button type="submit" class="ghost sm"><svg class="ic spin" aria-hidden="true"><use href="#i-refresh"/></svg>Check</button></form>{{end}}
-      <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="ghost sm">{{if .State.Target.Paused}}<svg class="ic" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
+      <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="ghost sm">{{if .State.Target.Paused}}<svg class="ic solid" aria-hidden="true"><use href="#i-play"/></svg>Resume{{else}}<svg class="ic solid" aria-hidden="true"><use href="#i-pause"/></svg>Pause{{end}}</button></form>
     </td>
   </tr>
   {{end}}
