@@ -15,6 +15,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -186,6 +187,27 @@ func New(o Options) (*Server, error) {
 				return a
 			}
 			return b
+		},
+		// data-sort keys for the data tables: unix ms, duration ms, numeric percent; "" sorts last
+		"ums": func(v any) string {
+			switch x := v.(type) {
+			case time.Time:
+				if !x.IsZero() {
+					return strconv.FormatInt(x.UnixMilli(), 10)
+				}
+			case *time.Time:
+				if x != nil && !x.IsZero() {
+					return strconv.FormatInt(x.UnixMilli(), 10)
+				}
+			}
+			return ""
+		},
+		"dms": func(d time.Duration) int64 { return d.Milliseconds() },
+		"pctv": func(st store.Stats) string {
+			if st.Total == 0 {
+				return ""
+			}
+			return strconv.FormatFloat(round2(st.UptimePercent()), 'f', -1, 64)
 		},
 		"asset": assetURL,
 		"dict": func(kv ...any) map[string]any {

@@ -347,7 +347,7 @@ func TestTargetLifecycleAndPages(t *testing.T) {
 	if resp, _ := e.post(t, c, loc, url.Values{"name": {"Site2"}, "url": {up.URL}, "interval": {"2h"}, "timeout": {"5s"}}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("update: %d", resp.StatusCode)
 	}
-	if _, body := e.get(t, c, "/targets"); !strings.Contains(body, "Site2") || !strings.Contains(body, "<td>2h</td>") {
+	if _, body := e.get(t, c, "/targets"); !strings.Contains(body, "Site2") || !strings.Contains(body, `>2h</td>`) {
 		t.Fatal("monitors page should show updated target")
 	}
 	if resp, _ := e.post(t, c, loc+"/pause", nil); resp.StatusCode != http.StatusSeeOther {

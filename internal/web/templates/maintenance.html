@@ -18,29 +18,35 @@
 {{end}}
 <div class="section"{{if not .Active}} style="margin-top:0"{{end}}><h2>Upcoming</h2>{{if .Upcoming}}<span class="small muted">{{len .Upcoming}} scheduled</span>{{end}}</div>
 {{if .Upcoming}}
-<div class="card block scroll" style="padding:0 18px">
-<table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Starts</th><th>Duration</th><th></th></tr>
-{{range .Upcoming}}<tr>
-  <td style="font-weight:500">{{.Title}}</td>
-  <td class="muted">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
-  <td style="white-space:nowrap">{{ts .StartsAt}}<div class="small faint">in {{dur (.StartsAt.Sub $.Now)}}</div></td>
-  <td style="white-space:nowrap">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
-  <td class="btns" style="text-align:right"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
+<div class="dt" data-table="maint-upcoming" data-noun="windows" data-empty="Nothing scheduled.">
+<table>
+<thead><tr><th data-w="140" data-card="primary">Title</th><th data-card="secondary">Scope</th><th>Starts</th><th data-num>Duration</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
+<tbody>
+{{range .Upcoming}}<tr data-id="{{.ID}}">
+  <td style="font-weight:500" data-sort="{{.Title}}">{{.Title}}</td>
+  <td class="muted" data-sort="{{.Group}}">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
+  <td style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts .StartsAt}}<div class="small faint">in {{dur (.StartsAt.Sub $.Now)}}</div></td>
+  <td style="white-space:nowrap" data-sort="{{dms (.EndsAt.Sub .StartsAt)}}">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
+  <td class="btns"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
 </tr>{{end}}
+</tbody>
 </table>
 </div>
 {{else}}<div class="empty" style="padding:22px"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>Nothing scheduled</strong><p>Plan a deploy or an upgrade on the right and nobody gets paged for it.</p></div>{{end}}
 {{if .Past}}
 <div class="section"><h2>Past</h2><span class="small muted">most recent {{len .Past}}</span></div>
-<div class="card block scroll" style="padding:0 18px">
-<table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Started</th><th>Duration</th><th></th></tr>
-{{range .Past}}<tr>
-  <td>{{.Title}}</td>
-  <td class="muted">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
-  <td class="muted" style="white-space:nowrap">{{ts .StartsAt}}</td>
-  <td class="muted" style="white-space:nowrap">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
-  <td class="btns" style="text-align:right"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
+<div class="dt" data-table="maint-past" data-noun="windows" data-empty="No past windows.">
+<table>
+<thead><tr><th data-w="140" data-card="primary">Title</th><th data-card="secondary">Scope</th><th>Started</th><th data-num>Duration</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
+<tbody>
+{{range .Past}}<tr data-id="{{.ID}}">
+  <td data-sort="{{.Title}}">{{.Title}}</td>
+  <td class="muted" data-sort="{{.Group}}">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
+  <td class="muted" style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts .StartsAt}}</td>
+  <td class="muted" style="white-space:nowrap" data-sort="{{dms (.EndsAt.Sub .StartsAt)}}">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
+  <td class="btns"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost">Remove</button></form></td>
 </tr>{{end}}
+</tbody>
 </table>
 </div>
 {{end}}

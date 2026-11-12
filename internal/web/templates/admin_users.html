@@ -16,19 +16,20 @@
   <button type="submit">Search</button>
 </form>
 {{if .Rows}}
-<div class="card block scroll" style="padding:0 18px">
+<div class="dt" data-table="admin-users" data-noun="users" data-paged="server" data-empty="No users match.">
 <table>
-<tr><th>Email</th><th>Workspace</th><th>Created</th><th>Last seen</th><th>Monitors</th><th></th></tr>
+<thead><tr><th data-w="180" data-card="primary">Email</th><th data-hide-below="md">Workspace</th><th data-hide-below="lg">Created</th><th data-hide-below="sm">Last seen</th><th data-num data-hide-below="md">Monitors</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
+<tbody>
 {{range .Rows}}
-<tr>
-  <td>{{.Email}}
+<tr data-id="{{.ID}}">
+  <td data-sort="{{.Email}}">{{.Email}}
     {{if .VerifiedAt}}<span class="badge up">verified</span>{{else}}<span class="badge paused">unverified</span>{{end}}
     {{if .DisabledAt}}<span class="badge down">disabled</span>{{end}}
     {{if .IsOperator}}<span class="badge accent">operator</span>{{end}}</td>
-  <td>{{if .WorkspaceSlug}}<a href="/s/{{.WorkspaceSlug}}">{{.WorkspaceName}}</a> <span class="faint small">{{.WorkspaceSlug}}</span>{{else}}<span class="faint">—</span>{{end}}</td>
-  <td>{{ts .CreatedAt}}</td>
-  <td>{{with .LastSeenAt}}{{ago .}}{{else}}<span class="faint">never</span>{{end}}</td>
-  <td>{{.Monitors}}</td>
+  <td data-sort="{{.WorkspaceName}}">{{if .WorkspaceSlug}}<a href="/s/{{.WorkspaceSlug}}">{{.WorkspaceName}}</a> <span class="faint small">{{.WorkspaceSlug}}</span>{{else}}<span class="faint">—</span>{{end}}</td>
+  <td data-sort="{{ums .CreatedAt}}" style="white-space:nowrap">{{ts .CreatedAt}}</td>
+  <td data-sort="{{ums .LastSeenAt}}" style="white-space:nowrap">{{with .LastSeenAt}}{{ago .}}{{else}}<span class="faint">never</span>{{end}}</td>
+  <td data-sort="{{.Monitors}}">{{.Monitors}}</td>
   <td class="btns">
     {{if .DisabledAt}}
     <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm-title="Enable user?" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Enable</button></form>
@@ -45,6 +46,7 @@
   </td>
 </tr>
 {{end}}
+</tbody>
 </table>
 </div>
 {{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No users match</strong><p>Try a different search.</p></div>{{end}}

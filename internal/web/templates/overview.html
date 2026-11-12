@@ -32,26 +32,37 @@
   <div class="tile"><div class="l">Incidents 7d</div><div class="v">{{.Incidents7}}</div></div>
   <div class="tile"><div class="l">Alerts sent 7d</div><div class="v">{{.Alerts7}}</div></div>
 </div>
-<div class="rows">
-  <div class="row h"><span></span><span>Monitor</span><span class="c3">Last 30 min</span><span class="c4">Uptime 24h</span><span class="c5">Latency</span><span style="text-align:right">Actions</span></div>
+<div class="dt" data-table="overview" data-noun="monitors" data-topbar-search data-empty="No monitors match.">
+<table>
+  <thead><tr>
+    <th data-sort="false" data-w="14"><span class="sr">Status</span></th>
+    <th data-w="160" data-card="primary">Monitor</th>
+    <th data-sort="false" data-hide-below="md">Last 30 min</th>
+    <th data-num data-hide-below="sm" data-card="secondary">Uptime 24h</th>
+    <th data-num data-hide-below="sm" data-card="secondary">Latency</th>
+    <th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th>
+  </tr></thead>
+  <tbody>
   {{range .Rows}}
-  <div class="row" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
-    <span class="sdot {{.Class}}"></span>
-    <span style="min-width:0"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts .EndsAt}}">maintenance</span>{{end}}<br>
+  <tr data-id="{{.State.Target.ID}}" data-k="{{.Class}}" data-href="/targets/{{.State.Target.ID}}" data-label="{{.State.Target.Name}}" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
+    <td><span class="sdot {{.Class}}"></span></td>
+    <td data-sort="{{.State.Target.Name}}"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts .EndsAt}}">maintenance</span>{{end}}
       {{if eq .Class "down"}}<span class="sub err">{{with .State.Last}}{{.Error}}{{end}} · down {{dur .DownFor}}</span>
       {{else if eq .Class "paused"}}<span class="sub">paused</span>
       {{else if eq .Class "maint"}}<span class="sub">{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts .Maint.EndsAt}}</span>
       {{else if .State.Last}}<span class="sub">{{if .State.Last.StatusCode}}HTTP {{.State.Last.StatusCode}}{{else}}ok{{end}} · checked {{ago .State.Last.CheckedAt}}</span>
-      {{else}}<span class="sub">waiting for first check</span>{{end}}</span>
-    <span class="c3 spark">{{.Spark}}</span>
-    <span class="c4">{{pct .Up24}}</span>
-    <span class="c5">{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}} ms{{else}}<span class="faint">—</span>{{end}}</span>
-    <span class="acts">
+      {{else}}<span class="sub">waiting for first check</span>{{end}}</td>
+    <td class="spark">{{.Spark}}</td>
+    <td data-sort="{{pctv .Up24}}">{{pct .Up24}}</td>
+    <td data-sort="{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}}{{end}}">{{if and .State.Last .State.Last.OK}}{{.State.Last.LatencyMS}} ms{{else}}<span class="faint">—</span>{{end}}</td>
+    <td class="acts">
       {{if not .State.Target.Paused}}<form method="post" action="/targets/{{.State.Target.ID}}/check" data-async><button type="submit" class="ghost sm">Check</button></form>{{end}}
       <form method="post" action="/targets/{{.State.Target.ID}}/pause"><button type="submit" class="ghost sm">{{if .State.Target.Paused}}Resume{{else}}Pause{{end}}</button></form>
-    </span>
-  </div>
+    </td>
+  </tr>
   {{end}}
+  </tbody>
+</table>
 </div>
 {{end}}
 <datalist id="groups">{{range .Groups}}<option value="{{.}}">{{end}}</datalist>

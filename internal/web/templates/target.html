@@ -40,12 +40,12 @@
 </div>
 <div class="card block">
   <h2>Recent checks</h2>
-  {{template "checks-table" (slice .Checks 0 (min 10 (len .Checks)))}}
+  {{template "checks-table" (dict "Rows" (slice .Checks 0 (min 10 (len .Checks))) "ID" "checks-recent" "Paged" "off" "Search" false)}}
   {{if gt (len .Checks) 10}}<div style="margin-top:8px"><a class="btn sm" href="?tab=checks">All checks</a></div>{{end}}
 </div>
 
 {{else if eq .Tab "checks"}}
-<div class="card block"><h2>Last {{len .Checks}} checks</h2>{{template "checks-table" .Checks}}</div>
+<div class="card block"><h2>Last {{len .Checks}} checks</h2>{{template "checks-table" (dict "Rows" .Checks "ID" "checks" "Paged" "client" "Search" true)}}</div>
 
 {{else if eq .Tab "incidents"}}
 <div class="card block">

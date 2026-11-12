@@ -7,6 +7,6 @@
   </form>
 </div>
 {{if .Incidents}}
-<div class="card block" style="padding:0 18px">{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" true)}}</div>
+{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" true)}}
 {{else}}<div class="empty"><svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents{{if .Filter.OngoingOnly}} ongoing{{end}}</strong><p>Good news.</p></div>{{end}}
 {{end}}

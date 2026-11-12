@@ -251,7 +251,7 @@ func TestAdminUsersList(t *testing.T) {
 			t.Errorf("list lacks %q", want)
 		}
 	}
-	if !strings.Contains(body, "<td>2</td>") {
+	if !strings.Contains(body, `<td data-sort="2">2</td>`) {
 		t.Errorf("monitor count 2 missing:\n%s", body)
 	}
 	_, body = e.get(t, e.op, "/admin/users?q=bob")

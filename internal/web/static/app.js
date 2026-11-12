@@ -19,7 +19,7 @@
   // Live regions are created once at load (a region only announces what is inserted after it exists):
   // polite for ok/info, assertive for errors. Dismissal is the end of the CSS countdown on .toast-bar,
   // so pausing that animation (hover/focus) pauses dismissal. Errors have no bar and stay until closed.
-  var toastN = 0, MAX_TOASTS = 4;
+  var MAX_TOASTS = 4;
   var reduced = function () { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; };
   function toastRegions() {
     var h = $('.toasts');
@@ -35,7 +35,7 @@
   }
   function dismissToast(t) {
     if (!t.parentNode || t._leaving) return;
-    t._leaving = true; t.classList.add('leaving');
+    t._leaving = true; t.classList.remove('pulse'); t.classList.add('leaving');
     setTimeout(function () { t.remove(); }, reduced() ? 0 : 120);
   }
   function restartAnim(el, cls) {
@@ -53,7 +53,7 @@
       }
     }
     var t = document.createElement('div');
-    t.className = 'toast' + (kind ? ' ' + kind : ''); t._msg = msg; t._kind = kind; t._n = ++toastN;
+    t.className = 'toast' + (kind ? ' ' + kind : ''); t._msg = msg; t._kind = kind;
     t.appendChild(icon(kind === 'ok' ? 'i-check' : kind === 'error' ? 'i-alert' : 'i-info'));
     var m = document.createElement('span'); m.className = 'toast-msg'; m.textContent = msg; t.appendChild(m);
     var x = document.createElement('button'); x.type = 'button'; x.className = 'toast-x'; x.setAttribute('aria-label', 'Dismiss');
@@ -189,7 +189,10 @@
     var res = function () { return f.querySelector('[data-test-result]'); };
     url.addEventListener('blur', function () {
       if (name.value.trim() || !url.value.trim()) return;
-      try { var h = new URL(url.value.trim()).hostname.replace(/^www\./, ''); name.value = h.charAt(0).toUpperCase() + h.slice(1); } catch (e) { }
+      try {
+        var h = new URL(url.value.trim()).hostname.replace(/^www\./, ''); name.value = h.charAt(0).toUpperCase() + h.slice(1);
+        name.dispatchEvent(new Event('input', { bubbles: true })); // clears a stale "Required." once a failed submit has been seen
+      } catch (e) { }
     });
     var tb = f.querySelector('#test-btn'); if (tb) tb.addEventListener('click', function () {
       var r = res(); showResult(r, 'info', 'Testing…');
@@ -253,7 +256,7 @@
     if (h > below && above > below) { // flip upward, anchored at the button so filtering can shrink it in place
       m.style.top = 'auto'; m.style.bottom = (vh - r.top + 4) + 'px'; m.style.maxHeight = Math.min(280, above - 4) + 'px';
     } else { m.style.top = (r.bottom + 4) + 'px'; m.style.maxHeight = Math.min(280, Math.max(below - 4, 80)) + 'px'; }
-    m.style.left = Math.max(8, Math.min(r.left, vw - 8 - w)) + 'px';
+    m.style.left = Math.max(8, Math.min(d.alignEnd ? r.right - w : r.left, vw - 8 - w)) + 'px';
   }
   function applyFilter(d) {
     var q = d.filter.value.trim().toLowerCase(), any = false;
@@ -272,6 +275,7 @@
   }
   function closeMenu(d, refocus) {
     if (!d.open) return;
+    if (d.close) { d.close(refocus); return; } // a plain popup (View menu)
     d.open = false; if (openDD === d) openDD = null;
     d.menu.remove(); d.menu = d.list = d.filter = d.none = null; d.items = [];
     d.wrap.classList.remove('open'); d.btn.setAttribute('aria-expanded', 'false'); d.btn.removeAttribute('aria-activedescendant');
@@ -370,13 +374,434 @@
   window.addEventListener('scroll', function (e) { var d = openDD; if (d && !d.menu.contains(e.target)) closeMenu(d, false); }, true);
   window.addEventListener('resize', function () { if (openDD) closeMenu(openDD, false); });
 
-  // ---- search filter ----
-  function wireSearch(root) {
-    var s = $('[data-search]', root); if (!s || s._wired) return; s._wired = true;
-    s.addEventListener('input', function () {
-      var q = s.value.trim().toLowerCase();
-      $$('[data-row]').forEach(function (r) { r.classList.toggle('hidden', q && r.getAttribute('data-row').toLowerCase().indexOf(q) < 0); });
+  // ---- data tables ----
+  // Progressive enhancement over a server-rendered <table> inside .dt (ported from the data-table kit).
+  // Rows stay in the DOM: filtering and paging set tr.hidden, sorting reorders the <tbody>. State (query, pill,
+  // sort, page) lives in dtState keyed by data-table, so a live refresh that replaces #content re-applies it.
+  var DT_KEY = 'uptime.tables', DT_SIZES = [25, 50, 100], dtPrefs = null, dtState = {}, dtLive = [];
+  var DT_MIN = 64, DT_MAX = 640;
+  function isRec(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
+  function readPrefs() {
+    var p = { density: '', size: 25, columns: {}, widths: {} }, raw = null;
+    try { raw = JSON.parse(localStorage.getItem(DT_KEY) || 'null'); } catch (e) { raw = null; }
+    if (!isRec(raw)) return p;
+    if (raw.density === 'compact' || raw.density === 'comfortable') p.density = raw.density;
+    if (DT_SIZES.indexOf(raw.size) >= 0) p.size = raw.size;
+    if (isRec(raw.columns)) Object.keys(raw.columns).forEach(function (t) {
+      if (!isRec(raw.columns[t])) return;
+      var o = {}; Object.keys(raw.columns[t]).forEach(function (c) { if (typeof raw.columns[t][c] === 'boolean') o[c] = raw.columns[t][c]; });
+      p.columns[t] = o;
     });
+    if (isRec(raw.widths)) Object.keys(raw.widths).forEach(function (t) {
+      if (!isRec(raw.widths[t])) return;
+      var o = {}; Object.keys(raw.widths[t]).forEach(function (c) { var w = raw.widths[t][c]; if (typeof w === 'number' && isFinite(w) && w >= DT_MIN && w <= DT_MAX) o[c] = w; });
+      p.widths[t] = o;
+    });
+    return p;
+  }
+  function prefs() { return dtPrefs || (dtPrefs = readPrefs()); }
+  function savePrefs() { try { localStorage.setItem(DT_KEY, JSON.stringify(prefs())); } catch (e) { } }
+
+  var NUM_RE = /^-?(\d+\.?\d*|\.\d+)$/;
+  // kit tableSort.ts: explicit key, else the cell text; "" and an em dash are empty; numeric text becomes a number
+  function sortVal(raw) {
+    if (raw === null || raw === undefined) return undefined;
+    var t = String(raw).replace(/\s+/g, ' ').trim();
+    if (!t || t === '—') return undefined;
+    var c = t.replace(/[$₹,\s]/g, '').replace('−', '-');
+    return NUM_RE.test(c) ? Number(c) : t;
+  }
+  function cmpVal(a, b) {
+    var na = typeof a === 'number', nb = typeof b === 'number';
+    if (na && nb) return a - b;
+    if (na) return -1;
+    if (nb) return 1;
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  }
+  // text a search can match: skips forms, buttons, inputs, icons and screen-reader-only text
+  function cellText(el, out) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3) out.push(n.nodeValue);
+      else if (n.nodeType === 1 && !/^(FORM|BUTTON|INPUT|SELECT|TEXTAREA|SVG|SCRIPT|STYLE)$/i.test(n.tagName) && !n.classList.contains('sr')) cellText(n, out);
+    }
+    return out;
+  }
+  function pageList(index, count, slots) { // kit tableGrid.ts
+    var last = count - 1, side = slots - 2, near = (slots - 5) / 2, out = [], i;
+    function run(a, b) { var r = []; for (var k = a; k <= b; k++) r.push(k); return r; }
+    if (count <= slots) return run(0, last);
+    if (index < side - 1) return run(0, side - 1).concat(['gap', last]);
+    if (index > last - side + 1) return [0, 'gap'].concat(run(last - side + 1, last));
+    out = [0, 'gap'].concat(run(index - near, index + near)); out.push('gap', last);
+    return out;
+  }
+  function singular(n, noun) { return n === 1 ? noun.replace(/s$/, '') : noun; }
+  function filterSummary(shown, total, noun, parts) { // kit filterSummary.ts
+    var tail = parts.length ? ' ' + parts.join(', ') : '';
+    if (shown === 0) return 'No ' + noun + tail + '.' + (parts.length ? ' Take a filter off to see more.' : '');
+    return 'Showing ' + shown + ' of ' + total + ' ' + singular(total, noun) + (parts.length ? ', ' + parts.join(', ') : '') + '.';
+  }
+  function setSel(sel, v) { sel.value = v; if (sel._dd) syncDD(sel._dd); }
+
+  // A small menu (View). Same look and closers as the dropdown popup: the .dd-menu class makes editing() hold
+  // live refreshes and the shortcut guard ignore its keys. Focus moves into the menu; toggles keep it open.
+  function openPop(btn, items) {
+    if (btn._pm && btn._pm.open) { closeMenu(btn._pm, true); return; }
+    if (openDD) closeMenu(openDD, false);
+    var m = { btn: btn, open: true, alignEnd: true }, menu = mk('div', 'dd-menu pm'), btns = [];
+    menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', btn.getAttribute('aria-label') || 'Menu');
+    items.forEach(function (it) {
+      if (it.t === 'sep') { menu.appendChild(mk('div', 'pm-sep')); return; }
+      if (it.t === 'head') { var h = mk('div', 'pm-head'); h.textContent = it.label; menu.appendChild(h); return; }
+      var b = mk('button', 'pm-item'), sp = mk('span');
+      b.type = 'button'; b.tabIndex = -1; it.el = b;
+      b.setAttribute('role', it.t === 'radio' ? 'menuitemradio' : it.t === 'check' ? 'menuitemcheckbox' : 'menuitem');
+      if (it.t) b.setAttribute('aria-checked', it.on ? 'true' : 'false');
+      sp.textContent = it.label; b.appendChild(icon('i-check')); b.appendChild(sp);
+      b.addEventListener('click', function () {
+        if (it.t === 'check') { it.on = !it.on; b.setAttribute('aria-checked', it.on ? 'true' : 'false'); it.run(it.on); }
+        else if (it.t === 'radio') {
+          items.forEach(function (x) { if (x.t === 'radio' && x.group === it.group) { x.on = x === it; x.el.setAttribute('aria-checked', x.on ? 'true' : 'false'); } });
+          it.run();
+        } else { it.run(); closeMenu(m, true); }
+      });
+      b.addEventListener('mouseover', function () { b.focus({ preventScroll: true }); });
+      menu.appendChild(b); btns.push(b);
+    });
+    m.menu = menu; btn._pm = m; openDD = m;
+    m.close = function (refocus) {
+      if (!m.open) return;
+      m.open = false; if (openDD === m) openDD = null;
+      menu.remove(); btn.setAttribute('aria-expanded', 'false');
+      if (refocus) btn.focus();
+    };
+    menu.addEventListener('keydown', function (e) {
+      var i = btns.indexOf(document.activeElement), k = e.key;
+      if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); btns[(i + (k === 'ArrowDown' ? 1 : btns.length - 1) + (i < 0 && k === 'ArrowUp' ? 1 : 0)) % btns.length].focus({ preventScroll: true }); }
+      else if (k === 'Home' || k === 'End') { e.preventDefault(); btns[k === 'Home' ? 0 : btns.length - 1].focus({ preventScroll: true }); }
+      else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(m, true); }
+      else if (k === 'Tab') closeMenu(m, true);
+    });
+    menu.addEventListener('focusout', function (e) { if (m.open && e.relatedTarget !== btn && !menu.contains(e.relatedTarget)) closeMenu(m, false); });
+    document.body.appendChild(menu);
+    btn.setAttribute('aria-expanded', 'true');
+    placeDD(m);
+    var first = null; items.forEach(function (it) { if (!first && it.el && it.on) first = it.el; });
+    (first || btns[0]).focus({ preventScroll: true });
+  }
+
+  function buildTable(root) {
+    var T = { root: root, id: root.getAttribute('data-table') || 'table', noun: root.getAttribute('data-noun') || 'rows' };
+    var table = $('table', root), tbody = $('tbody', table), mode = root.getAttribute('data-paged') || 'client';
+    var emptyText = root.getAttribute('data-empty') || 'Nothing to show.';
+    var topbar = root.hasAttribute('data-topbar-search') && mode !== 'server' ? $('input[data-search]') : null;
+    var searchLabel = mode === 'server' ? '' : root.getAttribute('data-search');
+    var S = dtState[T.id] || (dtState[T.id] = { q: '', pill: 'all', sort: null, page: 0 });
+    T.topbar = topbar;
+    if (topbar) { if (S.q && !topbar.value) topbar.value = S.q; else S.q = topbar.value; }
+
+    // columns and rows, read from the markup
+    T.rows = Array.prototype.filter.call(tbody.children, function (tr) { return tr.tagName === 'TR'; }).map(function (tr, n) {
+      return { tr: tr, idx: n, k: (tr.getAttribute('data-k') || '').split(/\s+/).filter(Boolean), vals: [], text: null };
+    });
+    var ths = $$('thead th', table);
+    function rowVal(r, i) {
+      if (!(i in r.vals)) {
+        var td = r.tr.children[i];
+        r.vals[i] = !td ? undefined : sortVal(td.hasAttribute('data-sort') ? td.getAttribute('data-sort') : td.textContent);
+      }
+      return r.vals[i];
+    }
+    T.cols = ths.map(function (th, i) {
+      var label = th.textContent.replace(/\s+/g, ' ').trim();
+      var c = {
+        i: i, th: th, label: label, id: label || '#' + i, pin: th.getAttribute('data-pin') || '', hide: th.hasAttribute('data-hide'),
+        w: +th.getAttribute('data-w') || 0, below: th.getAttribute('data-hide-below') || ''
+      };
+      c.canSort = th.getAttribute('data-sort') !== 'false' && T.rows.some(function (r) { return rowVal(r, i) !== undefined; });
+      c.canHide = i > 0 && !c.pin && !!label;
+      return c;
+    });
+    T.pk = T.id + ':' + T.cols.map(function (c) { return c.label; }).join('|');
+    var colById = {}; T.cols.forEach(function (c) { colById[c.id] = c; });
+
+    // column classes (breakpoint hiding and pinning are CSS)
+    T.cols.forEach(function (c) {
+      var cls = [];
+      if (c.below) cls.push('hb-' + c.below);
+      if (c.pin === 'end') cls.push('dt-pin-end');
+      if (th_num(c.th)) cls.push('dt-num');
+      c.cls = cls;
+      cls.forEach(function (x) { c.th.classList.add(x); });
+      T.rows.forEach(function (r) { var td = r.tr.children[c.i]; if (td) cls.forEach(function (x) { td.classList.add(x); }); });
+      c.th.setAttribute('scope', 'col');
+      if (c.w) c.th.style.minWidth = c.w + 'px';
+    });
+    function th_num(th) { return th.hasAttribute('data-num'); }
+
+    // chrome
+    var bar = mk('div', 'dt-bar'), sum = mk('p', 'dt-sum'), sumT = mk('span'), clear = mk('button', 'dt-link');
+    var wrap = mk('div', 'dt-wrap'), foot = mk('nav', 'dt-foot'), live = mk('span', 'sr');
+    var filterable = !!(topbar || searchLabel || root.getAttribute('data-pills'));
+    var q = null, pillBtns = [], more = null, sizeSel = null;
+    if (searchLabel) {
+      var sw = mk('div', 'search dt-search'); q = mk('input', 'dt-q'); q.type = 'search'; q.placeholder = searchLabel; q.setAttribute('aria-label', searchLabel);
+      q.setAttribute('autocomplete', 'off');
+      sw.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="m21 21-6-6"/></svg>';
+      sw.appendChild(q); bar.appendChild(sw);
+      q.addEventListener('input', function () { T.setQuery(q.value); });
+    }
+    var spec = (root.getAttribute('data-pills') || '').split(',').map(function (p) { var a = p.split(':'); return a[0] ? { key: a[0], label: a[1] || a[0] } : null; }).filter(Boolean);
+    spec.forEach(function (p) { p.count = p.key === 'all' ? T.rows.length : T.rows.filter(function (r) { return r.k.indexOf(p.key) >= 0; }).length; });
+    if (spec.length) {
+      var out = spec.length > 5 ? spec.slice(0, 4) : spec, rest = spec.slice(out.length), pills = mk('div', 'dt-pills');
+      pills.setAttribute('role', 'group'); pills.setAttribute('aria-label', 'Quick views');
+      out.forEach(function (p) {
+        var b = mk('button', 'dt-pill'), n = mk('span', 'dt-n'); b.type = 'button'; b.appendChild(document.createTextNode(p.label + ' ')); n.textContent = p.count; b.appendChild(n);
+        b.addEventListener('click', function () { T.setPill(p.key); });
+        b._key = p.key; pillBtns.push(b); pills.appendChild(b);
+      });
+      if (rest.length) {
+        more = mk('select', 'dt-more'); more.setAttribute('aria-label', 'More views'); more.style.width = 'auto';
+        var o0 = mk('option'); o0.value = ''; o0.text = 'More'; more.add(o0);
+        rest.forEach(function (p) { var o = mk('option'); o.value = p.key; o.text = p.label + ' (' + p.count + ')'; more.add(o); });
+        more.addEventListener('change', function () { T.setPill(more.value || out[0].key); });
+        pills.appendChild(more);
+      }
+      bar.appendChild(pills);
+    }
+    bar.appendChild(mk('span', 'dt-grow'));
+    var vb = mk('button', 'dt-view sm'), vlab = mk('span'); vb.type = 'button'; vb.setAttribute('aria-haspopup', 'menu'); vb.setAttribute('aria-expanded', 'false'); vb.setAttribute('aria-label', 'View: density and columns');
+    vlab.textContent = 'View'; vb.appendChild(vlab); vb.appendChild(icon('i-chevron'));
+    vb.addEventListener('click', function () { vb.focus(); T.viewMenu(); });
+    vb.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.viewMenu(); } });
+    bar.appendChild(vb);
+
+    sum.setAttribute('aria-live', 'polite'); sum.hidden = !filterable;
+    clear.type = 'button'; clear.textContent = 'Clear all'; clear.hidden = true;
+    clear.addEventListener('click', function () { T.clearAll(); });
+    sum.appendChild(sumT); sum.appendChild(clear);
+
+    wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', T.noun + ', scrolls sideways');
+    live.setAttribute('aria-live', 'polite');
+    foot.setAttribute('aria-label', 'Pages of ' + T.noun); foot.hidden = true;
+    var cnt = mk('p', 'dt-count'), size = mk('span', 'dt-size'), pg = mk('div', 'dt-pages');
+    if (mode === 'client') {
+      sizeSel = mk('select', 'dt-sizesel'); sizeSel.setAttribute('aria-label', 'Rows per page'); sizeSel.style.width = 'auto';
+      DT_SIZES.forEach(function (n) { var o = mk('option'); o.value = n; o.text = n; sizeSel.add(o); });
+      var sl = mk('span', 'dt-rows'); sl.textContent = 'Rows per page'; sl.setAttribute('aria-hidden', 'true');
+      size.appendChild(sl); size.appendChild(sizeSel);
+      sizeSel.addEventListener('change', function () { prefs().size = +sizeSel.value; savePrefs(); S.page = 0; dtLive.forEach(function (t) { if (t.sizeSel) t.render(); }); });
+    }
+    foot.appendChild(cnt); foot.appendChild(size); foot.appendChild(pg);
+
+    table.parentNode.insertBefore(wrap, table); wrap.appendChild(table);
+    root.insertBefore(bar, wrap); root.insertBefore(sum, wrap); root.appendChild(foot); root.appendChild(live);
+    T.sizeSel = sizeSel;
+
+    // sortable headers
+    var ARROW = { asc: 'M8 13V3M4 7l4-4 4 4', desc: 'M8 3v10M4 9l4 4 4-4', none: 'M5 6l3-3 3 3M5 10l3 3 3-3' };
+    T.cols.forEach(function (c) {
+      if (!c.canSort) return;
+      var b = mk('button', 'dt-sort'), NS = 'http://www.w3.org/2000/svg', s = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+      b.type = 'button'; b.appendChild(document.createTextNode(c.label));
+      s.setAttribute('viewBox', '0 0 16 16'); s.setAttribute('class', 'dt-arrow'); s.setAttribute('aria-hidden', 'true'); s.appendChild(p); b.appendChild(s);
+      c.th.textContent = ''; c.th.appendChild(b); c.path = p; c.btn = b;
+      b.addEventListener('click', function () { T.sortBy(c); });
+    });
+
+    function hidden(c) { var m = prefs().columns[T.pk]; return m && typeof m[c.id] === 'boolean' ? !m[c.id] : c.hide; }
+    T.layout = function () {
+      T.cols.forEach(function (c) {
+        var off = c.canHide && hidden(c);
+        c.off = off;
+        c.th.classList.toggle('dt-off', off);
+        T.rows.forEach(function (r) { var td = r.tr.children[c.i]; if (td) td.classList.toggle('dt-off', off); });
+      });
+      root.classList.toggle('dt-compact', prefs().density === 'compact');
+      var e = $('.dt-empty td', tbody); if (e) e.colSpan = T.cols.filter(function (c) { return !c.off; }).length;
+    };
+
+    function rowText(r) {
+      if (r.text === null) {
+        var parts = [r.tr.getAttribute('data-row') || ''];
+        Array.prototype.forEach.call(r.tr.children, function (td, i) {
+          var c = T.cols[i]; if (c && (c.pin || c.th.getAttribute('data-sort') === 'false') && !c.canSort) return;
+          parts = cellText(td, parts);
+        });
+        r.text = parts.join(' ').replace(/\s+/g, ' ').toLowerCase();
+      }
+      return r.text;
+    }
+    function firstDir(c) { var v = T.rows.length ? rowVal(T.rows[0], c.i) : undefined; return typeof v === 'number' ? 'desc' : 'asc'; }
+
+    T.setQuery = function (v) {
+      if (v === S.q) return;
+      S.q = v; S.page = 0; if (q && q.value !== v) q.value = v; T.render();
+    };
+    T.setPill = function (k) { if (k === S.pill) return; S.pill = k; S.page = 0; T.render(); };
+    T.sortBy = function (c) {
+      var s = S.sort, f = firstDir(c);
+      if (!s || s.col !== c.id) S.sort = { col: c.id, dir: f };
+      else if (s.dir === f) S.sort = { col: c.id, dir: f === 'asc' ? 'desc' : 'asc' };
+      else S.sort = null;
+      S.page = 0; T.render();
+    };
+    T.clearAll = function () {
+      S.q = ''; S.pill = 'all'; S.page = 0;
+      if (q) q.value = ''; if (topbar) topbar.value = '';
+      T.render();
+      var f = q || topbar; if (f) f.focus({ preventScroll: true });
+    };
+    T.goto = function (n, which) {
+      S.page = n; T.render(true);
+      var b = which === 'prev' || which === 'next' ? $('.dt-step[data-step=' + which + ']', pg) : null;
+      (b || $('.dt-pg[aria-current]', pg) || pg).focus({ preventScroll: true });
+    };
+    T.viewMenu = function () {
+      var cur = prefs().density === 'compact' ? 'compact' : 'comfortable';
+      var items = [
+        { t: 'head', label: 'Density' },
+        { t: 'radio', group: 'd', label: 'Comfortable', on: cur === 'comfortable', run: function () { setDensity('comfortable'); } },
+        { t: 'radio', group: 'd', label: 'Compact', on: cur === 'compact', run: function () { setDensity('compact'); } }
+      ];
+      var hideable = T.cols.filter(function (c) { return c.canHide; });
+      if (hideable.length) {
+        items.push({ t: 'sep' }, { t: 'head', label: 'Columns' });
+        hideable.forEach(function (c) {
+          items.push({ t: 'check', label: c.label, on: !hidden(c), run: function (on) {
+            var m = prefs().columns[T.pk] || (prefs().columns[T.pk] = {}); m[c.id] = on; savePrefs(); T.layout(); T.fit();
+          } });
+        });
+      }
+      openPop(vb, items);
+    };
+    function setDensity(d) { prefs().density = d; savePrefs(); dtLive.forEach(function (t) { t.layout(); t.fit(); }); }
+
+    // sticky header sticks to the page only while the table fits; with a horizontal scroller it sticks inside it
+    T.fit = function () {
+      var over = table.offsetWidth > wrap.clientWidth + 1;
+      wrap.classList.toggle('dt-page', !over);
+      if (over) wrap.tabIndex = 0; else wrap.removeAttribute('tabindex');
+    };
+
+      T.render = function (announce) {
+      var qq = S.q.trim().toLowerCase(), list = T.rows.filter(function (r) {
+        return (S.pill === 'all' || r.k.indexOf(S.pill) >= 0) && (!qq || rowText(r).indexOf(qq) >= 0);
+      });
+      var sc = S.sort && colById[S.sort.col] && colById[S.sort.col].canSort ? colById[S.sort.col] : null;
+      if (!sc) S.sort = null;
+      if (sc) {
+        var sign = S.sort.dir === 'desc' ? -1 : 1;
+        list.sort(function (a, b) {
+          var x = rowVal(a, sc.i), y = rowVal(b, sc.i);
+          if (x === undefined || y === undefined) return x === y ? a.idx - b.idx : x === undefined ? 1 : -1; // empty last, either way
+          return sign * cmpVal(x, y) || a.idx - b.idx;
+        });
+      }
+      var matched = list.length, size = mode === 'client' ? prefs().size : Math.max(matched, 1);
+      var pages = Math.max(1, Math.ceil(matched / size));
+      S.page = Math.max(0, Math.min(S.page, pages - 1));
+      T.rows.forEach(function (r) { r.show = false; });
+      list.slice(S.page * size, S.page * size + size).forEach(function (r) { r.show = true; });
+      var inList = {}; list.forEach(function (r) { inList[r.idx] = 1; });
+      var order = list.concat(T.rows.filter(function (r) { return !inList[r.idx]; }));
+      var cur = Array.prototype.slice.call(tbody.children), moved = order.some(function (r, n) { return cur[n] !== r.tr; });
+      if (moved) order.forEach(function (r) { tbody.appendChild(r.tr); });
+      T.rows.forEach(function (r) { r.tr.hidden = !r.show; });
+      var none = $('.dt-empty', tbody);
+      if (!list.length) {
+        if (!none) {
+          none = mk('tr', 'dt-empty'); var td = mk('td'), p = mk('span'), cb = mk('button', 'dt-link');
+          p.className = 'dt-empty-t'; cb.type = 'button'; cb.textContent = 'Clear filters'; cb.addEventListener('click', function () { T.clearAll(); });
+          td.appendChild(p); td.appendChild(cb); none.appendChild(td); tbody.appendChild(none);
+        }
+        $('.dt-empty-t', none).textContent = emptyText + ' ';
+        $('button', none).hidden = !(S.q.trim() || S.pill !== 'all');
+        none.firstChild.colSpan = T.cols.filter(function (c) { return !c.off; }).length;
+      } else if (none) none.remove();
+
+      // headers
+      T.cols.forEach(function (c) {
+        if (!c.canSort) return;
+        var d = sc === c ? S.sort.dir : 'none';
+        c.th.setAttribute('aria-sort', d === 'none' ? 'none' : d === 'asc' ? 'ascending' : 'descending');
+        c.path.setAttribute('d', ARROW[d]); c.btn.classList.toggle('on', d !== 'none');
+      });
+      // pills
+      pillBtns.forEach(function (b) { b.setAttribute('aria-pressed', b._key === S.pill ? 'true' : 'false'); });
+      if (more) setSel(more, spec.some(function (p) { return p.key === S.pill && pillBtns.every(function (b) { return b._key !== p.key; }); }) ? S.pill : '');
+      // summary
+      var parts = [], act = spec.filter(function (p) { return p.key === S.pill; })[0];
+      if (act && S.pill !== 'all') parts.push(act.label.toLowerCase());
+      if (S.q.trim()) parts.push('matching “' + S.q.trim() + '”');
+      var den = S.pill === 'all' || !act ? T.rows.length : act.count;
+      sumT.textContent = filterSummary(matched, den, T.noun, parts) + ' ';
+      clear.hidden = !(S.q.trim() || S.pill !== 'all');
+      // pager
+      var Noun = T.noun.charAt(0).toUpperCase() + T.noun.slice(1), at = function (i) { return (i * size + 1) + '–' + Math.min(matched, (i + 1) * size); };
+      var showPager = mode === 'client' && matched > DT_SIZES[0];
+      foot.hidden = !showPager;
+      if (!showPager) pg.innerHTML = '';
+      if (showPager) {
+        cnt.innerHTML = ''; cnt.appendChild(document.createTextNode(Noun + ' '));
+        [at(S.page), ' of ', String(matched)].forEach(function (t, n) { if (n === 1) cnt.appendChild(document.createTextNode(t)); else { var b = mk('b'); b.textContent = t; cnt.appendChild(b); } });
+        setSel(sizeSel, String(size));
+        pg.innerHTML = '';
+        if (pages > 1) {
+          var step = function (to, label, way) {
+            var b = mk('button', 'dt-pg dt-step'); b.type = 'button'; b.setAttribute('aria-label', label); b.setAttribute('data-step', way);
+            b.setAttribute('aria-disabled', to < 0 || to >= pages ? 'true' : 'false');
+            var ic = icon('i-chevron'); ic.setAttribute('class', 'ic dt-chev ' + way); b.appendChild(ic);
+            b.addEventListener('click', function () { if (to >= 0 && to < pages) T.goto(to, way); });
+            return b;
+          };
+          var list2 = function (arr) {
+            var s = mk('span', 'dt-plist');
+            arr.forEach(function (n) {
+              if (n === 'gap') { var g = mk('span', 'dt-gap'); g.textContent = '…'; g.setAttribute('aria-hidden', 'true'); s.appendChild(g); return; }
+              var b = mk('button', 'dt-pg'); b.type = 'button'; b.textContent = n + 1; b.setAttribute('aria-label', 'Page ' + (n + 1));
+              if (n === S.page) b.setAttribute('aria-current', 'page');
+              b.addEventListener('click', function () { if (n !== S.page) T.goto(n, n); });
+              s.appendChild(b);
+            });
+            return s;
+          };
+          var narrow = window.matchMedia && matchMedia('(max-width:639px)').matches;
+          pg.appendChild(step(S.page - 1, 'Previous page', 'prev'));
+          pg.appendChild(list2(pageList(S.page, pages, narrow ? 5 : 7)));
+          pg.appendChild(step(S.page + 1, 'Next page', 'next'));
+        }
+      }
+      if (announce) {
+        live.textContent = Noun + ' ' + at(S.page) + ' of ' + matched + ' · page ' + (S.page + 1) + ' of ' + pages;
+        var top = wrap.getBoundingClientRect().top;
+        if (top < 0 || top > window.innerHeight) wrap.scrollIntoView({ block: 'start' });
+      }
+      T.fit();
+    };
+
+    if (sizeSel) setSel(sizeSel, String(prefs().size));
+    dtLive = dtLive.filter(function (t) { return document.contains(t.root); });
+    dtLive.push(T);
+    T.layout(); T.render();
+    return T;
+  }
+  function wireTables(root) {
+    $$('.dt', root).forEach(function (el) { if (!el._dt) el._dt = buildTable(el); });
+  }
+  var dtNarrow = null;
+  window.addEventListener('resize', function () {
+    var n = window.matchMedia && matchMedia('(max-width:639px)').matches; // the page list has 5 slots when narrow, 7 otherwise
+    dtLive.forEach(function (t) { if (dtNarrow !== null && n !== dtNarrow) t.render(); else t.fit(); });
+    dtNarrow = n;
+  });
+
+  // ---- search filter ----
+  // The topbar box is the search input of the page's tables (overview, monitors); each table filters itself.
+  function wireSearch(root) {
+    var s = $('input[data-search]', root); if (!s || s._wired) return; s._wired = true;
+    s.addEventListener('input', function () { dtLive.forEach(function (t) { if (t.topbar === s) t.setQuery(s.value); }); });
   }
 
   // ---- inline validation ----
@@ -396,7 +821,7 @@
     if (v.typeMismatch && type === 'url') return 'Enter a full URL that starts with http:// or https://.';
     // measured by hand: the browser's tooShort only fires after a user edit, not for filled or prefilled values
     if (val && el.minLength > 0 && val.length < el.minLength) return 'Use at least ' + el.minLength + ' characters.';
-    if (val && el.maxLength >= 0 && val.length > el.maxLength) return 'Use at most ' + el.maxLength + ' characters.';
+    if (val && el._touched && el.maxLength >= 0 && val.length > el.maxLength) return 'Use at most ' + el.maxLength + ' characters.';
     if (v.patternMismatch) return el.getAttribute('data-msg') || el.title || 'Use the format shown.';
     if (v.rangeUnderflow) return 'Must be at least ' + el.min + '.';
     if (v.rangeOverflow) return 'Must be at most ' + el.max + '.';
@@ -469,7 +894,7 @@
     var a = document.activeElement;
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
     if ($('#content[data-no-refresh]')) return true;
-    if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing              // a form re-rendered with a validation error
+    if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing
     if ($('.dd-menu')) return true;                                // a dropdown is open; replacing it would drop the menu
     var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
     return $$('#content form').some(function (f) { return f._dirty; }); // unsaved edits
@@ -499,16 +924,21 @@
         if (html === null) return;
         if (editing()) { pending = true; return; } // a dialog or edit began while this was in flight
         var main = $('#content'); if (!main) return;
-        var q = $('[data-search]'); var qv = q ? q.value : '';
+        var q = $('input[data-search]'); var qv = q ? q.value : '';
         var FOC = 'button,a[href],input,select,textarea,summary', act = document.activeElement;
         var fk = act && main.contains(act) ? focusKey(act) : '', ftag = fk ? act.tagName : '';
+        var dq = act && act.classList && act.classList.contains('dt-q') ? { id: act.closest('.dt').getAttribute('data-table'), a: act.selectionStart, b: act.selectionEnd } : null;
         main.innerHTML = html;
         wire(main);
         if (fk && document.activeElement !== act) { // keep the keyboard position across a refresh, but only on the same element
           var again = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; })[0];
           if (again) again.focus({ preventScroll: true });
         }
-        if (qv) { var nq = $('[data-search]'); if (nq) { nq.value = qv; nq.dispatchEvent(new Event('input')); } }
+        if (dq) { // the in-table search box has no identity key of its own; find it by its table
+          var nb = $('.dt[data-table="' + dq.id + '"] .dt-q', main);
+          if (nb) { nb.focus({ preventScroll: true }); try { nb.setSelectionRange(dq.a, dq.b); } catch (e) { } }
+        }
+        if (qv) { var nq = $('input[data-search]'); if (nq) { nq.value = qv; nq.dispatchEvent(new Event('input')); } }
         markUpdated();
       })
       .catch(function () { })
@@ -567,7 +997,7 @@
     if (e.key === 'Escape') closePanel();
     if (document.body.classList.contains('panel-open')) return; // modal: no page shortcuts behind it
     if (e.key === 'n' && $('#panel')) { e.preventDefault(); openPanel(); }
-    if (e.key === '/') { var s = $('[data-search]'); if (s) { e.preventDefault(); s.focus(); } }
+    if (e.key === '/') { var s = $('input[data-search]') || $('.dt-q'); if (s) { e.preventDefault(); s.focus(); } }
     if (e.key === 't') cycleTheme();
   });
 
@@ -580,7 +1010,7 @@
   function wireTZ(root) {
     $$('input[name=tz_offset]', root).forEach(function (i) { i.value = String(new Date().getTimezoneOffset()); });
   }
-  function wire(root) { wireValidation(root); wireDropdowns(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
+  function wire(root) { wireValidation(root); wireTables(root); wireDropdowns(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
   document.addEventListener('DOMContentLoaded', function () {
     toastRegions(); liftFlash(); wire(document); wirePanel(); connect();
     markUpdated();
