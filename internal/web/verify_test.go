@@ -2,6 +2,7 @@ package web
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -161,6 +162,9 @@ func TestVerifyGetChangesNothing(t *testing.T) {
 	if e.verified(t, "new@x.example") {
 		t.Fatal("GET verified the account")
 	}
+	if resp, body := e.post(t, c, "/verify", url.Values{"token": {linkToken(link)}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("token did not survive the GETs: %d %s", resp.StatusCode, body)
+	}
 }
 
 func TestVerifyPostSignsIn(t *testing.T) {
@@ -210,7 +214,24 @@ func TestOpenSignupIdenticalResponses(t *testing.T) {
 	if r1.StatusCode != 200 || norm(r1, b1, "new@x.example") != norm(r2, b2, opEmail) {
 		t.Fatalf("new vs existing:\n%d %s\n%d %s", r1.StatusCode, b1, r2.StatusCode, b2)
 	}
-	n := 2 // the operator's workspace and new@x.example's
+	// Both cases charged the same slots: from each address, the same number
+	// of further sign-ups gets through before the first 429.
+	until429 := func(ip string, email func(i int) string) int {
+		for i := 1; i <= 20; i++ {
+			if resp, _ := e.signUpOpen(t, ip, email(i)); resp.StatusCode == 429 {
+				return i
+			}
+		}
+		t.Fatal("never throttled")
+		return 0
+	}
+	nNew := until429("127.0.0.2", func(i int) string { return fmt.Sprintf("more%d@x.example", i) })
+	nDup := until429("127.0.0.3", func(int) string { return opEmail })
+	if nNew != nDup {
+		t.Fatalf("limiter slots differ: new throttled at %d, duplicate at %d", nNew, nDup)
+	}
+	e.advance(2 * time.Hour)
+	n := e.userCount(t) // one workspace per user
 	e.cfg.Limits.MaxWorkspaces = &n
 	r1, b1 = e.signUpOpen(t, "127.0.0.4", "other@x.example")
 	r2, b2 = e.signUpOpen(t, "127.0.0.5", opEmail)
@@ -323,5 +344,43 @@ func TestUnverifiedStatusPage404(t *testing.T) {
 	e.post(t, c, "/verify", url.Values{"token": {linkToken(link)}})
 	if resp, _ := e.get(t, c, "/s/acme-team"); resp.StatusCode != 200 {
 		t.Fatalf("verified: %d", resp.StatusCode)
+	}
+}
+
+func TestResendDroppedKeepsOldLink(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.openSignedUp(t, "127.0.0.2", "new@x.example")
+	c := e.client(t)
+	e.post(t, c, "/verify/resend", url.Values{"email": {"new@x.example"}})
+	sent := e.mail.all()
+	if len(sent) != 2 {
+		t.Fatalf("mail = %+v", sent)
+	}
+	link := linkFrom(sent[1].Body)
+	e.mail.mu.Lock()
+	e.mail.drop = true
+	e.mail.mu.Unlock()
+	if resp, body := e.post(t, c, "/verify/resend", url.Values{"email": {"new@x.example"}}); resp.StatusCode != 200 || !strings.Contains(body, msgResendSent) {
+		t.Fatalf("dropped resend: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := e.post(t, c, "/verify", url.Values{"token": {linkToken(link)}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("old link invalidated by a dropped resend: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestUnverifiedWrongPassword(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.addUnverified(t, "unv@x.example")
+	resp, body := e.post(t, e.client(t), "/login", url.Values{"email": {"unv@x.example"}, "password": {"wrong password!"}})
+	if resp.StatusCode != 401 || !strings.Contains(body, msgBadLogin) || strings.Contains(body, msgUnverified) {
+		t.Fatalf("wrong password: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestVerifyBadTokenOffersResend(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	resp, body := e.get(t, e.client(t), "/verify?token=bogus")
+	if resp.StatusCode != 404 || !strings.Contains(body, msgBadLink) || !strings.Contains(body, `action="/verify/resend"`) {
+		t.Fatalf("bad token: %d %s", resp.StatusCode, body)
 	}
 }

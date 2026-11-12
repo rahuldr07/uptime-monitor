@@ -75,6 +75,7 @@ func (s *Server) verifyPost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.logger.Info("email verified", "event", "email_verified", "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	ctx = context.WithoutCancel(ctx)
 	// Someone else's browser session is left alone: the link confirms the
 	// address but never signs anyone in over an existing session.
@@ -95,7 +96,6 @@ func (s *Server) verifyPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, r, raw)
-	s.logger.Info("email verified", "event", "email_verified", "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
