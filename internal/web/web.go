@@ -204,7 +204,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "login", "setup", "reset", "signup", "verify"} {
+	for _, page := range []string{"status", "login", "setup", "reset", "signup", "verify", "forgot"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)

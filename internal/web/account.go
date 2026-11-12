@@ -64,6 +64,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		return
 	}
 	s.logger.Info("password changed", "event", "password_changed", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
+	s.noticePasswordChanged(a.User.Email)
 	redirect(w, r, "/account", msgPasswordChanged)
 }
 

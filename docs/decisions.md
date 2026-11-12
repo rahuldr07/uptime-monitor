@@ -454,3 +454,11 @@ Full design:
   - Alerts make 3 attempts in total (D-004 said "three retries").
   - The isolation suite seeds workspaces deterministically and uses longer wall-clock deadlines, because short ones flaked under `-race`.
 - **Why:** These rulings settle points the spec left open or got wrong while M1e was built. Each keeps one workspace from reaching, starving or outliving another.
+
+### D-126: M2 (email) rulings
+- **Status:** Accepted (amends §5.7, §5.8 and the route classes of §8.2; Task 7 extends this entry)
+- **Decision:**
+  - A password reset signs the user in only when the browser has no session or has a session for the same user. If the browser holds a session for a different user, that session and its cookie are left alone and the page says "Password changed. Sign in to continue." This departs from §5.8 (which always signs in) and mirrors §5.7.
+  - `/verify` (GET and POST) and `/reset` (GET and POST) are `classPublic`: a signed-in user who opens an emailed link sees the page instead of being redirected to `/`. `/forgot` is `classGuest`.
+  - `/forgot` answers 200 with the same body for every address (unknown, unverified, disabled or verified), and 404 when no system mail is configured. Unverified accounts get a reset link; completing the reset verifies the address.
+  - A reset and a password change on `/account` each send a "Your password was changed" notice through `Mailer.Notice`.

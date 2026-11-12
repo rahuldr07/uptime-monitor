@@ -1,0 +1,14 @@
+{{define "content"}}
+<div class="login">
+  <div class="card">
+    <h1>Forgot password</h1>
+    {{if not .Sent}}
+    <form method="post" action="/forgot">
+      <div class="field"><label>Email</label><input name="email" type="email" autofocus required autocomplete="username"></div>
+      <div style="margin-top:14px"><button type="submit" class="primary">Send a reset link</button></div>
+    </form>
+    {{end}}
+    <p class="muted small" style="margin:14px 0 0"><a href="/login">Back to sign in</a></p>
+  </div>
+</div>
+{{end}}

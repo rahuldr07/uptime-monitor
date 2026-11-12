@@ -8,7 +8,10 @@ import (
 	"uptimemon/internal/store"
 )
 
-const msgBadLink = "This link is invalid or has expired."
+const (
+	msgBadLink               = "This link is invalid or has expired."
+	msgPasswordChangedSignIn = "Password changed. Sign in to continue."
+)
 
 type resetData struct {
 	base
@@ -66,6 +69,7 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	cur, signedIn := s.currentAuth(r)
 	u, err := s.sys.ResetPassword(ctx, tok, phc, s.now())
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
@@ -75,12 +79,19 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.logger.Warn("password reset", "event", "password_reset", "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
+	s.noticePasswordChanged(u.Email)
+	// Someone else's browser session is left alone, as in verifyPost.
+	if signedIn && cur.User.ID != u.ID {
+		d.Token, d.Flash = "", msgPasswordChangedSignIn
+		s.render(w, r, "reset", d)
+		return
+	}
 	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.setSessionCookie(w, r, raw)
-	s.logger.Warn("password reset", "event", "password_reset", "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
