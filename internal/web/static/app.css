@@ -1,3 +1,4 @@
+/*! Icons: Lucide (ISC/MIT), see /static/licenses.txt */
 :root{color-scheme:light;--bg:#fff;--side:#fff;--card:#fafafa;--card2:#f5f5f5;--text:#1a1a1a;--muted:#6e6e6e;--faint:#6e6e6e;--border:#d4d4d4;--border-strong:#909090;--ok:#3d9a57;--ok-bg:rgba(61,154,87,.12);--ok-text:#256b39;--bad:#d1383d;--bad-bg:rgba(209,56,61,.1);--bad-text:#a82a2f;--warn:#d68c27;--warn-bg:rgba(214,140,39,.14);--warn-text:#8a5508;--gray-bg:rgba(0,0,0,.06);--gray-text:#5c5c5c;--accent:#3b7dd8;--accent-solid:#2968c3;--accent-bg:rgba(59,125,216,.1);--accent-text:#2459a6;--info:#318795;--info-bg:rgba(49,135,149,.12);--info-text:#1f6470;--on-accent:#fff;--radius:4px;--shadow:none}
 html[data-theme=dark]{color-scheme:dark;--bg:#0a0a0a;--side:#0a0a0a;--card:#141414;--card2:#1e1e1e;--text:#eee;--muted:#808080;--faint:#808080;--border:#3c3c3c;--border-strong:#646464;--ok:#7fd88f;--ok-bg:rgba(127,216,143,.12);--ok-text:#7fd88f;--bad:#e06c75;--bad-bg:rgba(224,108,117,.14);--bad-text:#e06c75;--warn:#f5a742;--warn-bg:rgba(245,167,66,.13);--warn-text:#f5a742;--gray-bg:rgba(255,255,255,.07);--gray-text:#b5b5b5;--accent:#fab283;--accent-solid:#fab283;--accent-bg:rgba(250,178,131,.12);--accent-text:#fab283;--info:#56b6c2;--info-bg:rgba(86,182,194,.13);--info-text:#56b6c2;--on-accent:#0a0a0a;--radius:4px;--shadow:none}
 @media(prefers-color-scheme:dark){html:not([data-theme=light]){color-scheme:dark;--bg:#0a0a0a;--side:#0a0a0a;--card:#141414;--card2:#1e1e1e;--text:#eee;--muted:#808080;--faint:#808080;--border:#3c3c3c;--border-strong:#646464;--ok:#7fd88f;--ok-bg:rgba(127,216,143,.12);--ok-text:#7fd88f;--bad:#e06c75;--bad-bg:rgba(224,108,117,.14);--bad-text:#e06c75;--warn:#f5a742;--warn-bg:rgba(245,167,66,.13);--warn-text:#f5a742;--gray-bg:rgba(255,255,255,.07);--gray-text:#b5b5b5;--accent:#fab283;--accent-solid:#fab283;--accent-bg:rgba(250,178,131,.12);--accent-text:#fab283;--info:#56b6c2;--info-bg:rgba(86,182,194,.13);--info-text:#56b6c2;--on-accent:#0a0a0a;--radius:4px;--shadow:none}}
@@ -25,7 +26,7 @@ h1,h2,h3{font-weight:600;margin:0}h1{font-size:18px}h2{font-size:14px}h3{font-si
 .live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok)}
 .live.off{background:var(--faint)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media(prefers-reduced-motion:no-preference){.live.beat{animation:pulse 2s ease-in-out 3}.live.off{animation:none}}
+@media(prefers-reduced-motion:no-preference){.live.beat{animation:pulse 1.6s ease-in-out 3}.live.off{animation:none}}
 /* cards & tiles */
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
 .card.block{margin-bottom:14px}.card .head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -210,7 +211,7 @@ button:focus-visible,.btn:focus-visible,a:focus-visible,summary:focus-visible{ou
 button:disabled{opacity:.5;cursor:not-allowed}
 button[aria-busy=true]{pointer-events:none}
 button[aria-busy=true]::before{content:"";width:12px;height:12px;flex:none;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
-button[aria-busy=true]:has(.ic)::before{content:none}button[aria-busy=true]:has(.ic){opacity:.7}
+button[aria-busy=true]:has(.ic.spin)::before{content:none}button[aria-busy=true]:has(.ic.spin){opacity:.7}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){button[aria-busy=true]::before{animation:none}}
 .ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
@@ -221,7 +222,7 @@ button[aria-busy=true]:has(.ic)::before{content:none}button[aria-busy=true]:has(
   a,button,.btn{transition:color .12s ease,background-color .12s ease,border-color .12s ease}
   button:active .ic,.btn:active .ic{scale:.92;transition:scale .1s ease}
   button[aria-busy=true] .ic.spin{animation:spin .9s linear .3s infinite backwards;transform-origin:center}
-  html.paused .ic.spin,html.paused .live{animation-play-state:paused}
+  html.paused .ic.spin,html.paused .live,html.paused button[aria-busy=true]::before{animation-play-state:paused}
   .ic.fade{animation:ic-fade .15s ease}
   .ic-swap .swap-out{animation:ic-fade .15s ease reverse forwards}.ic-swap .swap-in{animation:ic-fade .15s ease}
   .ic-swap.rot .swap-out{animation:ic-out .1s ease-in forwards}.ic-swap.rot .swap-in{animation:ic-in .1s ease-out .1s backwards}
@@ -328,5 +329,5 @@ dialog[open]{animation:dlg-in .14s ease-out}dialog[open]::backdrop{animation:dlg
 .status-head{text-align:center;margin:10px 0 24px}.status-head h1{font-size:22px}.status-head p{color:var(--muted);margin:6px 0 0}
 .status-wrap{max-width:860px;margin:0 auto;padding:30px 20px 60px}
 .group-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}
-@media(max-width:900px){.shell{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;align-items:center;gap:4px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.side .brand{padding:0 8px 0 0}.side a.nav span.t{display:none}.side .foot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}.side .foot button,.side .foot .btn{width:auto}.main{padding:16px 14px 60px}}
+@media(max-width:900px){.shell{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;align-items:center;gap:4px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.side .brand{padding:0 8px 0 0}.side a.nav span.t{position:absolute;left:-9999px}.side .foot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}.side .foot button,.side .foot .btn{width:auto}.main{padding:16px 14px 60px}}
 .dt td.btns>a.btn,.dt td.acts>a.btn{vertical-align:middle}

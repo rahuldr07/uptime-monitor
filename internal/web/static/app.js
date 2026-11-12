@@ -189,7 +189,7 @@
       wrap = document.createElement('span'); wrap.className = 'ic-swap';
       old.parentNode.insertBefore(wrap, old); wrap.appendChild(old);
     }
-    var nu = icon(id); nu.classList.add('swap-in'); old.classList.add('swap-out'); wrap.appendChild(nu);
+    var nu = icon(id); nu.classList.add('swap-in'); old.classList.remove('swap-in'); old.classList.add('swap-out'); wrap.appendChild(nu);
     setTimeout(function () { old.remove(); nu.classList.remove('swap-in'); }, ms || 150);
     return nu;
   }
@@ -1237,9 +1237,18 @@
   // It is looked up each time because a refresh replaces #content, and with it the dot.
   var liveOff = false;
   function dotState() { var d = $('.live'); if (d) d.classList.toggle('off', liveOff); }
-  function beat() { var d = $('.live'); if (d && !liveOff) restartAnim(d, 'beat'); }
+  // One short pulse (about 5s), at most once a minute; a refresh that swaps the dot mid-pulse carries it over.
+  var lastBeat = 0;
+  function beat() {
+    var d = $('.live'), now = Date.now(); if (!d || liveOff) return;
+    if (now - lastBeat < 4500) { d.classList.add('beat'); return; }
+    if (now - lastBeat < 60000) return;
+    lastBeat = now; d.classList.add('beat');
+  }
+  document.addEventListener('animationend', function (e) { if (e.target.classList && e.target.classList.contains('live')) e.target.classList.remove('beat'); });
   // Infinite animations (the Check spinner) stop while the tab is hidden.
-  document.addEventListener('visibilitychange', function () { document.documentElement.classList.toggle('paused', document.hidden); });
+  function syncPaused() { document.documentElement.classList.toggle('paused', document.hidden); }
+  document.addEventListener('visibilitychange', syncPaused); syncPaused();
   function connect() {
     if (!window.EventSource || !document.body.hasAttribute('data-live')) return;
     var es = new EventSource('/events');

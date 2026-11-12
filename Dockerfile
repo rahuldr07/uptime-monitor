@@ -12,6 +12,8 @@ RUN apk add --no-cache ca-certificates tzdata \
 	&& mkdir -p /data && chown app:app /data && chmod 700 /data
 WORKDIR /data
 COPY --from=build /uptime-monitor /usr/local/bin/uptime-monitor
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/uptime-monitor/
+COPY third_party/lucide/LICENSE /usr/share/doc/uptime-monitor/third_party/lucide/LICENSE
 USER app
 EXPOSE 8080
 VOLUME /data
