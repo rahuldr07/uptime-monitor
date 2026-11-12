@@ -27,6 +27,13 @@ type Target struct {
 
 const targetCols = `id, workspace_id, name, url, interval_ms, timeout_ms, expect_status, keyword, grp, paused, muted, created_at`
 
+// engineTargetCols is targetCols qualified for the engine queries, which join
+// workspaces and so would otherwise have ambiguous id and created_at.
+var engineTargetCols = "t." + strings.ReplaceAll(targetCols, ", ", ", t.")
+
+// activeWorkspace joins a targets alias t to its workspace when not suspended.
+const activeWorkspace = ` JOIN workspaces w ON w.id = t.workspace_id AND w.suspended_at IS NULL`
+
 func scanTarget(sc scanner) (Target, error) {
 	var t Target
 	var interval, timeout, created int64
@@ -65,18 +72,20 @@ func scanTargets(rows *sql.Rows) ([]Target, error) {
 	return out, rows.Err()
 }
 
-// AllTargets returns the targets of every workspace. Engine use only.
+// AllTargets returns the targets of every workspace that is not suspended.
+// Engine use only.
 func (s *Store) AllTargets(ctx context.Context) ([]Target, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+targetCols+` FROM targets ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+engineTargetCols+` FROM targets t`+activeWorkspace+` ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
 	return scanTargets(rows)
 }
 
-// TargetByID returns a target from any workspace. Engine use only.
+// TargetByID returns a target from any workspace that is not suspended.
+// Engine use only.
 func (s *Store) TargetByID(ctx context.Context, id int64) (Target, error) {
-	t, err := scanTarget(s.db.QueryRowContext(ctx, `SELECT `+targetCols+` FROM targets WHERE id = ?`, id))
+	t, err := scanTarget(s.db.QueryRowContext(ctx, `SELECT `+engineTargetCols+` FROM targets t`+activeWorkspace+` WHERE t.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Target{}, ErrNotFound
 	}

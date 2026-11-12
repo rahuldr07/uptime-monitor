@@ -138,14 +138,14 @@ func (s *Store) CountWorkspaces(ctx context.Context) (int, error) {
 }
 
 // TargetsInOtherWorkspaces returns the targets of every workspace except
-// exceptWS and any workspace that has an operator as a member, for the
-// host-rate check. Only ID, WorkspaceID, URL and Interval are filled in.
+// exceptWS, any workspace that has an operator as a member and any suspended
+// workspace, for the host-rate check. Only ID, WorkspaceID, URL and Interval are filled in.
 func (s *Store) TargetsInOtherWorkspaces(ctx context.Context, exceptWS int64) ([]Target, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, workspace_id, url, interval_ms FROM targets
-		 WHERE workspace_id <> ? AND workspace_id <> ?
-		   AND workspace_id NOT IN (SELECT m.workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.is_operator <> 0)
-		 ORDER BY id`,
+		`SELECT t.id, t.workspace_id, t.url, t.interval_ms FROM targets t`+activeWorkspace+`
+		 WHERE t.workspace_id <> ? AND t.workspace_id <> ?
+		   AND t.workspace_id NOT IN (SELECT m.workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.is_operator <> 0)
+		 ORDER BY t.id`,
 		exceptWS, OperatorWorkspaceID)
 	if err != nil {
 		return nil, err
@@ -233,7 +233,7 @@ func (w *WS) Info(ctx context.Context) (Workspace, error) {
 // account's status page is 404); the operator workspace is always found.
 func (s *Store) WorkspaceBySlug(ctx context.Context, slug string) (Workspace, error) {
 	ws, err := scanWorkspace(s.db.QueryRowContext(ctx,
-		`SELECT `+workspaceCols+` FROM workspaces WHERE slug = ? AND (id = ? OR EXISTS (
+		`SELECT `+workspaceCols+` FROM workspaces WHERE slug = ? AND suspended_at IS NULL AND (id = ? OR EXISTS (
 		   SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
 		   WHERE m.workspace_id = workspaces.id AND m.role = 'owner' AND u.verified_at IS NOT NULL))`,
 		slug, OperatorWorkspaceID))

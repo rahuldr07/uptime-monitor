@@ -52,12 +52,12 @@ func (s *Store) DeleteAccount(ctx context.Context, userID int64) ([]int64, error
 }
 
 // PruneUnverified deletes non-operator users who never verified their address
-// and were created before cutoff, with the workspaces where they are the only
+// and were created before cutoff (disabled users are kept), with the workspaces where they are the only
 // member, one transaction per user. The condition is re-checked inside each
 // transaction, so an account verified meanwhile survives. It returns the
 // deleted workspace IDs.
 func (s *Store) PruneUnverified(ctx context.Context, cutoff time.Time) ([]int64, error) {
-	const unverified = `is_operator = 0 AND verified_at IS NULL AND created_at < ?`
+	const unverified = `is_operator = 0 AND verified_at IS NULL AND disabled_at IS NULL AND created_at < ?`
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM users WHERE `+unverified, cutoff.UnixMilli())
 	if err != nil {
 		return nil, err
