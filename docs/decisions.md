@@ -509,3 +509,25 @@ Full design:
   - Live refresh: table state, keyboard focus and the row cursor survive SSE refreshes. Focus is restored only to the same element, matched by identity. Refresh is held while a menu is open, while a field is invalid, or while a pointer is pressed.
   - Global keyboard shortcuts (`/`, `n`, `t`) work everywhere except text inputs. A focused table region claims only arrows, Home, End, Space, Enter and Escape.
   - Out of scope: the plain-text 404 body. It must stay identical so the `/admin` gate is undetectable (D-127).
+
+### D-129: Sign in with Google and GitHub (2026-11-12)
+- **Status:** Accepted (implements [design/oauth.md](design/oauth.md))
+- **Decision:**
+  - Maintainer choices:
+    - No auto-linking by email. An address that belongs to an unlinked account gets a 409 telling the person to sign in with their password (or Forgot password), then connect the provider from Account.
+    - Providers are Google and GitHub.
+    - Passwords are optional, so social-only accounts exist.
+    - Standard library only, no new dependencies. Google identity comes from the OpenID Connect userinfo endpoint over TLS with the access token, not from ID token validation, so there is no JWT or JWKS code. GitHub identity comes from `/user` and `/user/emails`.
+  - Identities are keyed by `(provider, subject)`, never by email. Only a verified email is accepted. Scopes are `openid email` for Google and `user:email` for GitHub; both send `prompt=select_account`.
+  - An empty `users.password_hash` means no password, so the column stays `NOT NULL` and the table is not rebuilt. Sign-in with an empty hash runs `VerifyDummy` and answers the generic bad-login 401. Password checks never call `Verify` on an empty hash.
+  - `sessions.auth_at` records the last real authentication. NULL (sessions from before v3) counts as not recent. A social-only account needs `auth_at` within 10 minutes for deleting the account, setting a password and disconnecting a provider. Accounts with a password keep being asked for it.
+  - Reauth limit: there is no way to force a fresh login at either provider and the ID token's `auth_time` is not read, so reauth proves only that this browser holds a live session with the linked provider account. It is weaker than a password and is accepted for social-only accounts.
+  - Accepted cost: the 409 "account exists" message tells a visitor that an address has an account. It takes a full OAuth round trip per probe and is rate-limited. Rejected: auto-linking by verified email, which makes control of an address at a provider enough to take over an account.
+  - The pre-migration backup is generalised: an upgrade of a database that holds data writes `<db>.pre-v<N>-<time>.bak` (N is the target version) first, and an existing backup for the same N is reused. `pre-accounts` stays for the v2 step.
+  - `/auth/{provider}/start` and `/callback` are in the public route class with checks in the handler, because the guest class redirects signed-in users and would break link and reauth. Responses send `Cache-Control: no-store`. `safeNext` rejects `/auth`.
+  - Implementation choices:
+    - In `closed` mode without an invite, and in `invite` mode without a valid one, sign-up answers 403 "Sign-up on this instance is by invitation."
+    - New accounts get the workspace "My workspace", so the email's local part never appears in a public `/s/<slug>` address.
+    - The state cookie lasts 10 minutes and is single-use. Starts and callbacks share a limit of 20 per minute per client address. OAuth sign-in skips the per-email login throttle.
+    - Social-only accounts have no password until they set one or use Forgot password.
+    - Account "Sign-in methods" (connect, disconnect, set password) and the operator panel provider badges follow design §6 and §7. Disconnecting the last sign-in method is refused inside the store transaction (`ErrLastSignInMethod`).

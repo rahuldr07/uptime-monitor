@@ -147,6 +147,76 @@ well-formed sign-up attempt, duplicates included, takes a
 `limits.signups_per_hour` slot and is not refunded. In invite mode only a
 request with a valid invite spends one.
 
+### Sign in with Google or GitHub
+
+People can sign in, and sign up where `signup` allows it, with a Google or
+GitHub account as well as with email and password. It is optional and off by
+default: each provider is enabled when you register your own OAuth app and
+add its keys to the `oauth` block. With no provider configured, or while a
+provider is down, email and password work as before.
+
+**GitHub.** Create an OAuth App under Settings, Developer settings, OAuth Apps.
+Set the Homepage URL to your `base_url` and the Authorization callback URL to
+`<base_url>/auth/github/callback`. Copy the client ID and generate a client
+secret. The server asks for the `user:email` scope.
+
+**Google.** In the Google Cloud console create an OAuth client of type "Web
+application". Set the Authorized redirect URI to
+`<base_url>/auth/google/callback`. On the consent screen request only the
+basic scopes `openid` and `email`, which need no scope verification, and
+publish the app to "In production". Without brand verification the consent
+screen shows only your domain.
+
+Both providers get `prompt=select_account`, so the account picker is shown.
+
+```json
+"oauth": {
+  "google": { "client_id": "123-abc.apps.googleusercontent.com", "client_secret": "${GOOGLE_CLIENT_SECRET}" },
+  "github": { "client_id": "Iv1.abc123", "client_secret": "${GITHUB_CLIENT_SECRET}" }
+}
+```
+
+Leave out a provider to keep it off. A provider whose values are both empty
+(for example when its variables are unset) is treated as not configured. The
+server refuses to start when only one of `client_id` and `client_secret` is
+set, when `base_url` is empty or not https (http is allowed only for
+localhost or a loopback address), or when `oauth` has a key other than
+`google` or `github`.
+
+**Sign-up.** A new person signing up this way follows the `signup` mode:
+`open` allows it, `invite` needs a valid invite, and `closed` without an
+invite answers "Sign-up on this instance is by invitation." The provider's
+verified email is used and the account is marked verified, so `open` mode
+needs no verification mail for it. The usual sign-up limits apply. The new
+account gets a workspace named "My workspace", so the email never appears in
+a status page address. The owner can rename it.
+
+**Linking.** An account is never linked to a provider by email address, so
+controlling an address at a provider is not enough to take over an account.
+If the provider's email already belongs to an account that is not linked, the
+server creates nothing and answers 409, telling the person to sign in with
+their password (or use Forgot password) and then connect the provider from
+Account. This does tell a visitor that the address has an account (see
+D-129). A signed-in user connects or disconnects Google and GitHub in
+Account, under "Sign-in methods". Each provider can be connected once per
+account, and each provider account to one user only. The provider's email may
+differ from the account's. Disconnecting the last way to sign in is refused.
+
+**Accounts without a password.** An account created through a provider has no
+password. It cannot sign in with one until the owner sets one under "Sign-in
+methods" or uses Forgot password. For these accounts, deleting the account,
+setting a password and disconnecting a provider ask for a sign-in within the
+last 10 minutes instead of the password, by signing in again with a connected
+provider. That proves only that the browser holds a live session with that
+provider, not that the user just typed a password.
+
+Starting and finishing a provider sign-in are limited to 20 per minute per
+client address. The sign-in state lives in a cookie for 10 minutes. The
+operator panel's users list shows a badge for each provider a user has
+connected.
+
+On upgrade the database moves to schema version 3; see Upgrading.
+
 ### System email
 
 The optional `mail` section is the SMTP account the server itself uses for
@@ -315,6 +385,7 @@ The server refuses to start when:
 - `signup` is not `closed` and `base_url` is empty
 - `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query
+- `oauth` has only one of `client_id` and `client_secret` for a provider, a key other than `google` or `github`, or a provider while `base_url` is empty or not https (http is allowed only for localhost or a loopback address)
 - a limit is negative, `signups_per_hour` is under 1, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
 
 It logs a WARN whenever `allow_private_targets` is `all`: any non-operator
@@ -322,6 +393,16 @@ account, including one created from an invite issued earlier under `closed`,
 could then reach your internal network.
 
 ## Upgrading
+
+From 1.1.0 (schema v3, sign-in with Google or GitHub):
+
+- **Schema v3.** The first start with this version adds the `identities` table and
+  `sessions.auth_at`. When the database already has data, it first writes
+  `<db>.pre-v3-<timestamp>.bak` (mode `0600`). Keep it until you have checked
+  the upgrade, then delete it, because it holds alert secrets. Sessions created before the
+  upgrade count as not recently signed in, which matters only for accounts
+  without a password.
+- **Nothing else changes.** Sign-in with a provider stays off until you add `oauth`.
 
 From a release with an admin password:
 
@@ -396,6 +477,7 @@ From a release before the production hardening:
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
 | `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup, reset and invite links and the links in emails; an https value makes session cookies always Secure |
 | `signup` | `closed` | `closed`, `invite` or `open`; see Sign-up and invites. `open` needs `mail` |
+| `oauth` | none | `google` and `github`, each `{client_id, client_secret}`; enables sign-in with that provider. Needs an https `base_url`; see Sign in with Google or GitHub |
 | `mail` | none | system SMTP account for verification and reset emails; see System email |
 | `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `mail_per_hour`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |

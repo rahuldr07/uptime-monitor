@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-11-12
+
+### Added
+
+- Sign in and sign up with Google or GitHub, optional and off until the `oauth` config key is set. Accounts are never linked by email: an existing address must sign in with its password, then connect the provider from Account.
+- Account page "Sign-in methods": connect and disconnect Google and GitHub, and set or change a password.
+- Operator panel users list shows a badge for each provider a user has connected.
+
+### Changed
+
+- Database schema v3, with an automatic `<db>.pre-v3-<time>.bak` backup before upgrading a database that has data.
+- Passwords are optional for accounts created with a provider. Deleting the account, setting a password and disconnecting a provider then need a sign-in within the last 10 minutes.
+
 ## [1.1.0] - 2026-11-12
 
 ### Added
