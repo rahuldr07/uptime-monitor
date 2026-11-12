@@ -6,8 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/textproto"
 	"sync"
 	"time"
 
@@ -69,7 +72,9 @@ func New(o Options) *Queue {
 // and queues the result without blocking. When the queue is full or a budget
 // is spent, the message is dropped with a WARN (event=mail_dropped, reason,
 // email_hash) and compose is NOT called, so no token is created. Send returns
-// compose's error (nothing is charged then), nil otherwise.
+// compose's error (nothing is charged then), nil otherwise. Compose runs with
+// the queue locked: it must not call Send or Notice, and callers must not
+// hold a store transaction across Send.
 func (q *Queue) Send(to string, compose func() (subject, body string, err error)) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -138,11 +143,32 @@ func (q *Queue) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case m := <-q.ch:
+			if ctx.Err() != nil {
+				return
+			}
 			if err := q.sender.Send(ctx, []string{m.to}, m.subject, m.body); err != nil {
-				q.log.Warn("mail send failed", "event", "mail_failed", "error_class", fmt.Sprintf("%T", err))
+				q.log.Warn("mail send failed", "event", "mail_failed", "error_class", errorClass(err))
 			}
 		}
 	}
+}
+
+// errorClass names a delivery failure without any of its text, which may
+// echo the recipient.
+func errorClass(err error) string {
+	var te *textproto.Error
+	var ne net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.As(err, &te):
+		return fmt.Sprintf("smtp_%d", te.Code)
+	case errors.As(err, &ne):
+		return "network"
+	}
+	return "other"
 }
 
 // emailHash is the first 16 hex characters of the address's SHA-256.

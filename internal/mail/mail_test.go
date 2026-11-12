@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/textproto"
 	"reflect"
 	"strings"
 	"testing"
@@ -124,7 +126,9 @@ func TestInstanceBudget(t *testing.T) {
 	if composed != 2 {
 		t.Fatalf("composed %d, want 2", composed)
 	}
-	h.now = h.now.Add(time.Hour)
+	if ok, _ := h.q.day.Allow("c@example.com"); !ok {
+		t.Fatal("dropped message used up the daily recipient budget")
+	}
 	for i := 0; i < 3; i++ { // the dropped recipient still has its full budget
 		if ok, _ := h.q.hour.Take("c@example.com"); !ok {
 			t.Fatalf("dropped message used up recipient budget (take %d)", i+1)
@@ -170,7 +174,7 @@ func TestQueueFullDrops(t *testing.T) {
 }
 
 func TestComposeErrorCharged(t *testing.T) {
-	h := newHarness(100, 0)
+	h := newHarness(3, 0) // a charged error would leave less than 3 instance slots
 	boom := errors.New("boom")
 	if err := h.q.Send("a@example.com", func() (string, string, error) { return "", "", boom }); err != boom {
 		t.Fatalf("got %v, want compose's error", err)
@@ -180,27 +184,33 @@ func TestComposeErrorCharged(t *testing.T) {
 			t.Fatalf("send %d after a compose error should succeed", i+1)
 		}
 	}
+	if h.send("b@example.com") {
+		t.Fatal("instance budget should now be spent")
+	}
 }
 
 func TestNoticeSkipsRecipientBudget(t *testing.T) {
 	h := newHarness(100, 0)
-	for i := 0; i < 3; i++ {
-		h.send("a@example.com")
-	}
 	h.q.Notice("a@example.com", "Notice", "Body")
-	defer h.run()()
-	var last call
-	for i := 0; i < 4; i++ {
-		last = <-h.f.calls
+	for i := 0; i < 3; i++ {
+		if !h.send("a@example.com") {
+			t.Fatalf("send %d after a notice should reach compose", i+1)
+		}
 	}
-	if last.subject != "Notice" {
-		t.Fatalf("notice not delivered, last = %+v", last)
+	h.q.Notice("a@example.com", "Notice2", "Body") // still delivered after 3 sends
+	defer h.run()()
+	var subjects []string
+	for i := 0; i < 5; i++ {
+		subjects = append(subjects, (<-h.f.calls).subject)
+	}
+	if subjects[0] != "Notice" || subjects[4] != "Notice2" {
+		t.Fatalf("notices not delivered: %v", subjects)
 	}
 }
 
 func TestRunLogsNoAddress(t *testing.T) {
 	h := newHarness(100, 0)
-	h.f.err = errors.New("550 rejected a@example.com")
+	h.f.err = fmt.Errorf("send: %w", &textproto.Error{Code: 550, Msg: "rejected a@example.com"})
 	h.send("a@example.com")
 	stop := h.run()
 	<-h.f.calls
@@ -211,6 +221,9 @@ func TestRunLogsNoAddress(t *testing.T) {
 	}
 	if strings.Contains(out, "a@example.com") {
 		t.Fatalf("log contains the address: %s", out)
+	}
+	if !strings.Contains(out, "smtp_550") {
+		t.Fatalf("error class missing: %s", out)
 	}
 }
 
