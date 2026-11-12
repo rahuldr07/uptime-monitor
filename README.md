@@ -369,7 +369,8 @@ From a release before the production hardening:
   until `UPTIME_ADMIN_PASSWORD` was set.
 
 - **Docker, moving to the new layout** (named volume `uptime-monitor-data`,
-  config outside it), (optionally) after creating `.env`:
+  config outside it), (optionally) after creating `.env` (it holds the environment variables that
+  `config.json` references, such as `TELEGRAM_BOT_TOKEN`):
 
   ```bash
   docker compose down

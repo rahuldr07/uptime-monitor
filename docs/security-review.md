@@ -1,7 +1,8 @@
 # Security review: uptime-monitor
 
-> Historical snapshot from 2026-11-09, taken before the accounts work. It is
-> not kept up to date. Current behaviour is described in the
+> Historical snapshot from 2026-11-09, taken before the accounts work. The
+> findings below are that snapshot; only the status column is kept current.
+> Current behaviour is described in the
 > [README](../README.md) and [decisions.md](decisions.md).
 
 Date: 2026-11-09. Scope: the whole repository including the uncommitted

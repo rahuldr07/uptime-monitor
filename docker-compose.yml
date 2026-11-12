@@ -17,7 +17,8 @@ services:
       - ./config.json:/etc/uptime-monitor/config.json:ro
       - uptime-data:/data
     environment:
-      # Optional: only unlocks setup on an upgraded install (see "Upgrading" in the README).
+      # Optional: only takes effect if config.json references it as "${UPTIME_ADMIN_PASSWORD}"
+      # (upgraded installs; see "Upgrading" in the README).
       UPTIME_ADMIN_PASSWORD: ${UPTIME_ADMIN_PASSWORD:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}

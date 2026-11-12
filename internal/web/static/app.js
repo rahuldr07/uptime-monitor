@@ -523,6 +523,7 @@
   }
 
   function buildTable(root) {
+    root.classList.add('dt-js'); // phone cards in the CSS need this; without JS the plain table scrolls
     var T = { root: root, id: root.getAttribute('data-table') || 'table', noun: root.getAttribute('data-noun') || 'rows' };
     var table = $('table', root), tbody = $('tbody', table), mode = root.getAttribute('data-paged') || 'client';
     var emptyText = root.getAttribute('data-empty') || 'Nothing to show.';
@@ -1032,7 +1033,7 @@
   function wireTables(root) {
     $$('.dt', root).forEach(function (el) { if (!el._dt) el._dt = buildTable(el); });
   }
-  var dtNarrow = null;
+  var dtNarrow = window.matchMedia ? matchMedia('(max-width:639px)').matches : null;
   var dtRaf = 0;
   window.addEventListener('resize', function () {
     if (dtRaf) return;
