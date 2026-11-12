@@ -334,3 +334,4 @@ dialog[open]{animation:dlg-in .14s ease-out}dialog[open]::backdrop{animation:dlg
 @media(max-width:900px){.shell{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;align-items:center;gap:4px;padding:10px 12px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}.side .brand{padding:0 8px 0 0}.side a.nav span.t{position:absolute;left:-9999px}.side .foot{margin:0 0 0 auto;border:0;padding:0;flex-direction:row}.side .foot button,.side .foot .btn{width:auto}.main{padding:16px 14px 60px}}
 .dt td.btns>a.btn,.dt td.acts>a.btn{vertical-align:middle}
 @media(max-width:480px){.dt-view .ic:not(.chev){display:none}}
+.dt td.acts button.sm{padding-left:6px;padding-right:6px}
