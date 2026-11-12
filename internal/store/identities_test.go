@@ -223,3 +223,28 @@ func TestCreateAccountWithIdentity(t *testing.T) {
 		t.Fatal("user created despite error")
 	}
 }
+
+func TestIdentityProviders(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Now()
+	a, b, c := mkUser(t, s, "a@x.co", "h"), mkUser(t, s, "b@x.co", "h"), mkUser(t, s, "c@x.co", "h")
+	for _, l := range []struct {
+		u       User
+		p, subj string
+	}{{a, "github", "1"}, {a, "google", "2"}, {b, "google", "3"}} {
+		if err := s.LinkIdentity(ctx, l.u.ID, l.p, l.subj, "e@x.co", now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.IdentityProviders(ctx, []int64{a.ID, b.ID, c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(got[a.ID]) != "[github google]" || fmt.Sprint(got[b.ID]) != "[google]" || len(got[c.ID]) != 0 || len(got) != 2 {
+		t.Errorf("got %v", got)
+	}
+	if got, err := s.IdentityProviders(ctx, nil); err != nil || len(got) != 0 {
+		t.Errorf("empty: %v %v", got, err)
+	}
+}

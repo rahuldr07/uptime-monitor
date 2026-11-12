@@ -72,6 +72,7 @@ func (k adminKeep) URL(page int) string {
 type adminUsersData struct {
 	base
 	Rows      []store.UserRow
+	Badges    map[int64][]string // connected provider labels per user ID
 	Total     int
 	Keep      adminKeep
 	Prev      string // "" when there is no previous page
@@ -83,8 +84,22 @@ type adminUsersData struct {
 
 type adminDeleteData struct {
 	base
-	Target store.User
-	Keep   adminKeep
+	Target      store.User
+	Keep        adminKeep
+	HasPassword bool        // the operator confirms with their password
+	NeedReauth  bool        // a social-only operator without a recent sign-in
+	Reauth      []oauthLink // sign-in-again links for that case
+}
+
+// adminDeleteView builds the delete page's view model.
+func (s *Server) adminDeleteView(r *http.Request, a *authCtx, u store.User) (adminDeleteData, error) {
+	ids, err := s.myIdentities(r.Context(), a.User.ID)
+	if err != nil {
+		return adminDeleteData{}, err
+	}
+	d := adminDeleteData{base: s.base(r, a, "admin", "Delete user"), Target: u, Keep: keepFrom(r), HasPassword: a.HasPassword}
+	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/admin/users/"+strconv.FormatInt(u.ID, 10)+"/delete")
+	return d, nil
 }
 
 // adminDone redirects to the users list the action came from, with a flash.
@@ -120,6 +135,20 @@ func (s *Server) adminUsersView(r *http.Request, a *authCtx) (adminUsersData, er
 		return adminUsersData{}, err
 	}
 	d := adminUsersData{base: s.base(r, a, "admin", "Users"), Rows: rows, Total: total, Keep: k, CanMail: s.mail != nil}
+	ids := make([]int64, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+	provs, err := s.sys.IdentityProviders(r.Context(), ids) // one query for the page
+	if err != nil {
+		return adminUsersData{}, err
+	}
+	d.Badges = map[int64][]string{}
+	for id, ps := range provs {
+		for _, p := range ps {
+			d.Badges[id] = append(d.Badges[id], providerLabel(p))
+		}
+	}
 	if k.Page > 1 {
 		d.Prev = k.URL(k.Page - 1)
 	}
@@ -205,7 +234,12 @@ func (s *Server) adminDeletePage(w http.ResponseWriter, r *http.Request, a *auth
 		s.operatorRefused(w, r, a, "delete", u.ID, msgNoDeleteOp)
 		return
 	}
-	s.render(w, r, "admin_delete", adminDeleteData{base: s.base(r, a, "admin", "Delete user"), Target: u, Keep: keepFrom(r)})
+	d, err := s.adminDeleteView(r, a, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, "admin_delete", d)
 }
 
 // adminDelete deletes a user the way the operator panel does: disable first
@@ -223,7 +257,11 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 		s.operatorRefused(w, r, a, "delete", u.ID, msgNoDeleteOp)
 		return
 	}
-	d := adminDeleteData{base: s.base(r, a, "admin", "Delete user"), Target: u, Keep: keepFrom(r)}
+	d, err := s.adminDeleteView(r, a, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "admin_delete", d)

@@ -2,8 +2,10 @@
 <div class="topbar">
   <div><h1>Account</h1><div class="sub">{{.UserEmail}}</div></div>
 </div>
-<div class="card block">
-  <h2>Change password</h2>
+<div class="card block" id="methods">
+  <h2>Sign-in methods</h2>
+  <h3 style="margin:14px 0 0;font-size:13px">Password</h3>
+  {{if .HasPassword}}
   <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
     <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
     <div class="field"><label>New password</label><input name="new" type="password" required minlength="10" autocomplete="new-password"></div>
@@ -11,6 +13,37 @@
     <div style="margin-top:14px"><button type="submit" class="primary">Change password</button></div>
     <p class="muted small" style="margin-top:8px">Your other sessions are signed out.</p>
   </form>
+  {{else if .NeedReauth}}
+  <p class="muted small" style="margin:6px 0 0">You sign in with a provider and have no password yet.</p>
+  {{template "reauth-notice" .Reauth}}
+  {{else}}
+  <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
+    <p class="muted small" style="margin:0 0 10px">You sign in with a provider and have no password yet. Set one to also sign in with your email.</p>
+    <div class="field"><label>New password</label><input name="new" type="password" required minlength="10" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm new password</label><input name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
+    <div style="margin-top:14px"><button type="submit" class="primary">Set a password</button></div>
+    <p class="muted small" style="margin-top:8px">Your other sessions are signed out.</p>
+  </form>
+  {{end}}
+  {{if .Providers}}
+  <h3 style="margin:20px 0 0;font-size:13px">Connected accounts</h3>
+  {{range .Providers}}
+  <div class="btns" style="margin-top:10px;justify-content:space-between;max-width:480px">
+    <div><strong>{{.Label}}</strong>{{if .Connected}} <span class="muted small">{{.Email}}</span>{{else}} <span class="muted small">Not connected</span>{{end}}</div>
+    {{if .Connected}}
+    {{if or $.HasPassword (not $.NeedReauth)}}
+    <form method="post" action="/account/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it.">
+      {{if $.HasPassword}}<input name="current" type="password" required placeholder="Current password" aria-label="Current password" autocomplete="current-password" style="width:170px">{{end}}
+      <button type="submit" class="sm">Disconnect</button>
+    </form>
+    {{end}}
+    {{else if .Enabled}}
+    <a class="btn sm" href="/auth/{{.Name}}/start?intent=link"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</a>
+    {{end}}
+  </div>
+  {{end}}
+  {{if and .NeedReauth (not .HasPassword)}}{{if .Reauth}}<p class="muted small" style="margin:10px 0 0">To disconnect a provider, sign in again first (see above).</p>{{end}}{{end}}
+  {{end}}
 </div>
 <div class="card block">
   <h2>Sessions</h2>
@@ -21,10 +54,12 @@
 <div class="card block">
   <h2>Delete account</h2>
   <p class="muted small" style="margin:6px 0 12px">Permanently deletes your account, your workspace, its monitors and all of their history.</p>
+  {{if .NeedReauth}}{{template "reauth-notice" .Reauth}}{{else}}
   <form method="post" action="/account/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
-    <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
+    {{if .HasPassword}}<div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>{{end}}
     <div style="margin-top:14px"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete account</button></div>
   </form>
+  {{end}}
 </div>
 {{end}}
 {{end}}

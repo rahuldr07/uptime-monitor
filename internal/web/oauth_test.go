@@ -887,6 +887,7 @@ func TestOAuthSocialOnlyAccount(t *testing.T) {
 	if r, _ := o.run(t, c, "google", ""); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("sign-in: %d", r.StatusCode)
 	}
+	o.advance(recentAuthWindow + time.Minute) // outside the recent sign-in window
 	for _, p := range []struct {
 		path string
 		form url.Values

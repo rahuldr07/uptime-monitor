@@ -36,3 +36,5 @@
 {{define "auth-error"}}{{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}{{end}}
 
 {{define "oauth-buttons"}}{{if .}}<div class="oauth">{{range .}}<a class="btn" href="{{.Href}}"><svg class="ic" aria-hidden="true"><use href="#i-log-in"/></svg>Continue with {{.Label}}</a>{{end}}</div><div class="or" role="separator"><span>or</span></div>{{end}}{{end}}
+
+{{define "reauth-notice"}}{{range .}}<div style="margin:8px 0"><p class="muted small" style="margin:0 0 8px">For your security, sign in again with {{.Label}} to continue.</p><div class="btns"><a class="btn" href="{{.Href}}"><svg class="ic" aria-hidden="true"><use href="#i-log-in"/></svg>Sign in with {{.Label}}</a></div></div>{{else}}<p class="muted small" style="margin:8px 0">For your security, sign in again to continue. Use Forgot password on the sign-in page if you need a way in.</p>{{end}}{{end}}

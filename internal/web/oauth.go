@@ -214,7 +214,11 @@ type oauthReq struct {
 func (q *oauthReq) fail(code int, reason, msg string) {
 	q.s.logger.Warn("oauth failed", "event", "oauth_failed", "provider", q.p.Name(), "reason", reason, "ip", q.ip)
 	if q.a != nil && (q.st.Intent == "link" || q.st.Intent == "reauth") {
-		d := accountData{base: q.s.base(q.r, q.a, "account", "Account"), CanDelete: !q.a.User.IsOperator}
+		d, err := q.s.accountView(q.r, q.a)
+		if err != nil {
+			q.serverErr(err)
+			return
+		}
 		d.Error = msg
 		q.s.renderStatus(q.w, q.r, code, "account", d)
 		return

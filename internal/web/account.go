@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -23,18 +24,101 @@ const (
 	passwordCheckMax    = 5
 )
 
+// recentAuthWindow is how fresh auth_at must be for a social-only account's
+// sensitive actions.
+const recentAuthWindow = 10 * time.Minute
+
+type accountProvider struct {
+	Name, Label string
+	Enabled     bool // can be started from this instance
+	Connected   bool
+	Email       string // the provider's email at link time
+}
+
 type accountData struct {
 	base
-	CanDelete bool // operators cannot delete their account here
+	CanDelete   bool // operators cannot delete their account here
+	HasPassword bool
+	Providers   []accountProvider
+	NeedReauth  bool        // no password and no recent sign-in: sensitive forms are replaced by reauth links
+	Reauth      []oauthLink // one per connected, enabled provider
+}
+
+// recentAuth reports whether the session authenticated for real within the window.
+func (s *Server) recentAuth(a *authCtx) bool {
+	if a.AuthAt == nil {
+		return false
+	}
+	d := s.now().Sub(*a.AuthAt)
+	return d >= -time.Minute && d <= recentAuthWindow
+}
+
+func providerLabel(name string) string {
+	if name == "github" {
+		return "GitHub"
+	}
+	return "Google"
+}
+
+func (s *Server) myIdentities(ctx context.Context, userID int64) ([]store.Identity, error) {
+	return s.sys.Identities(ctx, userID)
+}
+
+// reauthState says whether a sensitive action needs a fresh sign-in (the
+// account has no password and the session is not recent), and the links that
+// provide one.
+func (s *Server) reauthState(a *authCtx, ids []store.Identity, next string) (bool, []oauthLink) {
+	if a.HasPassword || s.recentAuth(a) {
+		return false, nil
+	}
+	var links []oauthLink
+	for _, i := range ids {
+		if s.oauth[i.Provider] != nil {
+			links = append(links, oauthLink{providerLabel(i.Provider), "/auth/" + i.Provider + "/start?" +
+				url.Values{"intent": {"reauth"}, "next": {next}}.Encode()})
+		}
+	}
+	return true, links
+}
+
+// accountView builds the Account page's view model.
+func (s *Server) accountView(r *http.Request, a *authCtx) (accountData, error) {
+	ids, err := s.myIdentities(r.Context(), a.User.ID)
+	if err != nil {
+		return accountData{}, err
+	}
+	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator, HasPassword: a.HasPassword}
+	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/account")
+	for _, name := range []string{"google", "github"} {
+		p := accountProvider{Name: name, Label: providerLabel(name), Enabled: s.oauth[name] != nil}
+		for _, i := range ids {
+			if i.Provider == name {
+				p.Connected, p.Email = true, i.Email
+			}
+		}
+		if p.Enabled || p.Connected {
+			d.Providers = append(d.Providers, p)
+		}
+	}
+	return d, nil
 }
 
 func (s *Server) accountPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
-	s.render(w, r, "account", accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator})
+	d, err := s.accountView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, "account", d)
 }
 
 func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
-	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator}
+	d, err := s.accountView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "account", d)
@@ -60,7 +144,17 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		s.fail(w, err)
 		return
 	}
-	if err := s.sys.SetPassword(ctx, a.User.ID, newPHC, a.sessionHash); err != nil {
+	if a.HasPassword {
+		err = s.sys.SetPassword(ctx, a.User.ID, newPHC, a.sessionHash)
+	} else {
+		// checkCurrent has just required a recent sign-in.
+		err = s.sys.SetFirstPassword(ctx, a.User.ID, newPHC, a.sessionHash)
+	}
+	if errors.Is(err, store.ErrPasswordSet) {
+		fail(http.StatusConflict, "This account already has a password. Reload the page.")
+		return
+	}
+	if err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -87,9 +181,13 @@ func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *aut
 		s.fail(w, err)
 		return false
 	}
-	// A social-only account has no password to check; it must sign in again
-	// with its provider instead. The empty hash is never verified.
+	// A social-only account has no password to check. The empty hash is never
+	// verified; a sign-in within the last 10 minutes stands in for it, and
+	// otherwise the user must sign in again with a provider (§7).
 	if phc == "" {
+		if s.recentAuth(a) {
+			return true
+		}
 		fail(http.StatusForbidden, msgSignInAgain)
 		return false
 	}
@@ -131,7 +229,11 @@ func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *aut
 // in-flight request cannot restart a runner.
 func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
-	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator}
+	d, err := s.accountView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	fail := func(code int, msg string) {
 		d.Error = msg
 		s.renderStatus(w, r, code, "account", d)
@@ -188,6 +290,45 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 	s.clearSessionCookie(w, r)
 	s.logger.Info("account deleted", "event", "account_deleted", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	redirect(w, r, "/login", msgAccountDeleted)
+}
+
+const msgLastMethod = "Add a password or connect another provider first."
+
+// accountIdentityDelete disconnects a provider. An account with a password
+// confirms with it; one without needs a recent sign-in. The store refuses to
+// remove the last sign-in method.
+func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	name := r.PathValue("provider")
+	if name != "google" && name != "github" {
+		http.NotFound(w, r)
+		return
+	}
+	d, err := s.accountView(r, a)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	fail := func(code int, msg string) {
+		d.Error = msg
+		s.renderStatus(w, r, code, "account", d)
+	}
+	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
+		return
+	}
+	err = s.sys.UnlinkIdentity(r.Context(), a.User.ID, name)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case errors.Is(err, store.ErrLastSignInMethod):
+		fail(http.StatusUnprocessableEntity, msgLastMethod)
+		return
+	case err != nil:
+		s.fail(w, err)
+		return
+	}
+	s.logger.Info("oauth unlinked", "event", "oauth_unlink", "provider", name, "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
+	redirect(w, r, "/account", providerLabel(name)+" disconnected.")
 }
 
 // restartRunners reloads every target of ws, after a failed delete or an enable.
