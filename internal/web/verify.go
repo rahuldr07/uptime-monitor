@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 const (

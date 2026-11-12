@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 const newSecretPW = "another long passphrase"

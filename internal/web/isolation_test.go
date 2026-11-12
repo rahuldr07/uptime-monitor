@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // Markers that must never reach another account.

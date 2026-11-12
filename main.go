@@ -17,13 +17,13 @@ import (
 	"syscall"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/mail"
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/netguard"
-	"uptimemon/internal/notify"
-	"uptimemon/internal/store"
-	"uptimemon/internal/web"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/netguard"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/web"
 )
 
 // userAgent identifies this instance on probes, with its public address when

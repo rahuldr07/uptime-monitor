@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/netguard"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/netguard"
 )
 
 // Event describes a state change for a target.

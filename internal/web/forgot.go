@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 const (

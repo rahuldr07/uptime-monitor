@@ -6,7 +6,6 @@ dev.db*
 dev-config.json
 .env
 *.bak
-/uptimemon
 
 # Local tooling and agent working files (kept on disk, not published)
 .claude/

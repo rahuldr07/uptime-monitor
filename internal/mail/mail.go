@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"uptimemon/internal/ratelimit"
+	"github.com/rahuldr07/uptime-monitor/internal/ratelimit"
 )
 
 // Sender delivers one message; notify.Email satisfies it.

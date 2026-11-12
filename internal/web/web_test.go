@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/notify"
-	"uptimemon/internal/password"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/password"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 func (e *env) now() time.Time          { return time.Unix(0, e.clk.Load()).UTC() }

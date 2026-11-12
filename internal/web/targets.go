@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/netguard"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/netguard"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // ---- overview & monitors ----

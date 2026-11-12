@@ -493,7 +493,7 @@ deploy/               hardened systemd unit
    `/usr/local/bin`, the config to `/etc/uptime-monitor.json`, secrets to
    `/etc/uptime-monitor.env` (mode 600), then `systemctl enable --now uptime-monitor`.
 
-Build with a version stamp: `go build -ldflags "-X main.version=1.2.3" .` or
+Build with a version stamp (writes `./uptime-monitor`): `go build -ldflags "-X main.version=1.2.3" .` or
 `docker compose build --build-arg VERSION=1.2.3`.
 
 ## Development

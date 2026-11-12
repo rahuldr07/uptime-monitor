@@ -9,8 +9,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"uptimemon/internal/password"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/password"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 const (

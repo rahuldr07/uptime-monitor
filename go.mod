@@ -1,4 +1,4 @@
-module uptimemon
+module github.com/rahuldr07/uptime-monitor
 
 go 1.26.0
 

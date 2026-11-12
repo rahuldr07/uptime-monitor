@@ -21,11 +21,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/password"
-	"uptimemon/internal/ratelimit"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/password"
+	"github.com/rahuldr07/uptime-monitor/internal/ratelimit"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 //go:embed templates/*.html

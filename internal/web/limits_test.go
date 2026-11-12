@@ -3,6 +3,7 @@ package web
 import (
 	"strconv"
 
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"uptimemon/internal/store"
 )
 
 func addTarget(t *testing.T, e *env, c *http.Client, name, rawURL, interval string) (*http.Response, string) {

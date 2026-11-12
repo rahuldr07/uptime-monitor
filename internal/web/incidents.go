@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // ---- incidents ----

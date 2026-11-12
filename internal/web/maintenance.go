@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"uptimemon/internal/monitor"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // ---- maintenance windows ----

@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"uptimemon/internal/netguard"
-	"uptimemon/internal/notify"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/netguard"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // Status is the health of a target as the monitor sees it.

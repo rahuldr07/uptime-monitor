@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // latencySVG renders a latency line chart for checks between from and to,

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 func (e *env) countChecks(t *testing.T, targetID int64) int {

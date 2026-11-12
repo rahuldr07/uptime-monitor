@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/store"
-	"uptimemon/internal/web"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/web"
 
 	_ "modernc.org/sqlite"
 )

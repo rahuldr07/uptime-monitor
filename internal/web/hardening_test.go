@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 func TestSecurityHeaders(t *testing.T) {

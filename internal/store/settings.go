@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"uptimemon/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
 )
 
 // GetSetting returns one of the workspace's settings, or ErrNotFound.

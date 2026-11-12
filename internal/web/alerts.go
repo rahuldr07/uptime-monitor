@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/notify"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 // ---- alerts ----

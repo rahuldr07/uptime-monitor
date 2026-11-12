@@ -19,8 +19,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"uptimemon/internal/notify"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 type recorder struct {

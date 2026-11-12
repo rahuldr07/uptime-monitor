@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/config"
-	"uptimemon/internal/netguard"
+	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/netguard"
 )
 
 func TestMessage(t *testing.T) {

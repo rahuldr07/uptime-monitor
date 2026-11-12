@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/password"
+	"github.com/rahuldr07/uptime-monitor/internal/password"
 )
 
 func (e *env) openEvents(t *testing.T) *http.Response {

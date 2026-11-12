@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"uptimemon/internal/password"
-	"uptimemon/internal/store"
+	"github.com/rahuldr07/uptime-monitor/internal/password"
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 func newSignupEnv(t *testing.T, cfgJSON string) *env {
