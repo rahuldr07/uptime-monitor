@@ -492,3 +492,17 @@ Full design:
   - Operators cannot be disabled, deleted or sent a reset link from the panel. Disabled users cannot be sent a reset link either. Re-enabling an operator with `-enable-user` is allowed, as the recovery path.
   - `-enable-user` changes only the database. A running server does not resume the user's monitors until it restarts; the panel's enable restarts them directly.
   - Extra log events not in spec §12: `account_pruned`, `email_verified`, `mail_throttled`, `mail_failed`.
+
+### D-128: UI component upgrade (2026-11-12)
+- **Status:** Accepted
+- **Decision:**
+  - Direction chosen by the user: deepen the opencode theme (monospace type, flat panels, 1px borders, small radii, peach accent in dark and blue in light). All colours come from the existing tokens. No fonts or external assets are added; the CSP stays self-only.
+  - Form validation is client-side and per field. It runs on submit, and on blur once the field has been touched. The message sits under the field, the field gets `aria-invalid`, and the first invalid field is focused. It is an enhancement only: JS adds `novalidate`, and server validation stays authoritative. Server errors render as an alert at the top of the form (inside the card on sign-in pages).
+  - No `minlength` on the current or admin password fields, because upgraded installs may have short legacy passwords.
+  - Toasts show an icon and a close button, and a 5-second countdown bar drives dismissal. The countdown pauses on hover and focus. Errors stay until dismissed. At most 4 toasts show at once, and duplicates are merged. Polite and assertive live regions are created at load.
+  - Dropdowns: a custom accessible listbox wraps every native select. The native select stays the submitted control and still receives `change` events. The menu is rendered at body level, so tables and panels cannot clip it.
+  - Modals: the confirm dialog has a title and icon, focuses Cancel, and closes on backdrop click. The slide-over panel is a modal dialog with a focus trap and focus return.
+  - Data tables follow the user-supplied reference kit (data-table-kit), ported to vanilla JS over server-rendered tables. Features: sort, search, quick views, paging, a View menu, persisted preferences (localStorage key `uptime.tables`), row selection with TSV copy, keyboard rows, column resize and phone cards. Admin users keeps server paging and server search.
+  - Live refresh: table state, keyboard focus and the row cursor survive SSE refreshes. Focus is restored only to the same element, matched by identity. Refresh is held while a menu is open, while a field is invalid, or while a pointer is pressed.
+  - Global keyboard shortcuts (`/`, `n`, `t`) work everywhere except text inputs. A focused table region claims only arrows, Home, End, Space, Enter and Escape.
+  - Out of scope: the plain-text 404 body. It must stay identical so the `/admin` gate is undetectable (D-127).
