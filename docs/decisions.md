@@ -456,10 +456,17 @@ Full design:
 - **Why:** These rulings settle points the spec left open or got wrong while M1e was built. Each keeps one workspace from reaching, starving or outliving another.
 
 ### D-126: M2 (email) rulings
-- **Status:** Accepted (amends §5.7, §5.8 and the route classes of §8.2; Task 7 extends this entry)
+- **Status:** Accepted (amends §5.7, §5.8 and the route classes of §8.2)
 - **Decision:**
   - A password reset signs the user in only when the browser has no session or has a session for the same user. If the browser holds a session for a different user, that session and its cookie are left alone and the page says "Password changed. Sign in to continue." This departs from §5.8 (which always signs in) and mirrors §5.7.
   - `/verify` (GET and POST) and `/reset` (GET and POST) are `classPublic`: a signed-in user who opens an emailed link sees the page instead of being redirected to `/`. `/forgot` is `classGuest`.
   - `/forgot` answers 200 with the same body for every address (unknown, unverified, disabled or verified), and 404 when no system mail is configured. Unverified accounts get a reset link; completing the reset verifies the address.
-  - A reset and a password change on `/account` each send a "Your password was changed" notice through `Mailer.Notice`.
+  - A reset and a password change on `/account` each send a "Your password was changed" notice through `Mailer.Notice`. The notice is charged only to the instance budget, not to the per-recipient budgets, so `/forgot` spam cannot suppress it.
   - Accepted risk: `/forgot` and `/verify/resend` for an existing user write a token (through the serialised SQLite writer), so under heavy write load their timing can differ from unknown addresses. The responses are identical.
+  - Mail budgets are charged before a token is created: `Mailer.Send` takes a compose callback and runs it only when the queue has room and the budgets allow the message. A dropped message therefore never replaces the link the user already has.
+  - Without `mail`, `/forgot` and `/verify/resend` return 404 and the sign-in page shows no resend form. An unverified user then gets 403 `msgUnverified`, and the operator recovers accounts with `-reset-password`.
+  - Status pages of unverified owners return 404.
+  - The system mail dialer allows private addresses, because the operator chose the SMTP host. Alert-channel email in other workspaces keeps the `netguard` rules.
+  - Open sign-up at the `max_workspaces` cap answers 403 for every address, existing or not, so the cap cannot be used to probe for accounts.
+  - Pruning of unverified accounts (48 hours) skips operators. It also removes disabled accounts that never verified; this is accepted for now.
+  - `TestEnumerationTiming` holds the difference between the medians for existing and unknown addresses on `/forgot`, `/verify/resend` and open `/signup` under 50 ms, with the real hasher.

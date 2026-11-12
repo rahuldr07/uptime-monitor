@@ -8,7 +8,7 @@
   "interval": "30s",
   "timeout": "10s",
   "retention": "720h",
-  "limits": {"max_monitors": 20, "min_interval": "30s", "max_workspaces": 0, "signups_per_hour": 100, "host_requests_per_second": 1},
+  "limits": {"max_monitors": 20, "min_interval": "30s", "max_workspaces": 0, "signups_per_hour": 100, "mail_per_hour": 500, "host_requests_per_second": 1},
   "targets": [
     { "name": "Example", "url": "https://example.com" },
     { "name": "Go dev", "url": "https://go.dev", "interval": "60s", "keyword": "Go" },

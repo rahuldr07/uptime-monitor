@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -382,5 +383,94 @@ func TestVerifyBadTokenOffersResend(t *testing.T) {
 	resp, body := e.get(t, e.client(t), "/verify?token=bogus")
 	if resp.StatusCode != 404 || !strings.Contains(body, msgBadLink) || !strings.Contains(body, `action="/verify/resend"`) {
 		t.Fatalf("bad token: %d %s", resp.StatusCode, body)
+	}
+}
+
+// TestEnumerationTiming checks that /forgot, /verify/resend and open sign-up
+// take about as long for an existing address as for an unknown one. It uses
+// the real hasher, so a missing "always hash" would show as a gap.
+func TestEnumerationTiming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses the real password hasher")
+	}
+	e := buildEnv(t, password.Default(), openCfg, true)
+	const pending = "pending@example.com"
+	e.addUnverified(t, pending)
+
+	ipN := 0
+	nextIP := func() string {
+		ipN++
+		return fmt.Sprintf("127.7.%d.%d", ipN/250, ipN%250+1)
+	}
+	post := func(path string, form url.Values) (int, string) {
+		resp, body := e.post(t, e.clientFrom(t, nextIP()), path, form)
+		return resp.StatusCode, body
+	}
+	type scenario struct {
+		name string
+		do   func(existing bool, i int) (int, string)
+	}
+	scenarios := []scenario{
+		{"forgot", func(existing bool, i int) (int, string) {
+			em := fmt.Sprintf("nobody%d@example.com", i)
+			if existing {
+				em = opEmail
+			}
+			return post("/forgot", url.Values{"email": {em}})
+		}},
+		{"resend", func(existing bool, i int) (int, string) {
+			em := fmt.Sprintf("nobody%d@example.com", i)
+			if existing {
+				em = pending
+			}
+			return post("/verify/resend", url.Values{"email": {em}})
+		}},
+		{"signup", func(existing bool, i int) (int, string) {
+			em := fmt.Sprintf("fresh%d@example.com", i)
+			if existing {
+				em = opEmail
+			}
+			return post("/signup", signupForm("", em))
+		}},
+	}
+	med := func(ds []time.Duration) time.Duration {
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return ds[len(ds)/2]
+	}
+	const n = 30
+	for _, sc := range scenarios {
+		var known, unknown []time.Duration
+		for i := 0; i < n+1; i++ {
+			type result struct {
+				status int
+				body   string
+				d      time.Duration
+			}
+			try := func(existing bool) result {
+				start := time.Now()
+				st, body := sc.do(existing, i)
+				return result{st, body, time.Since(start)}
+			}
+			e.advance(25 * time.Hour)
+			var k, u result
+			if i%2 == 0 { // alternate which path goes first
+				k = try(true)
+				u = try(false)
+			} else {
+				u = try(false)
+				k = try(true)
+			}
+			if k.status != u.status || k.body != u.body {
+				t.Fatalf("%s round %d: responses differ: %d vs %d, bodies equal=%v", sc.name, i, k.status, u.status, k.body == u.body)
+			}
+			if i > 0 { // round 0 is warm-up
+				known, unknown = append(known, k.d), append(unknown, u.d)
+			}
+		}
+		mk, mu := med(known), med(unknown)
+		t.Logf("%s: median existing=%v unknown=%v", sc.name, mk, mu)
+		if diff := mk - mu; diff >= 50*time.Millisecond || -diff >= 50*time.Millisecond {
+			t.Fatalf("%s: timing differs by %v (existing %v, unknown %v)", sc.name, diff, mk, mu)
+		}
 	}
 }

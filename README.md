@@ -113,12 +113,17 @@ loopback address). `closed` does not, and `-invite` links then use the
 |---|---|---|
 | `closed` (default) | 404 | works |
 | `invite` | explains that sign-up is by invitation | works |
+| `open` | anyone may sign up; needs `mail` | works |
 
 `closed` does not switch sign-ups off: invites already issued keep working
 until they expire. To stop new accounts, set `limits.max_workspaces` to the
 current workspace count, or delete the unused `kind='invite'` rows from `tokens`.
 
-`open` is rejected at startup until a later release adds email.
+`open` needs `mail` and `base_url` (see System email). A new account must verify
+its address before it can sign in. Sign-up answers the same whether or not the
+address already has an account: an existing owner gets a notice email instead
+(at most one per 24 hours). At `limits.max_workspaces`, open sign-up answers
+403 for every address.
 
 Create an invitation after setup with `uptime-monitor -invite` (any holder of
 the link may sign up) or `uptime-monitor -invite person@example.com` (the
@@ -129,6 +134,51 @@ management in the UI arrives in a later release.
 Sign-ups are limited to 5 per hour per client address, and
 `limits.signups_per_hour` across the instance (see below). Only a request with
 a valid invite counts against the instance-wide limit.
+
+### System email
+
+The optional `mail` section is the SMTP account the server itself uses for
+verification, password reset and notice emails. It is separate from the alert
+channels in `notify`.
+
+```json
+"mail": {"smtp_host": "smtp.example.com", "smtp_port": 587, "username": "up", "password": "${SMTP_PASSWORD}", "from": "up@example.com"}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `smtp_host` | required | SMTP server |
+| `smtp_port` | `587` | `465` uses implicit TLS, any other port (such as `587`) STARTTLS |
+| `username`, `password` | empty | credentials; never sent over an unencrypted connection |
+| `from` | required | sender, a bare address such as `up@example.com` |
+| `require_tls` | `true` | refuse to send without TLS |
+
+`mail` needs `base_url`, because the links in the emails are built from it.
+`config.example.json` leaves `mail` out because it needs a real SMTP account.
+The SMTP host may be a private address, since you chose it.
+
+What it sends:
+
+- **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified after 48 hours are deleted by the hourly prune, operators excepted; disabled accounts that never verified are deleted too, for now.
+- **Forgot password**: `/forgot` sends a reset link valid for 1 hour. It answers the same for every address. Completing a reset also verifies the address. `/reset` and `/verify` links open even while you are signed in; a reset signs in only a browser with no session or the same user's session.
+- **Password-change notice**: sent after a reset or a change on `/account`.
+- **Duplicate sign-up notice**: sent to the existing owner when someone signs up with their address.
+
+Mail budgets (in memory, reset on restart). A message over a budget is dropped
+with a WARN `event=mail_dropped`, and no new link is created, so the link
+already sent keeps working:
+
+| Budget | Limit |
+|---|---|
+| Per recipient, all system email | 3 per hour and 10 per day |
+| Duplicate sign-up notice | 1 per 24 hours per account |
+| `/forgot` and `/verify/resend` | 10 per hour per client address, shared |
+| Whole instance (`limits.mail_per_hour`) | `500` by default, at least `1` |
+
+The password-change notice counts only against the instance budget.
+
+Without `mail`, `/forgot` and `/verify/resend` return 404 and sign-in offers no
+resend form. Use `uptime-monitor -reset-password <email>` to recover an account.
 
 ### Limits
 
@@ -141,6 +191,7 @@ exempt from the monitor, interval, host-rate and rate limits below. The
 | `max_monitors` | `20` | monitors per workspace; `0` is unlimited |
 | `min_interval` | `30s` | shortest check interval a workspace may set (at least `1s`); `0s` or unset means the default |
 | `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included, so `5` allows 4 invited accounts and `1` allows none; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
+| `mail_per_hour` | `500` | system emails across the instance per hour; at least `1`. See System email |
 | `signups_per_hour` | `100` | sign-ups across the instance per hour; at least `1`. To stop new accounts, set `max_workspaces` to the current workspace count (`signup: "closed"` does not: outstanding invites keep working until they expire) |
 | `host_requests_per_second` | `1` | combined check rate to one host from all non-operator workspaces (must be positive). A monitor that would exceed it is refused with a hint to use a longer interval |
 
@@ -203,7 +254,10 @@ checking them.
 
 The server refuses to start when:
 
-- `signup` is anything other than `closed` or `invite` (`open` arrives later), or `mail` or `limits.mail_per_hour` is set
+- `signup` is anything other than `closed`, `invite` or `open`
+- `signup` is `open` and `mail` is not set
+- `mail` is set without `base_url`, or without `smtp_host` or `from`, or `from` is not a bare address (`up@example.com`, not `Up <up@example.com>`)
+- `limits.mail_per_hour` is under 1
 - `signup` is not `closed` and `base_url` is empty
 - `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query
@@ -285,8 +339,9 @@ From a release before the production hardening:
 | `admin_password` | empty | only unlocks setup on an upgraded install (one that had data before accounts); ignored, with a WARN, once an account exists |
 | `insecure_no_auth` | `false` | removed; has no effect and logs a WARN if set |
 | `base_url` | empty | external URL, e.g. `https://status.example.com`: absolute http(s), no path, userinfo or query. Used for the setup, reset and invite links; an https value makes session cookies always Secure |
-| `signup` | `closed` | `closed` or `invite`; see Sign-up and invites. `open` and the `mail` key are rejected until a later release |
-| `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `host_requests_per_second` |
+| `signup` | `closed` | `closed`, `invite` or `open`; see Sign-up and invites. `open` needs `mail` |
+| `mail` | none | system SMTP account for verification and reset emails; see System email |
+| `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `mail_per_hour`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
 | `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. `operator` means the operator's own workspace 1 (checks and alerts) and operator accounts (the web form checks); v1 has one operator, so the two agree; `all` is unsafe on an instance others can join. |
