@@ -634,7 +634,7 @@
     clear.addEventListener('click', function () { T.clearAll(); });
     sum.appendChild(sumT); sum.appendChild(clear);
 
-    wrap.setAttribute('role', 'region'); wrap.tabIndex = 0;
+    wrap.setAttribute('role', 'region'); wrap.tabIndex = 0; wrap.id = 'dt-' + T.id + '-region'; // an id so a refresh can restore focus to it
     wrap.setAttribute('aria-label', T.noun + '. Arrow keys move' + (select ? ', Space selects' : '') + (T.rows.some(function (r) { return r.tr.getAttribute('data-href'); }) ? ', Enter opens' : '') + '.');
     live.setAttribute('aria-live', 'polite');
     foot.setAttribute('aria-label', 'Pages of ' + T.noun); foot.hidden = true;
@@ -829,7 +829,7 @@
     };
 
     // selection (data-select): ids live in S.sel, so it survives a live refresh; filtered-out rows drop out at render
-    T.anchor = null; T.cur = -1;
+    T.cur = -1; // the row cursor and the range anchor live in S (by row id), so a live rebuild keeps them
     var bulk = null;
     T.paintSel = function () {
       var list = T.list || [], n = 0;
@@ -863,8 +863,8 @@
     function pick(ids, on) { ids.forEach(function (id) { if (on) S.sel[id] = true; else delete S.sel[id]; }); }
     function shownIds() { return (T.shown || []).map(function (r) { return r.id; }); }
     function tick(r, range) {
-      if (range && T.anchor) pick(rangeIds(shownIds(), T.anchor, r.id), true); else pick([r.id], !S.sel[r.id]);
-      T.anchor = r.id; T.paintSel();
+      if (range && S.anchor) pick(rangeIds(shownIds(), S.anchor, r.id), true); else pick([r.id], !S.sel[r.id]);
+      S.anchor = r.id; T.paintSel();
     }
     if (select) hcb.addEventListener('click', function () {
       var list = T.list || [], all = list.length > 0 && list.every(function (r) { return S.sel[r.id]; });
@@ -883,8 +883,8 @@
     // keyboard: the focused region moves a row cursor (kit useRowPick)
     function move(to, extend) {
       var rows = T.shown || [], n = Math.max(0, Math.min(rows.length - 1, to)), r = rows[n]; if (!r) return;
-      T.cur = n; live.textContent = 'Row ' + (n + 1) + ' of ' + rows.length + ': ' + r.label;
-      if (extend && select) { pick(rangeIds(shownIds(), T.anchor || r.id, r.id), true); if (!T.anchor) T.anchor = r.id; }
+      T.cur = n; S.cur = r.id; S.ci = n; live.textContent = 'Row ' + (n + 1) + ' of ' + rows.length + ': ' + r.label;
+      if (extend && select) { pick(rangeIds(shownIds(), S.anchor || r.id, r.id), true); if (!S.anchor) S.anchor = r.id; }
       T.paintSel(); r.tr.scrollIntoView({ block: 'nearest' });
     }
     wrap.addEventListener('keydown', function (e) {
@@ -996,6 +996,12 @@
         live.textContent = Noun + ' ' + at(S.page) + ' of ' + matched + ' · page ' + (S.page + 1) + ' of ' + pages;
         var top = wrap.getBoundingClientRect().top;
         if (top < 0 || top > window.innerHeight) wrap.scrollIntoView({ block: 'start' });
+      }
+      // re-derive the cursor from its row id (after a rebuild or a re-sort); a vanished row clamps to the nearest index
+      T.cur = -1;
+      if (S.cur != null && T.shown.length) {
+        for (var ci = 0; ci < T.shown.length; ci++) if (T.shown[ci].id === S.cur) T.cur = ci;
+        if (T.cur < 0) { T.cur = Math.min(S.ci || 0, T.shown.length - 1); S.cur = T.shown[T.cur].id; S.ci = T.cur; }
       }
       T.paintSel();
       T.fit();
@@ -1161,7 +1167,7 @@
         if (editing()) { pending = true; return; } // a dialog or edit began while this was in flight
         var main = $('#content'); if (!main) return;
         var q = $('input[data-search]'); var qv = q ? q.value : '';
-        var FOC = 'button,a[href],input,select,textarea,summary', act = document.activeElement;
+        var FOC = 'button,a[href],input,select,textarea,summary,.dt-wrap,.dt-grip', act = document.activeElement;
         var fk = act && main.contains(act) ? focusKey(act) : '', ftag = fk ? act.tagName : '';
         var dq = act && act.classList && act.classList.contains('dt-q') ? { id: act.closest('.dt').getAttribute('data-table'), a: act.selectionStart, b: act.selectionEnd } : null;
         main.innerHTML = html;
