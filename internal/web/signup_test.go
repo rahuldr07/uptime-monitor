@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -197,8 +198,19 @@ func TestSignupBudgetNeedsValidInvite(t *testing.T) {
 			t.Fatalf("bogus %d: %d", i, resp.StatusCode)
 		}
 	}
+	// Invalid forms behind a valid invite (each from its own address, so only
+	// the instance budget could stop them) must not spend the budget of 5.
+	inv := e.invite(t, "")
+	for i := 0; i < 8; i++ {
+		f := signupForm(inv, "x@example.com")
+		f.Set("confirm", "nope")
+		c := e.clientFrom(t, fmt.Sprintf("127.0.1.%d", i+1))
+		if resp, _ := e.post(t, c, "/signup", f); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid form %d: %d, want 422 (budget spent?)", i, resp.StatusCode)
+		}
+	}
 	b := e.clientFrom(t, "127.0.0.3")
-	if resp, body := e.post(t, b, "/signup", signupForm(e.invite(t, ""), "new@example.com")); resp.StatusCode != 303 {
+	if resp, body := e.post(t, b, "/signup", signupForm(inv, "new@example.com")); resp.StatusCode != 303 {
 		t.Fatalf("valid sign-up after probes: %d %s", resp.StatusCode, body)
 	}
 }

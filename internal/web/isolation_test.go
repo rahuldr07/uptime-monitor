@@ -328,6 +328,10 @@ func testIsolationDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor10s(t, "A's live target first check", func() bool { return e.countChecks(t, live.ID) > 0 })
+	// This test stays stable only because of A's maintenance window (it
+	// covers the fixed clock) and the fixed clock itself: A-live keeps probing
+	// during B's deletion, and the window keeps those probes from opening
+	// incidents or alerts that would change the before/after snapshot of A.
 	before := snapshotWS(t, e.opWS, a)
 	users := e.userCount(t)
 
