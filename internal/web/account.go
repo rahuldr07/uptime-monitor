@@ -146,6 +146,10 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 		s.fail(w, err)
 		return
 	}
+	// Sessions are gone, so the user cannot retry: finish on a context a
+	// dropped connection cannot cancel, or the account is left half deleted.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+	defer cancel()
 	wsID := a.WS.ID()
 	if wsID != store.OperatorWorkspaceID {
 		s.mon.RemoveWorkspace(wsID)
@@ -163,9 +167,15 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 		s.fail(w, err)
 		return
 	}
+	gone := false
 	for _, id := range deleted {
 		s.mon.ForgetWorkspace(id)
 		s.statusCache.forget(id)
+		gone = gone || id == wsID
+	}
+	if wsID != store.OperatorWorkspaceID && !gone {
+		// Stopped above but the workspace survived: bring its runners back.
+		s.restartRunners(ctx, a.WS)
 	}
 	s.clearSessionCookie(w, r)
 	s.logger.Info("account deleted", "event", "account_deleted", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
