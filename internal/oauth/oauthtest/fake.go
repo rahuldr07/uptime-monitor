@@ -21,11 +21,21 @@ import (
 // Secret is the client secret the fake's token endpoint expects.
 const Secret = "fake-secret"
 
+// ClientID is the client id the fake issues codes to and Provider uses.
+const ClientID = "fake-client"
+
+// UserAgent is what production sends; the fake's GitHub endpoints require it.
+const UserAgent = "uptime-monitor"
+
 // GitHubEmail is one entry of the GitHub emails endpoint.
 type GitHubEmail struct {
-	Email             string `json:"email"`
-	Primary, Verified bool
+	Email    string `json:"email"`
+	Primary  bool   `json:"primary"`
+	Verified bool   `json:"verified"`
 }
+
+// grant is what /authorize recorded for one issued code.
+type grant struct{ challenge, redirectURI, clientID string }
 
 // Fake is a running fake provider. Set the exported fields before the flow starts.
 type Fake struct {
@@ -43,8 +53,8 @@ type Fake struct {
 
 	srv *httptest.Server
 	mu  sync.Mutex
-	// code -> PKCE challenge, and the access tokens issued
-	codes  map[string]string
+	// code -> what /authorize recorded, and the access tokens issued
+	codes  map[string]grant
 	tokens map[string]bool
 	n      int
 }
@@ -52,7 +62,7 @@ type Fake struct {
 // New starts a fake of the given kind and stops it when the test ends.
 func New(t *testing.T, kind string) *Fake {
 	f := &Fake{Kind: kind, Subject: "12345", Email: "Person@Example.com", EmailVerified: true,
-		codes: map[string]string{}, tokens: map[string]bool{}}
+		codes: map[string]grant{}, tokens: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authorize", f.authorize)
 	mux.HandleFunc("/token", f.token)
@@ -76,7 +86,7 @@ func (f *Fake) Client() *http.Client { return f.srv.Client() }
 
 // Provider is a provider of the fake's kind wired to it.
 func (f *Fake) Provider() *oauth.Provider {
-	return oauth.NewForTest(f.Kind, "fake-client", Secret, f.Endpoints(), f.Client())
+	return oauth.NewForTest(f.Kind, ClientID, Secret, f.Endpoints(), f.Client())
 }
 
 // authorize records the PKCE challenge and bounces back with a one-use code.
@@ -86,16 +96,20 @@ func (f *Fake) authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	f.mu.Lock()
-	f.n++
-	code := "code" + strconv.Itoa(f.n)
-	f.codes[code] = q.Get("code_challenge")
-	f.mu.Unlock()
+	if q.Get("client_id") != ClientID {
+		http.Error(w, "unknown client_id", http.StatusBadRequest)
+		return
+	}
 	back, err := url.Parse(q.Get("redirect_uri"))
-	if err != nil {
+	if err != nil || q.Get("redirect_uri") == "" {
 		http.Error(w, "bad redirect_uri", http.StatusBadRequest)
 		return
 	}
+	f.mu.Lock()
+	f.n++
+	code := "code" + strconv.Itoa(f.n)
+	f.codes[code] = grant{q.Get("code_challenge"), q.Get("redirect_uri"), q.Get("client_id")}
+	f.mu.Unlock()
 	v := back.Query()
 	v.Set("code", code)
 	v.Set("state", q.Get("state"))
@@ -120,13 +134,15 @@ func (f *Fake) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
-	challenge, ok := f.codes[r.PostForm.Get("code")]
+	g, ok := f.codes[r.PostForm.Get("code")]
 	delete(f.codes, r.PostForm.Get("code")) // one use
 	f.mu.Unlock()
 	sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
-	okPKCE := subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(challenge)) == 1
+	okPKCE := subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(g.challenge)) == 1
 	okSecret := subtle.ConstantTimeCompare([]byte(r.PostForm.Get("client_secret")), []byte(Secret)) == 1
-	if !ok || !okPKCE || !okSecret || r.PostForm.Get("grant_type") != "authorization_code" {
+	okBinding := r.PostForm.Get("redirect_uri") == g.redirectURI && r.PostForm.Get("client_id") == g.clientID
+	okHeaders := r.Header.Get("Accept") == "application/json" && (f.Kind != "github" || r.Header.Get("User-Agent") == UserAgent)
+	if !ok || !okPKCE || !okSecret || !okBinding || !okHeaders || r.PostForm.Get("grant_type") != "authorization_code" {
 		if f.Kind == "github" { // GitHub answers 200 with an error body
 			w.Write([]byte(`{"error":"bad_verification_code"}`))
 			return
@@ -148,7 +164,7 @@ func (f *Fake) authed(w http.ResponseWriter, r *http.Request) bool {
 	f.mu.Lock()
 	ok := f.tokens[tok]
 	f.mu.Unlock()
-	if ok && f.Kind == "github" && (r.Header.Get("User-Agent") == "" ||
+	if ok && f.Kind == "github" && (r.Header.Get("User-Agent") != UserAgent ||
 		r.Header.Get("Accept") != "application/vnd.github+json" || r.Header.Get("X-GitHub-Api-Version") == "") {
 		ok = false
 	}

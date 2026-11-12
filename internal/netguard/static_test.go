@@ -14,11 +14,15 @@ import (
 // reaches the network through a package-level shortcut, without netguard.
 var strayClient = regexp.MustCompile(`http\.Client\{|net\.Dialer\{|var \w+ (net\.Dialer|http\.(Client|Transport))|http\.Transport\{|http\.DefaultClient|http\.DefaultTransport|http\.(Get|Post|Head|PostForm)\(|smtp\.SendMail\(|net\.Dial\w*\(|tls\.Dial\(|tls\.DialWithDialer\(|smtp\.Dial\(|new\((http\.(Client|Transport)|net\.Dialer)\)`)
 
+// testHook matches the test-only provider constructor, which accepts any client.
+const testHook = "oauth.NewForTest("
+
 // TestNoStrayClients fails if any production file outside internal/netguard
 // builds its own client, transport or dialer, which would bypass the guard.
 func TestNoStrayClients(t *testing.T) {
 	root := filepath.Join("..", "..")
 	skipDir := filepath.Join(root, "internal", "netguard")
+	oauthtestDir := filepath.Join(root, "internal", "oauth", "oauthtest")
 	var hits, scanned []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -42,11 +46,12 @@ func TestNoStrayClients(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		inOauthtest := strings.HasPrefix(filepath.Clean(path), oauthtestDir+string(filepath.Separator))
 		for i, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			if strayClient.MatchString(line) {
+			if strayClient.MatchString(line) || (!inOauthtest && strings.Contains(line, testHook)) {
 				hits = append(hits, fmt.Sprintf("%s:%d: %s", filepath.ToSlash(rel), i+1, strings.TrimSpace(line)))
 			}
 		}

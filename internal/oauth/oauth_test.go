@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -126,24 +127,39 @@ func TestTimeout(t *testing.T) {
 }
 
 func TestNonJSONAndRedirects(t *testing.T) {
-	secretBody := "SECRET-BODY-TEXT"
+	const secretBody = "SECRET-BODY-TEXT"
+	var landed atomic.Int32 // hits on anything a redirect points at
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/moved" {
-			http.Redirect(w, r, "/token", http.StatusFound)
-			return
+		switch r.URL.Path {
+		case "/moved", "/moved-info":
+			http.Redirect(w, r, "/landing", http.StatusFound)
+		case "/landing":
+			landed.Add(1)
+			w.Write([]byte(`{"access_token":"leaked","sub":"1","email":"a@example.com","email_verified":true}`))
+		default:
+			w.Write([]byte("<html>" + secretBody + "</html>"))
 		}
-		w.Write([]byte("<html>" + secretBody + "</html>"))
 	}))
 	defer srv.Close()
-	for _, path := range []string{"/token", "/moved"} {
-		p := oauth.NewForTest("google", "id", "s", oauth.Endpoints{Token: srv.URL + path, UserInfo: srv.URL + "/info"}, srv.Client())
-		_, err := p.Exchange(context.Background(), "c", "v", redirect)
-		if err == nil || strings.Contains(err.Error(), secretBody) {
-			t.Errorf("%s: token err = %v", path, err)
+	for _, tc := range []struct{ token, info string }{{"/token", "/info"}, {"/moved", "/moved-info"}} {
+		p := oauth.NewForTest("google", "id", "s", oauth.Endpoints{Token: srv.URL + tc.token, UserInfo: srv.URL + tc.info}, srv.Client())
+		tok, err := p.Exchange(context.Background(), "c", "v", redirect)
+		if err == nil || tok != "" || strings.Contains(err.Error(), secretBody) {
+			t.Errorf("%s: token = %q, err = %v", tc.token, tok, err)
 		}
-		if _, err := p.Identity(context.Background(), "tok"); err == nil || strings.Contains(err.Error(), secretBody) {
-			t.Errorf("%s: identity err = %v", path, err)
+		if tc.token == "/moved" && (err == nil || !strings.Contains(err.Error(), "302")) {
+			t.Errorf("redirect not reported as a 302: %v", err)
 		}
+		id, err := p.Identity(context.Background(), "tok")
+		if err == nil || id != (oauth.Identity{}) || strings.Contains(err.Error(), secretBody) {
+			t.Errorf("%s: id = %+v, err = %v", tc.info, id, err)
+		}
+		if tc.info == "/moved-info" && (err == nil || !strings.Contains(err.Error(), "302")) {
+			t.Errorf("identity redirect not reported as a 302: %v", err)
+		}
+	}
+	if n := landed.Load(); n != 0 {
+		t.Errorf("a redirect was followed %d times", n)
 	}
 }
 
