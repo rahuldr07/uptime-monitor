@@ -97,6 +97,23 @@ func (s *Server) oauthRedirectURI(p *oauth.Provider) string {
 	return strings.TrimRight(s.cfg.LinkBase(), "/") + "/auth/" + p.Name() + "/callback"
 }
 
+// useOAuthState records state as spent and reports false if it already was.
+func (s *Server) useOAuthState(state string) bool {
+	s.oauthUsedMu.Lock()
+	defer s.oauthUsedMu.Unlock()
+	now := s.now()
+	for k, exp := range s.oauthUsed {
+		if now.After(exp) {
+			delete(s.oauthUsed, k)
+		}
+	}
+	if _, ok := s.oauthUsed[state]; ok {
+		return false
+	}
+	s.oauthUsed[state] = now.Add(oauthTTL + time.Minute)
+	return true
+}
+
 // oauthLink is a sign-in button on the login or sign-up page.
 type oauthLink struct{ Label, Href string }
 
@@ -211,6 +228,8 @@ func (q *oauthReq) serverErr(err error) { q.s.fail(q.w, err) }
 
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	// The cookie is used once: it is deleted on every outcome, refusals included.
+	s.setOAuthCookie(w, r, "", -1)
 	p := s.oauth[r.PathValue("provider")]
 	if p == nil {
 		http.NotFound(w, r)
@@ -221,15 +240,18 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := &oauthReq{s: s, w: w, r: r, p: p, ip: clientIP(r, s.cfg.ProxyHops())}
-	// The cookie is used once: it is deleted whatever happens next.
 	var st oauthState
 	valid := false
 	if c, err := r.Cookie(s.oauthCookieName(r)); err == nil {
 		st, valid = s.openOAuth(c.Value)
 	}
-	s.setOAuthCookie(w, r, "", -1)
 	if !valid {
 		q.fail(http.StatusBadRequest, "cookie", msgOAuthFailed)
+		return
+	}
+	// A state is good for one callback, even when its cookie is copied.
+	if !s.useOAuthState(st.State) {
+		q.fail(http.StatusBadRequest, "state_reused", msgOAuthFailed)
 		return
 	}
 	q.st = st
@@ -310,6 +332,10 @@ func (q *oauthReq) signIn(u store.User, event string) {
 		q.fail(http.StatusForbidden, "disabled", msgDisabled)
 		return
 	}
+	if u.VerifiedAt == nil {
+		q.fail(http.StatusBadRequest, "unverified", msgOAuthFailed)
+		return
+	}
 	ctx = context.WithoutCancel(ctx)
 	if err := s.sys.TouchIdentity(ctx, q.p.Name(), q.id.Subject, s.now()); err != nil {
 		s.logger.Warn("oauth: cannot update last use", "err", err)
@@ -373,10 +399,18 @@ func (q *oauthReq) signUp() {
 			return
 		}
 	}
-	if ok, _ := s.signupByAddr.Take(clientKey(q.r, s.cfg.ProxyHops())); !ok {
+	addr := clientKey(q.r, s.cfg.ProxyHops())
+	if ok, _ := s.signupByAddr.Take(addr); !ok {
 		q.fail(http.StatusTooManyRequests, "signup_limit", msgTooMany)
 		return
 	}
+	// The slot goes back unless an account was created, as in signupPost.
+	created := false
+	defer func() {
+		if !created {
+			s.signupByAddr.Undo(addr)
+		}
+	}()
 	if ok, _ := s.signupGlobal.Take("all"); !ok {
 		q.fail(http.StatusTooManyRequests, "signup_limit", msgTooMany)
 		return
@@ -385,6 +419,14 @@ func (q *oauthReq) signUp() {
 	u, _, err := s.sys.CreateAccount(ctx, store.AccountInput{Email: q.id.Email, WorkspaceName: oauthWorkspace,
 		Verified: true, InviteToken: invite, MaxWorkspaces: *s.cfg.Limits.MaxWorkspaces, Now: s.now(),
 		Identity: &store.NewIdentity{Provider: q.p.Name(), Subject: q.id.Subject, Email: q.id.Email}})
+	if errors.Is(err, store.ErrEmailTaken) || errors.Is(err, store.ErrIdentityTaken) {
+		// A concurrent callback may have just created this very identity.
+		if owner, ierr := s.sys.IdentityUser(ctx, q.p.Name(), q.id.Subject); ierr == nil {
+			created = true // the slot was spent by that sign-up's twin, not refunded here
+			q.signIn(owner, "oauth_login_ok")
+			return
+		}
+	}
 	switch {
 	case errors.Is(err, store.ErrWorkspaceCap):
 		q.fail(http.StatusForbidden, "workspace_cap", msgNoNewAccounts)
@@ -405,6 +447,7 @@ func (q *oauthReq) signUp() {
 		q.serverErr(err)
 		return
 	}
+	created = true
 	s.logger.Info("oauth sign-up", "event", "oauth_signup", "provider", q.p.Name(), "user_id", u.ID, "ip", q.ip)
 	q.signIn(u, "")
 }
@@ -421,7 +464,16 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 	}
 	err := s.sys.LinkIdentity(context.WithoutCancel(q.r.Context()), q.a.User.ID, q.p.Name(), q.id.Subject, q.id.Email, s.now())
 	if errors.Is(err, store.ErrIdentityTaken) {
-		q.fail(http.StatusConflict, "identity_taken", fmt.Sprintf(msgOAuthHave, q.p.Label()))
+		// Which of the two uniqueness rules fired?
+		o, ierr := s.sys.IdentityUser(q.r.Context(), q.p.Name(), q.id.Subject)
+		switch {
+		case ierr == nil && o.ID == q.a.User.ID:
+			redirect(q.w, q.r, "/account", q.p.Label()+" is already connected.")
+		case ierr == nil:
+			q.fail(http.StatusConflict, "identity_taken", fmt.Sprintf(msgOAuthTaken, q.p.Label()))
+		default:
+			q.fail(http.StatusConflict, "provider_has_identity", fmt.Sprintf(msgOAuthHave, q.p.Label()))
+		}
 		return
 	}
 	if err != nil {

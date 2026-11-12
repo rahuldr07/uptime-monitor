@@ -53,8 +53,10 @@ type Server struct {
 	deviceKey     []byte // HMAC key for device cookies, fresh per process
 	oauthKey      []byte // HMAC key for the OAuth state cookie, fresh per process
 	oauth         map[string]*oauth.Provider
-	oauthList     []*oauth.Provider  // enabled providers, in button order
-	oauthByAddr   *ratelimit.Limiter // OAuth starts and callbacks, per client address
+	oauthList     []*oauth.Provider // enabled providers, in button order
+	oauthUsedMu   sync.Mutex
+	oauthUsed     map[string]time.Time // spent OAuth states, until their cookies would expire anyway
+	oauthByAddr   *ratelimit.Limiter   // OAuth starts and callbacks, per client address
 	statusLimiter *ratelimit.Limiter
 	apiLimiter    *ratelimit.Limiter // JSON API, per session
 
@@ -140,6 +142,7 @@ func New(o Options) (*Server, error) {
 	if _, err := rand.Read(s.oauthKey); err != nil {
 		return nil, fmt.Errorf("web: oauth key: %w", err)
 	}
+	s.oauthUsed = map[string]time.Time{}
 	s.oauth = map[string]*oauth.Provider{}
 	for _, p := range o.OAuth {
 		s.oauth[p.Name()] = p

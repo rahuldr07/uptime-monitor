@@ -1,6 +1,8 @@
 package web
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -192,9 +194,6 @@ func TestOAuthStart(t *testing.T) {
 	ck := cookieNamed(resp, "uptime_oauth")
 	if ck == nil || !ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode || ck.MaxAge != 600 || ck.Path != "/" || ck.Secure || ck.Value == "" {
 		t.Fatalf("oauth cookie: %+v", ck)
-	}
-	if strings.Contains(ck.Value, q.Get("state")) {
-		t.Error("cookie carries the state in the clear")
 	}
 
 	// Not found: unknown provider, provider not enabled, bad intent, link and reauth without a session.
@@ -546,6 +545,12 @@ func TestOAuthReauth(t *testing.T) {
 		t.Fatalf("sign-in: %d", resp.StatusCode)
 	}
 	raw := jarCookie(c, "uptime_session").Value
+	other := o.client(t) // a second session of the same user
+	if r, _ := o.run(t, other, "google", ""); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("second sign-in: %d", r.StatusCode)
+	}
+	otherRaw := jarCookie(other, "uptime_session").Value
+	signedAt := o.now()
 	o.advance(5 * time.Minute)
 	resp, _ := o.run(t, c, "google", "intent=reauth")
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account" {
@@ -557,6 +562,9 @@ func TestOAuthReauth(t *testing.T) {
 	}
 	if au.AuthAt == nil || !au.AuthAt.Equal(o.now()) {
 		t.Errorf("auth_at = %v, want %v", au.AuthAt, o.now())
+	}
+	if oa, err := o.st.SessionAuth(t.Context(), otherRaw, o.now()); err != nil || oa.AuthAt == nil || !oa.AuthAt.Equal(signedAt) {
+		t.Errorf("another session's auth_at = %v (%v), want %v", oa.AuthAt, err, signedAt)
 	}
 	if !strings.Contains(o.logs.String(), "event=oauth_reauth") {
 		t.Error("no oauth_reauth event")
@@ -593,7 +601,25 @@ func TestOAuthCallbackRejections(t *testing.T) {
 		{"bad signature", func(o *oenv, c *http.Client) (*http.Response, string) {
 			cb, _ := o.begin(t, c, "google", "")
 			ck := jarCookie(c, "uptime_oauth")
-			ck.Value = ck.Value[:len(ck.Value)-2] + "AA"
+			p, sig, _ := strings.Cut(ck.Value, ".")
+			mac, _ := base64.RawURLEncoding.DecodeString(sig)
+			mac[0] ^= 1 // flip one decoded MAC bit
+			ck.Value = p + "." + base64.RawURLEncoding.EncodeToString(mac)
+			return o.fetch(t, c, cb)
+		}},
+		{"re-encoded payload, old signature", func(o *oenv, c *http.Client) (*http.Response, string) {
+			cb, _ := o.begin(t, c, "google", "")
+			ck := jarCookie(c, "uptime_oauth")
+			p, sig, _ := strings.Cut(ck.Value, ".")
+			raw, _ := base64.RawURLEncoding.DecodeString(p)
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err != nil {
+				t.Fatal(err)
+			}
+			m["u"] = 1 // pretend the flow belongs to another user
+			m["i"] = "link"
+			raw, _ = json.Marshal(m)
+			ck.Value = base64.RawURLEncoding.EncodeToString(raw) + "." + sig
 			return o.fetch(t, c, cb)
 		}},
 		{"tampered payload", func(o *oenv, c *http.Client) (*http.Response, string) {
@@ -666,6 +692,9 @@ func TestOAuthCallbackRejections(t *testing.T) {
 			cl := o.client(t)
 			resp, body := c.do(o, cl)
 			wantFail(t, resp, body, http.StatusBadRequest, msgOAuthFailed)
+			if ck := cookieNamed(resp, "uptime_oauth"); ck == nil || ck.MaxAge >= 0 {
+				t.Errorf("oauth cookie not cleared: %+v", ck)
+			}
 			if cookieNamed(resp, "uptime_session") != nil || signedIn(t, o, cl) {
 				t.Error("session created")
 			}
@@ -694,6 +723,8 @@ func TestOAuthNoVerifiedEmail(t *testing.T) {
 	o.noUser(t, "x@example.com")
 }
 
+// A copied cookie replayed with the same, already spent, code: the server
+// refuses the state; TestOAuthStateUsedOnce covers a fresh code.
 func TestOAuthReplayedCookie(t *testing.T) {
 	o := newOEnv(t, `{}`, "google")
 	o.social(t, "person@example.com", "google", "12345")
@@ -707,12 +738,100 @@ func TestOAuthReplayedCookie(t *testing.T) {
 		t.Fatalf("first use: %d", resp.StatusCode)
 	}
 	// The browser dropped the cookie; a copy of it with the same code gets nowhere.
+	// (The provider also refuses a reused code.)
 	c2 := o.client(t)
 	c2.Jar.SetCookies(nil, []*http.Cookie{ck})
 	resp, body := o.fetch(t, c2, cb)
 	wantFail(t, resp, body, http.StatusBadRequest, msgOAuthFailed)
 	if signedIn(t, o, c2) {
 		t.Error("replay signed in")
+	}
+}
+
+// The state is spent by its first callback: a copied cookie with a fresh,
+// valid code for the same authorization request is refused by the server.
+func TestOAuthStateUsedOnce(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	o.social(t, "person@example.com", "google", "12345")
+	start := o.start(t, o.client(t), "google", "")
+	ck := cookieNamed(start, "uptime_oauth")
+	loc := start.Header.Get("Location")
+	cb1, cb2 := o.authorize(t, loc), o.authorize(t, loc)
+	c1, c2 := o.client(t), o.client(t)
+	c1.Jar.SetCookies(nil, []*http.Cookie{ck})
+	c2.Jar.SetCookies(nil, []*http.Cookie{ck})
+	if resp, _ := o.fetch(t, c1, cb1); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first: %d", resp.StatusCode)
+	}
+	resp, body := o.fetch(t, c2, cb2)
+	wantFail(t, resp, body, http.StatusBadRequest, msgOAuthFailed)
+	if signedIn(t, o, c2) || !strings.Contains(o.logs.String(), "reason=state_reused") {
+		t.Error("reused state was accepted")
+	}
+}
+
+func TestOAuthUnverifiedAccountRefused(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	if _, _, err := o.st.CreateAccount(t.Context(), store.AccountInput{Email: "person@example.com", WorkspaceName: "W",
+		Identity: &store.NewIdentity{Provider: "google", Subject: "12345", Email: "person@example.com"}, Now: o.now()}); err != nil {
+		t.Fatal(err)
+	}
+	c := o.client(t)
+	resp, body := o.run(t, c, "google", "")
+	wantFail(t, resp, body, http.StatusBadRequest, msgOAuthFailed)
+	if cookieNamed(resp, "uptime_session") != nil || signedIn(t, o, c) {
+		t.Error("unverified user got a session")
+	}
+}
+
+// A refused sign-up gives its per-address slot back.
+func TestOAuthSignupRefundsAddressSlot(t *testing.T) {
+	o := newOEnv(t, `{"signup":"open","limits":{"signups_per_hour":1}}`, "google")
+	if resp, _ := o.run(t, o.client(t), "google", ""); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first: %d", resp.StatusCode)
+	}
+	for i := 0; i < 3; i++ {
+		o.g.Subject, o.g.Email = fmt.Sprint(50+i), fmt.Sprintf("r%d@example.com", i)
+		if resp, _ := o.run(t, o.client(t), "google", ""); resp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("refused %d: %d", i, resp.StatusCode)
+		}
+	}
+	left := 0
+	for {
+		if ok, _ := o.srv.signupByAddr.Take("127.0.0.1"); !ok {
+			break
+		}
+		left++
+	}
+	if left != signupPerAddrHour-1 {
+		t.Errorf("address slots left = %d, want %d", left, signupPerAddrHour-1)
+	}
+}
+
+// The limiter is keyed by the forwarded client address when a proxy is trusted.
+func TestOAuthRateLimitPerForwardedAddress(t *testing.T) {
+	o := newOEnv(t, `{"trust_proxy":true,"trusted_proxies":1}`, "google")
+	nc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	get := func(ip string) int {
+		req, _ := http.NewRequest("GET", o.ts.URL+"/auth/google/start", nil)
+		req.Header.Set("X-Forwarded-For", ip)
+		resp, err := nc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for i := 0; i < oauthPerMinute; i++ {
+		if c := get("203.0.113.7"); c != http.StatusSeeOther {
+			t.Fatalf("start %d: %d", i, c)
+		}
+	}
+	if c := get("203.0.113.7"); c != http.StatusTooManyRequests {
+		t.Errorf("over the limit: %d", c)
+	}
+	if c := get("203.0.113.8"); c != http.StatusSeeOther {
+		t.Errorf("another client: %d", c)
 	}
 }
 
@@ -756,6 +875,12 @@ func TestOAuthSocialOnlyAccount(t *testing.T) {
 	resp, unknown := o.post(t, c, "/login", url.Values{"email": {"nobody@example.com"}, "password": {"whatever"}})
 	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(unknown, msgBadLogin) {
 		t.Fatalf("unknown: %d", resp.StatusCode)
+	}
+	// Same page as for an unknown email, bar the echoed address.
+	for _, b := range bodies {
+		if strings.ReplaceAll(b, "person@example.com", "nobody@example.com") != unknown {
+			t.Errorf("social-only response differs from the unknown-email response:\n%s\n---\n%s", b, unknown)
+		}
 	}
 
 	// checkCurrent never verifies the empty hash.
