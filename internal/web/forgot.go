@@ -67,6 +67,15 @@ func (s *Server) forgotPost(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "forgot", d)
 }
 
+// noticeMethodChanged tells the owner of email that a sign-in method was added or removed.
+func (s *Server) noticeMethodChanged(email, provider string, added bool) {
+	if s.mail == nil {
+		return
+	}
+	subject, body := signInMethodMail(s.cfg.BaseURL, provider, added, s.now())
+	s.mail.Notice(email, subject, body)
+}
+
 // noticePasswordChanged tells the owner of email that the password changed.
 func (s *Server) noticePasswordChanged(email string) {
 	if s.mail == nil {

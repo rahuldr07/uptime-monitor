@@ -158,6 +158,18 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uid = a.User.ID
+		// Connecting a provider adds a way to sign in, and reauth trusts the
+		// provider: it needs a recent sign-in (or the password, via /connect).
+		if intent == "link" && !s.recentAuth(a) {
+			d, err := s.accountView(r, a)
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			d.Error = msgSignInAgain
+			s.renderStatus(w, r, http.StatusForbidden, "account", d)
+			return
+		}
 	default:
 		http.NotFound(w, r)
 		return
@@ -232,13 +244,13 @@ func (q *oauthReq) serverErr(err error) { q.s.fail(q.w, err) }
 
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	// The cookie is used once: it is deleted on every outcome, refusals included.
-	s.setOAuthCookie(w, r, "", -1)
 	p := s.oauth[r.PathValue("provider")]
 	if p == nil {
 		http.NotFound(w, r)
 		return
 	}
+	// The cookie is used once: it is deleted on every outcome once the provider is known.
+	s.setOAuthCookie(w, r, "", -1)
 	if ok, _ := s.oauthByAddr.Take(clientKey(r, s.cfg.ProxyHops())); !ok {
 		s.oauthRateLimited(w, r)
 		return
@@ -458,6 +470,10 @@ func (q *oauthReq) signUp() {
 
 func (q *oauthReq) link(owner store.User, linked bool) {
 	s := q.s
+	if !s.recentAuth(q.a) {
+		q.fail(http.StatusForbidden, "not_recent", msgSignInAgain)
+		return
+	}
 	switch {
 	case linked && owner.ID == q.a.User.ID:
 		redirect(q.w, q.r, "/account", q.p.Label()+" is already connected.")
@@ -485,6 +501,7 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 		return
 	}
 	s.logger.Info("oauth linked", "event", "oauth_link", "provider", q.p.Name(), "user_id", q.a.User.ID, "ip", q.ip)
+	s.noticeMethodChanged(q.a.User.Email, q.p.Label(), true)
 	redirect(q.w, q.r, "/account", q.p.Label()+" connected.")
 }
 

@@ -225,9 +225,10 @@ func TestAdminDeleteSocialOnlyOperator(t *testing.T) {
 		t.Errorf("delete page inside window: %s", body)
 	}
 	o.advance(recentAuthWindow + time.Second)
-	_, body = o.get(t, op, path)
+	kept := path + "?q=victim&host=example.com&page=2"
+	_, body = o.get(t, op, kept)
 	if strings.Contains(body, `name="current"`) || !strings.Contains(body, "sign in again with Google") ||
-		!strings.Contains(body, url.QueryEscape(path)) {
+		!strings.Contains(body, url.QueryEscape("/admin/users/"+strconv.FormatInt(vid, 10)+"/delete?host=example.com&page=2&q=victim")) {
 		t.Errorf("delete page outside window: %s", body)
 	}
 	resp, body := o.post(t, op, path, nil)
@@ -271,5 +272,149 @@ func TestAdminProviderBadges(t *testing.T) {
 		if got[e] != w {
 			t.Errorf("%s badges = %v, want %v", e, got[e], w)
 		}
+	}
+}
+
+func (o *oenv) mailTo(to, subject string) *sentMail {
+	for _, m := range o.mail.all() {
+		if m.To == to && m.Subject == subject {
+			return &m
+		}
+	}
+	return nil
+}
+
+const (
+	subjAdded   = "A sign-in method was added to your account"
+	subjRemoved = "A sign-in method was removed from your account"
+)
+
+// Connecting a provider needs a recent sign-in: a stolen older session must not
+// be able to attach its own provider and then reauth with it.
+func TestLinkNeedsRecentAuthPasswordAccount(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	alice, _ := o.account(t, "alice@example.com")
+	aid := o.userID(t, "alice@example.com")
+	o.advance(recentAuthWindow + time.Second)
+
+	// Start is refused, with no state cookie.
+	resp, body := o.fetch(t, alice, o.ts.URL+"/auth/google/start?intent=link")
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, msgSignInAgain) || cookieNamed(resp, "uptime_oauth") != nil {
+		t.Fatalf("start outside window: %d %s", resp.StatusCode, body)
+	}
+	// So the attacker's provider cannot be linked, and so cannot satisfy reauth.
+	if r, _ := o.run(t, alice, "google", "intent=reauth"); r.StatusCode != http.StatusBadRequest {
+		t.Errorf("reauth with an unlinked provider: %d", r.StatusCode)
+	}
+	if ids, _ := o.st.Identities(t.Context(), aid); len(ids) != 0 {
+		t.Fatalf("identity inserted: %+v", ids)
+	}
+
+	// The page offers a password form instead of a link.
+	_, body = o.get(t, alice, "/account")
+	if !strings.Contains(body, `action="/account/identities/google/connect"`) || strings.Contains(body, `href="/auth/google/start?intent=link"`) {
+		t.Errorf("account page: %s", body)
+	}
+	// Wrong password, then the right one, then the flow works.
+	conn := "/account/identities/google/connect"
+	if r, _ := o.post(t, alice, conn, url.Values{"current": {"wrong wrong wrong"}}); r.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("wrong password: %d", r.StatusCode)
+	}
+	resp, _ = o.post(t, alice, conn, url.Values{"current": {testSecret}})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/auth/google/start?intent=link" {
+		t.Fatalf("connect: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, _ = o.run(t, alice, "google", "intent=link")
+	if _, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || m != "Google connected." {
+		t.Fatalf("link: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	m := o.mailTo("alice@example.com", subjAdded)
+	if m == nil || !strings.Contains(m.Body, "Google") || !strings.Contains(m.Body, "/forgot") {
+		t.Errorf("added notice: %+v", m)
+	}
+	// Disconnecting sends the other notice.
+	if r, _ := o.post(t, alice, "/account/identities/google/delete", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("disconnect: %d", r.StatusCode)
+	}
+	if m := o.mailTo("alice@example.com", subjRemoved); m == nil || !strings.Contains(m.Body, "Google") {
+		t.Errorf("removed notice: %+v", m)
+	}
+}
+
+// The gate is checked again when the provider comes back.
+func TestLinkNeedsRecentAuthAtCallback(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	alice, _ := o.account(t, "alice@example.com")
+	o.advance(recentAuthWindow - time.Minute) // still recent at start
+	cb, _ := o.begin(t, alice, "google", "intent=link")
+	o.advance(2 * time.Minute) // not any more at the callback, though the state cookie is valid
+	resp, body := o.fetch(t, alice, cb)
+	wantFail(t, resp, body, http.StatusForbidden, msgSignInAgain)
+	if ids, _ := o.st.Identities(t.Context(), o.userID(t, "alice@example.com")); len(ids) != 0 {
+		t.Errorf("identity inserted: %+v", ids)
+	}
+	if o.mailTo("alice@example.com", subjAdded) != nil {
+		t.Error("notice for a refused link")
+	}
+}
+
+func TestLinkNeedsRecentAuthSocialOnly(t *testing.T) {
+	o := newOEnv(t, `{}`)
+	c, u := o.socialClient(t, "person@example.com", "google", "12345")
+	o.advance(recentAuthWindow + time.Second)
+	if r := o.start(t, c, "github", "intent=link"); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("start outside window: %d", r.StatusCode)
+	}
+	if r, _ := o.post(t, c, "/account/identities/github/connect", nil); r.StatusCode != http.StatusForbidden {
+		t.Errorf("connect outside window: %d", r.StatusCode)
+	}
+	_, body := o.get(t, c, "/account")
+	if strings.Contains(body, `/auth/github/start?intent=link`) || strings.Contains(body, "/connect") ||
+		strings.Count(body, "For your security, sign in again with Google to continue") != 1 {
+		t.Errorf("account page outside window: %s", body)
+	}
+	if ids, _ := o.st.Identities(t.Context(), u.ID); len(ids) != 1 {
+		t.Fatalf("identities: %+v", ids)
+	}
+	// Reauth with the provider already linked, then connecting works.
+	if r, _ := o.run(t, c, "google", "intent=reauth"); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("reauth: %d", r.StatusCode)
+	}
+	if r, _ := o.run(t, c, "github", "intent=link"); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("link after reauth: %d", r.StatusCode)
+	}
+	if ids, _ := o.st.Identities(t.Context(), u.ID); len(ids) != 2 {
+		t.Errorf("identities: %+v", ids)
+	}
+	if o.mailTo("person@example.com", subjAdded) == nil {
+		t.Error("no added notice")
+	}
+}
+
+func TestConnectEndpointAndPageHints(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	alice, _ := o.account(t, "alice@example.com")
+	if r, _ := o.post(t, alice, "/account/identities/github/connect", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusNotFound {
+		t.Errorf("disabled provider: %d", r.StatusCode)
+	}
+	// Inside the window the password is still checked, and success is a redirect to the flow.
+	if r, _ := o.post(t, alice, "/account/identities/google/connect", url.Values{"current": {"wrong wrong wrong"}}); r.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("wrong password inside window: %d", r.StatusCode)
+	}
+	_, body := o.get(t, alice, "/account")
+	if !strings.Contains(body, `href="/auth/google/start?intent=link"`) {
+		t.Errorf("connect link inside window: %s", body)
+	}
+
+	// A sole sign-in method has no Disconnect, only a hint.
+	c, _ := o.socialClient(t, "person@example.com", "google", "12345")
+	_, body = o.get(t, c, "/account")
+	if strings.Contains(body, "/account/identities/google/delete") || !strings.Contains(body, "Your only way to sign in") {
+		t.Errorf("sole method: %s", body)
+	}
+	// No state cookie from a callback for an unknown provider.
+	resp, _ := o.get(t, c, "/auth/nope/callback")
+	if resp.StatusCode != http.StatusNotFound || cookieNamed(resp, "uptime_oauth") != nil {
+		t.Errorf("unknown provider callback: %d %v", resp.StatusCode, resp.Cookies())
 	}
 }

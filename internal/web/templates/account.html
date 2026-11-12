@@ -4,6 +4,7 @@
 </div>
 <div class="card block" id="methods">
   <h2>Sign-in methods</h2>
+  {{if .NeedReauth}}{{template "reauth-notice" .Reauth}}{{end}}
   <h3 style="margin:14px 0 0;font-size:13px">Password</h3>
   {{if .HasPassword}}
   <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
@@ -14,8 +15,7 @@
     <p class="muted small" style="margin-top:8px">Your other sessions are signed out.</p>
   </form>
   {{else if .NeedReauth}}
-  <p class="muted small" style="margin:6px 0 0">You sign in with a provider and have no password yet.</p>
-  {{template "reauth-notice" .Reauth}}
+  <p class="muted small" style="margin:6px 0 0">You sign in with a provider and have no password yet. Sign in again (above) to set one.</p>
   {{else}}
   <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
     <p class="muted small" style="margin:0 0 10px">You sign in with a provider and have no password yet. Set one to also sign in with your email.</p>
@@ -31,18 +31,26 @@
   <div class="btns" style="margin-top:10px;justify-content:space-between;max-width:480px">
     <div><strong>{{.Label}}</strong>{{if .Connected}} <span class="muted small">{{.Email}}</span>{{else}} <span class="muted small">Not connected</span>{{end}}</div>
     {{if .Connected}}
-    {{if or $.HasPassword (not $.NeedReauth)}}
+    {{if $.SoleMethod}}
+    <span class="muted small">Your only way to sign in. Set a password or connect another provider to disconnect it.</span>
+    {{else if not $.NeedReauth}}
     <form method="post" action="/account/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it.">
       {{if $.HasPassword}}<input name="current" type="password" required placeholder="Current password" aria-label="Current password" autocomplete="current-password" style="width:170px">{{end}}
       <button type="submit" class="sm">Disconnect</button>
     </form>
     {{end}}
     {{else if .Enabled}}
+    {{if $.Recent}}
     <a class="btn sm" href="/auth/{{.Name}}/start?intent=link"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</a>
+    {{else if $.HasPassword}}
+    <form method="post" action="/account/identities/{{.Name}}/connect">
+      <input name="current" type="password" required placeholder="Current password" aria-label="Current password" autocomplete="current-password" style="width:170px">
+      <button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</button>
+    </form>
+    {{end}}
     {{end}}
   </div>
   {{end}}
-  {{if and .NeedReauth (not .HasPassword)}}{{if .Reauth}}<p class="muted small" style="margin:10px 0 0">To disconnect a provider, sign in again first (see above).</p>{{end}}{{end}}
   {{end}}
 </div>
 <div class="card block">
@@ -54,7 +62,7 @@
 <div class="card block">
   <h2>Delete account</h2>
   <p class="muted small" style="margin:6px 0 12px">Permanently deletes your account, your workspace, its monitors and all of their history.</p>
-  {{if .NeedReauth}}{{template "reauth-notice" .Reauth}}{{else}}
+  {{if .NeedReauth}}<p class="muted small" style="margin:6px 0 0">Sign in again (see Sign-in methods above) to delete your account.</p>{{else}}
   <form method="post" action="/account/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
     {{if .HasPassword}}<div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>{{end}}
     <div style="margin-top:14px"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete account</button></div>

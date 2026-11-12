@@ -200,13 +200,16 @@ Account. This does tell a visitor that the address has an account (see
 D-129). A signed-in user connects or disconnects Google and GitHub in
 Account, under "Sign-in methods". Each provider can be connected once per
 account, and each provider account to one user only. The provider's email may
-differ from the account's. Disconnecting the last way to sign in is refused.
+differ from the account's. Connecting needs a sign-in within the last 10
+minutes (an account with a password confirms it instead), and the account's
+email gets a notice when a provider is connected or disconnected.
+Disconnecting the last way to sign in is refused.
 
 **Accounts without a password.** An account created through a provider has no
 password. It cannot sign in with one until the owner sets one under "Sign-in
 methods" or uses Forgot password. For these accounts, deleting the account,
-setting a password and disconnecting a provider ask for a sign-in within the
-last 10 minutes instead of the password, by signing in again with a connected
+setting a password, connecting and disconnecting a provider ask for a sign-in
+within the last 10 minutes instead of the password, by signing in again with a connected
 provider. That proves only that the browser holds a live session with that
 provider, not that the user just typed a password.
 

@@ -98,7 +98,7 @@ func (s *Server) adminDeleteView(r *http.Request, a *authCtx, u store.User) (adm
 		return adminDeleteData{}, err
 	}
 	d := adminDeleteData{base: s.base(r, a, "admin", "Delete user"), Target: u, Keep: keepFrom(r), HasPassword: a.HasPassword}
-	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/admin/users/"+strconv.FormatInt(u.ID, 10)+"/delete")
+	d.NeedReauth, d.Reauth = s.reauthState(a, ids, d.Keep.DeleteURL(u.ID))
 	return d, nil
 }
 

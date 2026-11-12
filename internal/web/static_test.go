@@ -15,47 +15,48 @@ import (
 // workspace handlers that live in the same files, must reach data through the
 // signed-in user's *store.WS.
 var sysAllowed = map[string][]string{
-	"session.go|(*Server).lookupAuth":            {"SessionAuth"},            // session cookie -> user
-	"setup.go|(*Server).setupPage":               {"Workspace", "PeekToken"}, // first-run setup
-	"setup.go|(*Server).setupPost":               {"PeekToken", "CompleteSetup", "CreateSession"},
-	"signup.go|(*Server).signupPage":             {"PeekToken"},
-	"signup.go|(*Server).signupPost":             {"PeekToken", "CreateAccount", "CreateSession"},
-	"forgot.go|(*Server).forgotPost":             {"UserByEmail", "CreateToken"},
-	"verify.go|(*Server).sendVerify":             {"CreateToken"},
-	"verify.go|(*Server).verifyPage":             {"PeekToken"},
-	"verify.go|(*Server).verifyPost":             {"PeekToken", "VerifyEmail", "DeleteSession", "CreateSession"},
-	"verify.go|(*Server).verifyResend":           {"UserByEmail"},
-	"verify.go|(*Server).ownerNotice":            {"UserByEmail"},
-	"login.go|(*Server).loginPost":               {"UserByEmail", "DeleteSession", "CreateSession"},
-	"login.go|(*Server).logout":                  {"DeleteSession"},
-	"oauth.go|(*Server).oauthCallback":           {"IdentityUser"},
-	"oauth.go|(*oauthReq).signIn":                {"TouchIdentity", "DeleteSession", "CreateSession"},
-	"oauth.go|(*oauthReq).unlinkedLogin":         {"UserByEmail"},
-	"oauth.go|(*oauthReq).signUp":                {"PeekToken", "CreateAccount", "IdentityUser"},
-	"oauth.go|(*oauthReq).link":                  {"LinkIdentity", "IdentityUser"},
-	"oauth.go|(*oauthReq).reauth":                {"MarkReauth"},
-	"account.go|(*Server).accountPassword":       {"SetPassword", "SetFirstPassword"},
-	"account.go|(*Server).accountSignOutAll":     {"DeleteUserSessions"},
-	"account.go|(*Server).accountDelete":         {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
-	"account.go|(*Server).checkCurrent":          {"PasswordHash"},
-	"account.go|(*Server).myIdentities":          {"Identities"},
-	"account.go|(*Server).accountIdentityDelete": {"UnlinkIdentity"},
-	"admin.go|(*Server).adminUsersView":          {"ListUsers", "IdentityProviders"},
-	"reset.go|(*Server).resetPage":               {"PeekToken"},
-	"reset.go|(*Server).resetPost":               {"PeekToken", "ResetPassword", "CreateSession"},
-	"targets.go|(*Server).hostRateErr":           {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
-	"admin.go|(*Server).adminTarget":             {"UserByID"},
-	"admin.go|(*Server).adminDisable":            {"SetUserDisabled"},
-	"admin.go|(*Server).adminEnable":             {"SetUserDisabled", "Workspace"},
-	"admin.go|(*Server).adminDelete":             {"SetUserDisabled", "DeleteAccount"},
-	"admin.go|(*Server).adminResetLink":          {"CreateToken"},
-	"admin.go|(*Server).adminInvitesView":        {"ListInvites"},
-	"admin.go|(*Server).adminInviteCreate":       {"CreateInvite"},
-	"admin.go|(*Server).adminInviteRevoke":       {"RevokeInvite"},
-	"web.go|(*Server).healthz":                   {"Ping"},
-	"status.go|(*Server).statusRedirect":         {"Workspace"},                    // operator's page for anonymous visitors
-	"status.go|(*Server).statusPage":             {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
-	"events.go|(*Server).events":                 {"SessionAuth"},                  // session re-check only
+	"session.go|(*Server).lookupAuth":             {"SessionAuth"},            // session cookie -> user
+	"setup.go|(*Server).setupPage":                {"Workspace", "PeekToken"}, // first-run setup
+	"setup.go|(*Server).setupPost":                {"PeekToken", "CompleteSetup", "CreateSession"},
+	"signup.go|(*Server).signupPage":              {"PeekToken"},
+	"signup.go|(*Server).signupPost":              {"PeekToken", "CreateAccount", "CreateSession"},
+	"forgot.go|(*Server).forgotPost":              {"UserByEmail", "CreateToken"},
+	"verify.go|(*Server).sendVerify":              {"CreateToken"},
+	"verify.go|(*Server).verifyPage":              {"PeekToken"},
+	"verify.go|(*Server).verifyPost":              {"PeekToken", "VerifyEmail", "DeleteSession", "CreateSession"},
+	"verify.go|(*Server).verifyResend":            {"UserByEmail"},
+	"verify.go|(*Server).ownerNotice":             {"UserByEmail"},
+	"login.go|(*Server).loginPost":                {"UserByEmail", "DeleteSession", "CreateSession"},
+	"login.go|(*Server).logout":                   {"DeleteSession"},
+	"oauth.go|(*Server).oauthCallback":            {"IdentityUser"},
+	"oauth.go|(*oauthReq).signIn":                 {"TouchIdentity", "DeleteSession", "CreateSession"},
+	"oauth.go|(*oauthReq).unlinkedLogin":          {"UserByEmail"},
+	"oauth.go|(*oauthReq).signUp":                 {"PeekToken", "CreateAccount", "IdentityUser"},
+	"oauth.go|(*oauthReq).link":                   {"LinkIdentity", "IdentityUser"},
+	"oauth.go|(*oauthReq).reauth":                 {"MarkReauth"},
+	"account.go|(*Server).accountPassword":        {"SetPassword", "SetFirstPassword"},
+	"account.go|(*Server).accountSignOutAll":      {"DeleteUserSessions"},
+	"account.go|(*Server).accountDelete":          {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
+	"account.go|(*Server).checkCurrent":           {"PasswordHash"},
+	"account.go|(*Server).accountIdentityConnect": {"MarkReauth"},
+	"account.go|(*Server).myIdentities":           {"Identities"},
+	"account.go|(*Server).accountIdentityDelete":  {"UnlinkIdentity"},
+	"admin.go|(*Server).adminUsersView":           {"ListUsers", "IdentityProviders"},
+	"reset.go|(*Server).resetPage":                {"PeekToken"},
+	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword", "CreateSession"},
+	"targets.go|(*Server).hostRateErr":            {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
+	"admin.go|(*Server).adminTarget":              {"UserByID"},
+	"admin.go|(*Server).adminDisable":             {"SetUserDisabled"},
+	"admin.go|(*Server).adminEnable":              {"SetUserDisabled", "Workspace"},
+	"admin.go|(*Server).adminDelete":              {"SetUserDisabled", "DeleteAccount"},
+	"admin.go|(*Server).adminResetLink":           {"CreateToken"},
+	"admin.go|(*Server).adminInvitesView":         {"ListInvites"},
+	"admin.go|(*Server).adminInviteCreate":        {"CreateInvite"},
+	"admin.go|(*Server).adminInviteRevoke":        {"RevokeInvite"},
+	"web.go|(*Server).healthz":                    {"Ping"},
+	"status.go|(*Server).statusRedirect":          {"Workspace"},                    // operator's page for anonymous visitors
+	"status.go|(*Server).statusPage":              {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
+	"events.go|(*Server).events":                  {"SessionAuth"},                  // session re-check only
 }
 
 func funcName(fd *ast.FuncDecl) string {
@@ -139,7 +140,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 62
+	const want = 63
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

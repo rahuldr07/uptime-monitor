@@ -73,6 +73,7 @@ func (s *Server) routeTable() []route {
 		{"POST", "/account/password", classUser, nil, s.accountPassword},
 		{"POST", "/account/signout-all", classUser, nil, s.accountSignOutAll},
 		{"POST", "/account/delete", classUser, nil, s.accountDelete},
+		{"POST", "/account/identities/{provider}/connect", classUser, nil, s.accountIdentityConnect},
 		{"POST", "/account/identities/{provider}/delete", classUser, nil, s.accountIdentityDelete},
 
 		{"GET", "/{$}", classWorkspace, nil, s.overview},

@@ -72,7 +72,7 @@ New optional key:
 **Start:** `GET /auth/{provider}/start?intent=login|link|reauth&next=…&invite=…`
 - This is a plain link, not a form, because the CSP sets `form-action 'self'`.
 - Unknown or disabled provider: 404.
-- `intent=link` and `intent=reauth` require a signed-in session; without one, 404.
+- `intent=link` and `intent=reauth` require a signed-in session; without one, 404. `intent=link` also requires a recent sign-in (§7): the session's `auth_at` within 10 minutes, checked at start (403 "Sign in again to continue.") and again at the callback before the identity is inserted.
 - Rate limit: 20 starts per minute per client address. Over the limit, the auth page re-renders with the sign-in rate-limit message and status 429.
 - It generates a state of 32 random bytes and a PKCE verifier of 32 random bytes (S256 challenge). There is no nonce: the ID token isn't read, so a nonce would never be checked.
 - It sets the cookie `__Host-uptime_oauth` (or `uptime_oauth` on http localhost):
@@ -111,7 +111,7 @@ New optional key:
 | login | no | no | Sign-up. Mode `closed` with no invite: 403 "Sign-up on this instance is by invitation." In `invite` mode a valid invite token is required, carried in the cookie. If the invite is bound to an email, the provider email must equal it, otherwise `msgInviteEmail`. In `open` mode it is allowed. Run the sign-up limits (per address and `signups_per_hour`). Create the account with an empty password hash, `Verified: true`, a workspace with the neutral name "My workspace" (and the slug derived from that, as for any new workspace; the owner can rename both in status settings), so the email's local part never appears in a public `/s/<slug>` address, and the identity row, all in one transaction that also consumes the invite. Then sign in as above and log `oauth_signup`. A workspace cap gives the existing `msgNoNewAccounts`. |
 | link | yes, to this user | — | Redirect to `/account` with the flash "{Provider} is already connected." |
 | link | yes, to another user | — | 409 "This {Provider} account is already connected to a different account." |
-| link | no | — | The cookie's user ID must equal the current session's user, otherwise 400. The user must not already have an identity for this provider (UNIQUE), otherwise 409. Insert the identity, log `oauth_link`, and redirect to `/account` with the flash "{Provider} connected." The provider email may differ from the account email, which is allowed and shown. |
+| link | no | — | The session must be recent (§7), otherwise 403 "Sign in again to continue." The cookie's user ID must equal the current session's user, otherwise 400. The user must not already have an identity for this provider (UNIQUE), otherwise 409. Insert the identity, log `oauth_link`, and redirect to `/account` with the flash "{Provider} connected." The provider email may differ from the account email, which is allowed and shown. |
 | reauth | yes, to this user | — | Mark the session as recently authenticated (§7). Redirect to `next` (default `/account`). |
 | reauth | otherwise | — | 400 "Sign in with the {Provider} account connected to this account." |
 
@@ -127,7 +127,7 @@ New optional key:
 - **Sign-up page:** the same buttons in `open` mode, and in `invite` mode when a valid invite is present (the start link carries `invite=`). Not shown in `closed` mode without an invite.
 - **Account page, new "Sign-in methods" card:**
   - **Password:** if the account has one, "Change password", the existing form. If not, "Set a password", a form with new password and confirm that needs a recent sign-in (§7).
-  - **Each enabled provider:** if connected, show its email and "Disconnect"; otherwise "Connect", a link to `/auth/{p}/start?intent=link`.
+  - **Each enabled provider:** if connected, show its email and "Disconnect"; otherwise "Connect". Inside the recent-sign-in window it is a link to `/auth/{p}/start?intent=link`. Outside it, an account with a password sees a small form (password field) posting to `/account/identities/{p}/connect`: it checks the password, marks the session as recently authenticated, and redirects to the link start. A social-only account outside the window sees the §7 reauth links first (reauth with a provider already connected). The only sign-in method has no Disconnect button, only a hint.
   - Disconnect is a POST to `/account/identities/{provider}/delete` behind `sameOrigin` and the confirm dialog.
   - Disconnect is refused if it would remove the last sign-in method, meaning no password and no other identity, with the message "Add a password or connect another provider first." The rule is enforced inside the store transaction that deletes the identity (`ErrLastSignInMethod`), not only in the handler.
 - **Operator panel:** the users list shows a small "Google" or "GitHub" badge per connected provider.
@@ -140,15 +140,16 @@ New optional key:
 - **Sensitive actions:**
   - deleting the account;
   - setting a password when there is none;
-  - disconnecting a provider when the account has no password.
-- If the user has a password, these keep asking for it, as today; disconnecting also asks for it.
+  - disconnecting a provider when the account has no password;
+  - connecting a provider (any account). Without this, anyone holding a stale session could attach their own provider account and then use it to satisfy reauth, a backdoor that survives a password change. An account with a password confirms it first (`/account/identities/{p}/connect`), which counts as a fresh sign-in.
+- If the user has a password, these keep asking for it, as today; disconnecting also asks for it. Connecting a provider outside the window asks for the password too.
 - If the user has no password, they need `now - auth_at ≤ 10 minutes`. Otherwise the page shows "For your security, sign in again with {Provider} to continue" with a reauth link for each connected provider (next = `/account`).
 - **Changing a password** that already exists stays as today: it needs the current password.
 
 ## 8. Changes needed for empty passwords
 
 - **`loginPost`:** an account with an empty hash runs `VerifyDummy` and fails with the generic `msgBadLogin` and status 401, the same timing and response as an unknown email. It must never return 500.
-- **`checkCurrent`** (used by password change, account delete and admin delete): for an account with no password it must never call `Verify` on the empty hash. A posted `current` value is refused with "Sign in again to continue" (403), and the caller shows the §7 reauth links. It never returns 500.
+- **`checkCurrent`** (used by password change, account delete and admin delete): for an account with no password it must never call `Verify` on the empty hash. A posted `current` value is refused with "Sign in again to continue." (403), and the caller shows the §7 reauth links. It never returns 500.
 - **Forgot and reset:** unchanged. A reset link sets a password for a social-only account. That's acceptable, because whoever controls the email already controls the account through reset.
 - **Admin delete:** unchanged. It uses the operator's own password, or §7 if the operator is social-only.
 - **Setup:** unchanged. The first operator always sets a password.
@@ -172,6 +173,7 @@ New optional key:
   - access tokens, codes, state and cookies are never logged or stored;
   - errors from providers are logged by kind, never the response body.
 - **Enumeration:** the sign-up-with-existing-email message reveals that an account exists. This is the accepted cost of decision 1. It costs an attacker a full OAuth round trip per probe and is rate-limited.
+- **Notice email:** when system mail is configured, connecting or disconnecting a provider sends the account email a notice ("A sign-in method was added to / removed from your account") naming the provider and the time, with a pointer to Forgot password and Account. It carries no user-supplied text.
 - **Log events:** `oauth_login_ok`, `oauth_login_unlinked`, `oauth_signup`, `oauth_link`, `oauth_unlink`, `oauth_reauth` and `oauth_failed` (with a `reason`). Fields: `event`, `provider`, `user_id` where known, `ip`, and `email_hash` for unknown users.
 
 ## 10. Testing

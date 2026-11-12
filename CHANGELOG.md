@@ -14,7 +14,7 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - Database schema v3, with an automatic `<db>.pre-v3-<time>.bak` backup before upgrading a database that has data.
-- Passwords are optional for accounts created with a provider. Deleting the account, setting a password and disconnecting a provider then need a sign-in within the last 10 minutes.
+- Passwords are optional for accounts created with a provider. Deleting the account, setting a password and disconnecting a provider then need a sign-in within the last 10 minutes. Connecting a provider needs one for every account (an account with a password confirms it), and a notice email is sent when a provider is connected or disconnected.
 
 ## [1.1.0] - 2026-11-12
 
