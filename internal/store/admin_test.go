@@ -120,8 +120,12 @@ func TestSetUserDisabledOperator(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE users SET disabled_at = ? WHERE id = ?`, adminNow.UnixMilli(), op.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetUserDisabled(ctx, op.ID, false, adminNow); err != nil {
+	ids, err := s.SetUserDisabled(ctx, op.ID, false, adminNow)
+	if err != nil {
 		t.Fatalf("enable operator: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("enable operator returned workspaces: %v", ids)
 	}
 	if got, _ := s.UserByID(ctx, op.ID); got.DisabledAt != nil {
 		t.Errorf("operator still disabled")
@@ -258,6 +262,31 @@ func TestListUsersSearchEscapes(t *testing.T) {
 	}
 	if rows, _, _ := s.ListUsers(ctx, UserQuery{Email: `\`}); len(rows) != 0 {
 		t.Errorf("backslash matched: %+v", rows)
+	}
+}
+
+func TestLikeContainsEscapes(t *testing.T) {
+	if got, want := likeContains(`a\b%_`), `%a\\b\%\_%`; got != want {
+		t.Errorf("likeContains = %q, want %q", got, want)
+	}
+}
+
+func TestSetUserDisabledKeepsFirstTime(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, ws := adminAccount(t, s, "a@x.example", "aaa", adminNow)
+	if _, err := s.SetUserDisabled(ctx, u.ID, true, adminNow); err != nil {
+		t.Fatal(err)
+	}
+	later := adminNow.Add(time.Hour)
+	if _, err := s.SetUserDisabled(ctx, u.ID, true, later); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM users WHERE id = ? AND disabled_at = ?`, u.ID, adminNow.UnixMilli()); n != 1 {
+		t.Errorf("disabled_at changed on second disable")
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM workspaces WHERE id = ? AND suspended_at = ?`, ws.ID(), adminNow.UnixMilli()); n != 1 {
+		t.Errorf("suspended_at changed on second disable")
 	}
 }
 

@@ -46,11 +46,12 @@ func (s *Store) SetUserDisabled(ctx context.Context, userID int64, disabled bool
 	if disabled && op {
 		return nil, ErrOperator
 	}
-	var userVal, wsVal any
+	// Disabling keeps any earlier timestamps; enabling clears them.
 	if disabled {
-		userVal, wsVal = now.UnixMilli(), now.UnixMilli()
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, userVal, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?`, now.UnixMilli(), userID); err != nil {
+			return nil, err
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE users SET disabled_at = NULL WHERE id = ?`, userID); err != nil {
 		return nil, err
 	}
 	if disabled {
@@ -84,7 +85,12 @@ func (s *Store) SetUserDisabled(ctx context.Context, userID int64, disabled bool
 		return nil, err
 	}
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET suspended_at = ? WHERE id = ?`, wsVal, id); err != nil {
+		if disabled {
+			_, err = tx.ExecContext(ctx, `UPDATE workspaces SET suspended_at = COALESCE(suspended_at, ?) WHERE id = ?`, now.UnixMilli(), id)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE workspaces SET suspended_at = NULL WHERE id = ?`, id)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
