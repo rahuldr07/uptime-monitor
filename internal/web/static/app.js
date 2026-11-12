@@ -154,7 +154,7 @@
     if (!document.body.classList.contains('panel-open')) return;
     document.body.classList.remove('panel-open');
     var o = panelOpener; panelOpener = null;
-    if (o && !document.contains(o)) o = $('[data-action=open-panel]'); // the opener was replaced by a live refresh
+    if (!o || !document.contains(o)) o = $('[data-action=open-panel]'); // no opener (opened with n), or it was replaced by a live refresh
     if (o && o.focus) o.focus();
   };
   function panelTab(e) {
@@ -164,7 +164,7 @@
     });
     if (!f.length) { e.preventDefault(); p.focus(); return; }
     var a = document.activeElement, first = f[0], last = f[f.length - 1];
-    if (!p.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    if (!p.contains(a) || a === p) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
     else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
   }
@@ -330,7 +330,7 @@
     }
     if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); moveHi(d, k === 'ArrowDown' ? 1 : -1); }
     else if ((k === 'Home' || k === 'End') && !inF) { e.preventDefault(); moveHi(d, k === 'Home' ? 1 : -1, true); }
-    else if (k === 'Enter' || (k === ' ' && !inF && !d.q)) { e.preventDefault(); if (d.hi >= 0) commit(d, d.hi); else closeMenu(d, true); }
+    else if (k === 'Enter' || (k === ' ' && !inF && (!d.q || Date.now() - d.qt > 500))) { e.preventDefault(); d.q = ''; if (d.hi >= 0) commit(d, d.hi); else closeMenu(d, true); }
     else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(d, true); }
     else if (k === 'Tab') { if (d.hi >= 0) commit(d, d.hi); else closeMenu(d, true); } // focus is on the button again, so Tab moves on from it
     else if (k.length === 1 && !inF) { e.preventDefault(); typeAhead(d, k); }
@@ -342,7 +342,7 @@
     btn.type = 'button'; btn.id = d.id + '-btn'; btn.setAttribute('role', 'combobox'); btn.setAttribute('aria-haspopup', 'listbox');
     btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-controls', d.id + '-list');
     btn.appendChild(val); btn.appendChild(icon('i-chevron'));
-    d.wrap = wrap; d.btn = btn; d.val = val; s._ddBtn = btn;
+    d.wrap = wrap; d.btn = btn; d.val = val; s._ddBtn = btn; btn._sel = s;
     s.parentNode.insertBefore(wrap, s); wrap.appendChild(btn); wrap.appendChild(s);
     s.tabIndex = -1; s.setAttribute('aria-hidden', 'true'); s.classList.add('dd-native');
     var name = s.getAttribute('aria-label') || '';
@@ -351,7 +351,7 @@
     if (wl) { if (!wl.id) wl.id = d.id + '-lbl'; btn.setAttribute('aria-labelledby', wl.id); name = name || wl.textContent.trim(); }
     else if (s.getAttribute('aria-label')) btn.setAttribute('aria-label', s.getAttribute('aria-label'));
     d.name = name || 'Options';
-    btn.addEventListener('click', function () { if (d.open) closeMenu(d, true); else openMenu(d); });
+    btn.addEventListener('click', function () { if (d.open) closeMenu(d, true); else { btn.focus(); openMenu(d); } }); // focus first: Safari does not focus buttons on click
     btn.addEventListener('keydown', function (e) { ddKey(d, e); });
     btn.addEventListener('keyup', function (e) { if (e.key === ' ') e.preventDefault(); }); // Space must not click on release
     btn.addEventListener('focusout', function (e) { if (d.open && !d.menu.contains(e.relatedTarget)) closeMenu(d, false); });
@@ -474,6 +474,18 @@
     var dlg = $('#confirm'); if (dlg && dlg.open) return true;     // a confirm is pending; replacing the form would detach it
     return $$('#content form').some(function (f) { return f._dirty; }); // unsaved edits
   }
+  // Identity of a focusable element across a re-render: id, else href, else form action + button text, else name, else data-action + text.
+  // An element with none of these is never restored, so focus cannot land on a different row's control.
+  function focusKey(el) {
+    if (el._sel) return 'sel:' + (el._sel.name || el._sel.id); // a dropdown button: its native select is the identity (the button id is regenerated)
+    if (el.id) return 'id:' + el.id;
+    var h = el.getAttribute('href'); if (h) return 'href:' + h;
+    var f = el.form || (el.closest && el.closest('form'));
+    if (f && f.getAttribute('action')) return 'form:' + f.getAttribute('action') + '|' + el.textContent.trim() + '|' + (el.name || '');
+    if (el.name) return 'name:' + el.name;
+    var da = el.getAttribute('data-action'); if (da) return 'act:' + da + '|' + el.textContent.trim();
+    return '';
+  }
   window.refresh = function () {
     if (document.body.classList.contains('panel-open') || editing()) { pending = true; return; }
     if (refreshing) { pending = true; return; }
@@ -488,10 +500,14 @@
         if (editing()) { pending = true; return; } // a dialog or edit began while this was in flight
         var main = $('#content'); if (!main) return;
         var q = $('[data-search]'); var qv = q ? q.value : '';
-        var FOC = 'button,a[href],input,select,textarea,summary', act = document.activeElement, ai = main.contains(act) ? $$(FOC, main).indexOf(act) : -1;
+        var FOC = 'button,a[href],input,select,textarea,summary', act = document.activeElement;
+        var fk = act && main.contains(act) ? focusKey(act) : '', ftag = fk ? act.tagName : '';
         main.innerHTML = html;
         wire(main);
-        if (ai >= 0 && document.activeElement !== act) { var again = $$(FOC, main)[ai]; if (again && again.tagName === act.tagName) again.focus(); } // keep the keyboard position across a refresh
+        if (fk && document.activeElement !== act) { // keep the keyboard position across a refresh, but only on the same element
+          var again = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; })[0];
+          if (again) again.focus({ preventScroll: true });
+        }
         if (qv) { var nq = $('[data-search]'); if (nq) { nq.value = qv; nq.dispatchEvent(new Event('input')); } }
         markUpdated();
       })
@@ -543,9 +559,9 @@
   // ---- shortcuts ----
   document.addEventListener('keydown', function (e) {
     var t = e.target;
+    if (e.key === 'Tab' && document.body.classList.contains('panel-open') && !(t && t.closest && t.closest('dialog'))) { panelTab(e); return; }
     if (t && t.closest && t.closest('.dd, .dd-menu')) { if (e.key === 'Escape') closePanel(); return; } // dropdowns own their keys
     if (t && t.closest && t.closest('dialog')) return;
-    if (e.key === 'Tab' && document.body.classList.contains('panel-open')) { panelTab(e); return; }
     if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) { if (e.key === 'Escape') { e.target.blur(); closePanel(); } return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape') closePanel();
