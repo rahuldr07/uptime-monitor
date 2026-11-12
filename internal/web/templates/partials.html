@@ -1,11 +1,11 @@
 {{define "checks-table"}}
-<table style="margin-top:8px"><tr><th>Time</th><th>Result</th><th>Status</th><th>Latency</th><th>Detail</th></tr>
+<div class="scroll"><table style="margin-top:8px"><tr><th>Time</th><th>Result</th><th>Status</th><th>Latency</th><th>Detail</th></tr>
 {{range .}}<tr><td>{{ts .CheckedAt}}</td><td style="white-space:nowrap">{{if .OK}}<span class="ok-text">ok</span>{{else}}<span class="bad-text">fail</span>{{end}}{{if .Maintenance}} <span class="badge maint" title="During maintenance: not counted toward uptime">maint</span>{{end}}</td><td>{{if .StatusCode}}{{.StatusCode}}{{else}}—{{end}}</td><td>{{.LatencyMS}} ms</td><td class="muted">{{.Error}}</td></tr>{{else}}<tr><td colspan="5" class="muted">No checks yet.</td></tr>{{end}}
-</table>
+</table></div>
 {{end}}
 
 {{define "incident-table"}}
-<table><tr>{{if .ShowTarget}}<th>Monitor</th>{{end}}<th>Started</th><th>Duration</th><th>Cause</th><th>Alerted</th><th>Status</th><th>Note</th></tr>
+<div class="scroll"><table><tr>{{if .ShowTarget}}<th>Monitor</th>{{end}}<th>Started</th><th>Duration</th><th>Cause</th><th>Alerted</th><th>Status</th><th>Note</th></tr>
 {{$now := .Now}}
 {{range .Incidents}}<tr>
   {{if $.ShowTarget}}<td><a href="/targets/{{.TargetID}}" style="font-weight:500">{{.TargetName}}</a></td>{{end}}
@@ -16,7 +16,7 @@
   <td style="white-space:nowrap">{{if .Acknowledged}}<span class="badge accent" title="{{ts .AckedAt}}">acknowledged</span>{{else if .Ongoing}}<form method="post" action="/incidents/{{.ID}}/ack" data-async><button type="submit" class="sm">Acknowledge</button></form>{{else}}<span class="faint">—</span>{{end}}</td>
   <td style="min-width:200px"><form method="post" action="/incidents/{{.ID}}/note" style="display:flex;gap:4px"><input name="note" value="{{.Note}}" placeholder="Add a note…" maxlength="500" style="font-size:12px;padding:4px 8px"><button type="submit" class="sm ghost">Save</button></form></td>
 </tr>{{end}}
-</table>
+</table></div>
 {{end}}
 
 {{define "maint-banner"}}{{if .Maint}}<div class="banner maint"><span>{{template "i-wrench"}}<strong>Maintenance in progress</strong> · {{range $i, $m := .Maint}}{{if $i}}, {{end}}{{$m.Title}}{{if $m.Group}} ({{$m.Group}}){{end}}{{end}}</span><span class="small">{{with index .Maint 0}}ends {{ts .EndsAt}}{{end}}{{if .Admin}} · <a href="/maintenance">manage</a>{{end}}</span></div>{{end}}{{end}}

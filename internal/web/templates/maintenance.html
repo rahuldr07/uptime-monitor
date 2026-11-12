@@ -18,7 +18,7 @@
 {{end}}
 <div class="section"{{if not .Active}} style="margin-top:0"{{end}}><h2>Upcoming</h2>{{if .Upcoming}}<span class="small muted">{{len .Upcoming}} scheduled</span>{{end}}</div>
 {{if .Upcoming}}
-<div class="card block" style="padding:0 18px;overflow-x:auto">
+<div class="card block scroll" style="padding:0 18px">
 <table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Starts</th><th>Duration</th><th></th></tr>
 {{range .Upcoming}}<tr>
   <td style="font-weight:500">{{.Title}}</td>
@@ -32,7 +32,7 @@
 {{else}}<div class="empty" style="padding:22px">Nothing scheduled. Plan a deploy or an upgrade on the right and nobody gets paged for it.</div>{{end}}
 {{if .Past}}
 <div class="section"><h2>Past</h2><span class="small muted">most recent {{len .Past}}</span></div>
-<div class="card block" style="padding:0 18px;overflow-x:auto">
+<div class="card block scroll" style="padding:0 18px">
 <table style="min-width:520px"><tr><th>Title</th><th>Scope</th><th>Started</th><th>Duration</th><th></th></tr>
 {{range .Past}}<tr>
   <td>{{.Title}}</td>

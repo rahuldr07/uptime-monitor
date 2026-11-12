@@ -14,7 +14,7 @@ import (
 func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.Time) template.HTML {
 	const w, h, padL, padB, padT = 800.0, 200.0, 58.0, 22.0, 8.0
 	if len(checks) == 0 {
-		return template.HTML(`<svg viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg"><text x="400" y="100" text-anchor="middle" fill="#9a9a94" font-size="14">No checks in this range</text></svg>`)
+		return template.HTML(`<svg viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg"><text class="c-axis" x="400" y="100" text-anchor="middle" font-size="14">No checks in this range</text></svg>`)
 	}
 	span := to.Sub(from).Seconds()
 	if span <= 0 {
@@ -51,18 +51,18 @@ func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.
 		if x1-x0 < 2 {
 			x1 = x0 + 2
 		}
-		fmt.Fprintf(&b, `<rect x="%.1f" y="%.0f" width="%.1f" height="%.0f" fill="#e24b4a" opacity="0.18"/>`, x0, padT, x1-x0, h-padB-padT)
+		fmt.Fprintf(&b, `<rect class="c-shade" x="%.1f" y="%.0f" width="%.1f" height="%.0f" opacity="0.18"/>`, x0, padT, x1-x0, h-padB-padT)
 	}
 	// gridlines + labels
 	for i := 0; i <= 4; i++ {
 		ms := maxMS * int64(i) / 4
 		yy := y(ms)
-		fmt.Fprintf(&b, `<line x1="%.0f" y1="%.1f" x2="%.0f" y2="%.1f" stroke="#9a9a94" stroke-opacity="0.25"/>`, padL, yy, w, yy)
+		fmt.Fprintf(&b, `<line class="c-grid" x1="%.0f" y1="%.1f" x2="%.0f" y2="%.1f"/>`, padL, yy, w, yy)
 		label := fmt.Sprintf("%d", ms)
 		if i == 4 {
 			label += " ms"
 		}
-		fmt.Fprintf(&b, `<text x="%.0f" y="%.1f" text-anchor="end" fill="#9a9a94" font-size="11">%s</text>`, padL-6, yy+4, label)
+		fmt.Fprintf(&b, `<text class="c-axis" x="%.0f" y="%.1f" text-anchor="end" font-size="11">%s</text>`, padL-6, yy+4, label)
 	}
 	// time labels
 	for i := 0; i <= 4; i++ {
@@ -77,22 +77,22 @@ func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.
 		if to.Sub(from) > 36*time.Hour {
 			label = t.Local().Format("Jan 2")
 		}
-		fmt.Fprintf(&b, `<text x="%.1f" y="%.0f" text-anchor="%s" fill="#9a9a94" font-size="11">%s</text>`, x(t), h-6, anchor, label)
+		fmt.Fprintf(&b, `<text class="c-axis" x="%.1f" y="%.0f" text-anchor="%s" font-size="11">%s</text>`, x(t), h-6, anchor, label)
 	}
 	// line segments: break the line at failed checks and draw them as marks
 	var pts []string
 	flush := func() {
 		if len(pts) == 1 {
-			b.WriteString(`<circle r="2" fill="#378add" cx="` + strings.Split(pts[0], ",")[0] + `" cy="` + strings.Split(pts[0], ",")[1] + `"/>`)
+			b.WriteString(`<circle class="c-dot" r="2" cx="` + strings.Split(pts[0], ",")[0] + `" cy="` + strings.Split(pts[0], ",")[1] + `"/>`)
 		} else if len(pts) > 1 {
-			fmt.Fprintf(&b, `<polyline fill="none" stroke="#378add" stroke-width="1.5" points="%s"/>`, strings.Join(pts, " "))
+			fmt.Fprintf(&b, `<polyline class="c-line" fill="none" stroke-width="1.5" points="%s"/>`, strings.Join(pts, " "))
 		}
 		pts = pts[:0]
 	}
 	for _, c := range downsample(checks, 600) {
 		if !c.OK {
 			flush()
-			fmt.Fprintf(&b, `<line x1="%.1f" y1="%.0f" x2="%.1f" y2="%.0f" stroke="#e24b4a" stroke-width="1.5"/>`, x(c.CheckedAt), h-padB-6, x(c.CheckedAt), h-padB)
+			fmt.Fprintf(&b, `<line class="c-down" x1="%.1f" y1="%.0f" x2="%.1f" y2="%.0f" stroke-width="1.5"/>`, x(c.CheckedAt), h-padB-6, x(c.CheckedAt), h-padB)
 			continue
 		}
 		pts = append(pts, fmt.Sprintf("%.1f,%.1f", x(c.CheckedAt), y(c.LatencyMS)))
@@ -137,7 +137,7 @@ func downsample(checks []store.Check, n int) []store.Check {
 func sparkSVG(checks []store.Check, from, to time.Time) template.HTML {
 	const w, h = 100.0, 24.0
 	if len(checks) == 0 {
-		return template.HTML(`<svg viewBox="0 0 100 24" width="100" height="24" aria-hidden="true"><line x1="0" y1="12" x2="100" y2="12" stroke="#9a9a94" stroke-opacity=".3" stroke-dasharray="2 3"/></svg>`)
+		return template.HTML(`<svg viewBox="0 0 100 24" width="100" height="24" aria-hidden="true"><line class="c-grid" x1="0" y1="12" x2="100" y2="12" stroke-dasharray="2 3"/></svg>`)
 	}
 	span := to.Sub(from).Seconds()
 	if span <= 0 {
@@ -157,16 +157,16 @@ func sparkSVG(checks []store.Check, from, to time.Time) template.HTML {
 	flush := func() {
 		if len(pts) == 1 {
 			xy := strings.Split(pts[0], ",")
-			fmt.Fprintf(&b, `<circle r="1.5" fill="#378add" cx="%s" cy="%s"/>`, xy[0], xy[1])
+			fmt.Fprintf(&b, `<circle class="c-dot" r="1.5" cx="%s" cy="%s"/>`, xy[0], xy[1])
 		} else if len(pts) > 1 {
-			fmt.Fprintf(&b, `<polyline fill="none" stroke="#378add" stroke-width="1.3" points="%s"/>`, strings.Join(pts, " "))
+			fmt.Fprintf(&b, `<polyline class="c-line" fill="none" stroke-width="1.3" points="%s"/>`, strings.Join(pts, " "))
 		}
 		pts = pts[:0]
 	}
 	for _, c := range downsample(checks, 60) {
 		if !c.OK {
 			flush()
-			fmt.Fprintf(&b, `<line x1="%.1f" y1="2" x2="%.1f" y2="%.0f" stroke="#e24b4a" stroke-width="1.5"/>`, x(c.CheckedAt), x(c.CheckedAt), h-2)
+			fmt.Fprintf(&b, `<line class="c-down" x1="%.1f" y1="2" x2="%.1f" y2="%.0f" stroke-width="1.5"/>`, x(c.CheckedAt), x(c.CheckedAt), h-2)
 			continue
 		}
 		pts = append(pts, fmt.Sprintf("%.1f,%.1f", x(c.CheckedAt), y(c.LatencyMS)))

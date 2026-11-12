@@ -7,7 +7,7 @@
   </div>
 </div>
 {{if .Rows}}
-<div class="card block" style="padding:0 18px">
+<div class="card block scroll" style="padding:0 18px">
 <table><tr><th>Name</th><th>URL</th><th>Group</th><th>Every</th><th>Timeout</th><th>Expect</th><th>Status</th><th></th></tr>
 {{range .Rows}}<tr data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
   <td><a href="/targets/{{.State.Target.ID}}" style="font-weight:500">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge">muted</span>{{end}}</td>

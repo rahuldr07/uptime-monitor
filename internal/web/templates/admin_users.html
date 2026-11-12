@@ -16,7 +16,7 @@
   <button type="submit">Search</button>
 </form>
 {{if .Rows}}
-<div class="card block" style="padding:0 18px">
+<div class="card block scroll" style="padding:0 18px">
 <table>
 <tr><th>Email</th><th>Workspace</th><th>Created</th><th>Last seen</th><th>Monitors</th><th></th></tr>
 {{range .Rows}}
