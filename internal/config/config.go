@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -73,6 +74,16 @@ type Email struct {
 	Disabled bool     `json:"disabled,omitempty"`
 }
 
+// Mail is the system SMTP account used for verification, reset and notice emails.
+type Mail struct {
+	SMTPHost   string `json:"smtp_host"`
+	SMTPPort   int    `json:"smtp_port"` // default 587
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	From       string `json:"from"`        // bare address, used as MAIL FROM
+	RequireTLS *bool  `json:"require_tls"` // default true
+}
+
 // Notify groups the optional alert channels.
 type Notify struct {
 	Telegram *Telegram `json:"telegram,omitempty"`
@@ -96,10 +107,10 @@ type Config struct {
 	Targets             []Target `json:"targets"`
 	Notify              Notify   `json:"notify"`
 
-	BaseURL string          `json:"base_url"` // public origin for links; empty derives one from listen
-	Signup  string          `json:"signup"`   // closed (default) or invite; open arrives with mail
-	Mail    json.RawMessage `json:"mail"`     // rejected until supported
-	Limits  Limits          `json:"limits"`
+	BaseURL string `json:"base_url"` // public origin for links; empty derives one from listen
+	Signup  string `json:"signup"`   // closed (default), invite or open (open needs mail)
+	Mail    *Mail  `json:"mail"`     // system email; nil means no system mail (links need base_url)
+	Limits  Limits `json:"limits"`
 }
 
 // Limits caps what accounts may do. Pointer fields tell "not given" (default)
@@ -110,7 +121,7 @@ type Limits struct {
 	MaxWorkspaces         *int     `json:"max_workspaces"`           // 0 is unlimited (default)
 	SignupsPerHour        *int     `json:"signups_per_hour"`         // across the instance (default 100)
 	HostRequestsPerSecond *float64 `json:"host_requests_per_second"` // per target host (default 1)
-	MailPerHour           *int     `json:"mail_per_hour"`            // rejected until mail is supported
+	MailPerHour           *int     `json:"mail_per_hour"`            // across the instance, all system email (default 500, at least 1)
 }
 
 // Load reads a JSON config file. Environment variables in the form $VAR or
@@ -249,11 +260,34 @@ func (c *Config) applyDefaults() error {
 	if c.Signup == "" {
 		c.Signup = "closed"
 	}
-	if c.Signup != "closed" && c.Signup != "invite" {
-		return fmt.Errorf("config: signup %q is not supported yet", c.Signup)
+	switch c.Signup {
+	case "closed", "invite", "open":
+	default:
+		return errors.New(`config: signup must be "closed", "invite" or "open"`)
 	}
-	if isSet(c.Mail) {
-		return errors.New("config: mail is not supported yet")
+	if m := c.Mail; m != nil {
+		if m.SMTPHost == "" || m.From == "" {
+			return errors.New("config: mail needs smtp_host and from")
+		}
+		if m.SMTPPort == 0 {
+			m.SMTPPort = 587
+		}
+		if m.SMTPPort < 1 || m.SMTPPort > 65535 {
+			return fmt.Errorf("config: mail smtp_port %d is out of range", m.SMTPPort)
+		}
+		if addr, err := mail.ParseAddress(m.From); err != nil || addr.Address != m.From {
+			return fmt.Errorf("config: mail from %q must be a bare address like up@example.com", m.From)
+		}
+		if m.RequireTLS == nil {
+			t := true
+			m.RequireTLS = &t
+		}
+		if c.BaseURL == "" {
+			return errors.New("config: mail needs base_url, because email links are built from it")
+		}
+	}
+	if c.Signup == "open" && c.Mail == nil {
+		return errors.New(`config: signup "open" needs mail to send verification emails`)
 	}
 	if c.Signup != "closed" {
 		if c.BaseURL == "" {
@@ -372,11 +406,6 @@ func ValidateNotifyRestricted(n *Notify) error {
 	return nil
 }
 
-// isSet reports whether an optional raw JSON key was given (and not null).
-func isSet(m json.RawMessage) bool {
-	return len(m) > 0 && string(m) != "null"
-}
-
 // normalizeBaseURL strictly validates a base_url and returns scheme://host
 // with the scheme lowercased and any trailing slash dropped.
 func normalizeBaseURL(raw string) (string, bool) {
@@ -410,9 +439,6 @@ func isLoopbackHost(host string) bool {
 }
 
 func (l *Limits) applyDefaults() error {
-	if l.MailPerHour != nil {
-		return errors.New("config: limits.mail_per_hour is not supported yet")
-	}
 	defInt := func(name string, p **int, def int) error {
 		if *p == nil {
 			*p = &def
@@ -445,8 +471,11 @@ func (l *Limits) applyDefaults() error {
 	} else if l.MinInterval.Duration < time.Second {
 		return errors.New("config: limits.min_interval must be at least 1s")
 	}
-	// Mail is not supported yet, so its limit is fixed at the default.
-	mail := 500
-	l.MailPerHour = &mail
+	if l.MailPerHour == nil {
+		perHour := 500
+		l.MailPerHour = &perHour
+	} else if *l.MailPerHour < 1 {
+		return errors.New("config: limits.mail_per_hour must be at least 1")
+	}
 	return nil
 }
