@@ -4,6 +4,9 @@ Every product and technical decision, newest group last. Each entry records
 what was decided, why, and what was rejected. To change a decision, add a new
 entry that supersedes the old one instead of editing it.
 
+M1a to M3 in the entries below are the delivery steps of the accounts design
+in [design/accounts.md](design/accounts.md) (see D-119).
+
 Status values: **Accepted** (in effect or approved for building),
 **Superseded** (replaced by a later decision), **Open** (waiting for the
 maintainer).
@@ -496,7 +499,7 @@ Full design:
 ### D-128: UI component upgrade (2026-11-12)
 - **Status:** Accepted
 - **Decision:**
-  - Direction chosen by the user: deepen the opencode theme (monospace type, flat panels, 1px borders, small radii, peach accent in dark and blue in light). All colours come from the existing tokens. No fonts or external assets are added; the CSP stays self-only.
+  - Direction chosen by the maintainer: deepen the opencode theme (monospace type, flat panels, 1px borders, small radii, peach accent in dark and blue in light). All colours come from the existing tokens. No fonts or external assets are added; the CSP stays self-only.
   - Form validation is client-side and per field. It runs on submit, and on blur once the field has been touched. The message sits under the field, the field gets `aria-invalid`, and the first invalid field is focused. It is an enhancement only: JS adds `novalidate`, and server validation stays authoritative. Server errors render as an alert at the top of the form (inside the card on sign-in pages).
   - No `minlength` on the current or admin password fields, because upgraded installs may have short legacy passwords.
   - Toasts show an icon and a close button, and a 5-second countdown bar drives dismissal. The countdown pauses on hover and focus. Errors stay until dismissed. At most 4 toasts show at once, and duplicates are merged. Polite and assertive live regions are created at load.

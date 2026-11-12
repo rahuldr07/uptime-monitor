@@ -432,7 +432,7 @@ with that name does not already exist. Config targets and alert settings are add
 
 ## API
 
-All endpoints need a signed-in session cookie.
+The JSON API endpoints and `/events` need a signed-in session cookie. `/s/{slug}` and `/healthz` are public.
 
 - `GET /s/{slug}` (public) the public status page (`/status` redirects to the signed-in user's page, or to the operator's for anonymous visitors)
 - `GET /api/status` current state and uptime for every target

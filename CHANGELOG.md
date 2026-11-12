@@ -41,6 +41,8 @@ Interface
 
 ### Changed
 
+Compared with pre-release builds:
+
 - Status pages moved to `/s/{slug}`; `/status` redirects to the signed-in user's page or, for anonymous visitors, the operator's.
 - Error alerts and form validation upgraded: server errors appear as an alert at the top of the form, and fields are checked inline with a message under each one.
 - Toasts show an icon and a close button, and dismiss after 5 seconds; errors stay until closed.
@@ -49,6 +51,8 @@ Interface
 - Data tables with sorting, search, quick views, paging, column controls, row selection with copy, and phone cards.
 
 ### Removed
+
+Compared with pre-release builds:
 
 - `insecure_no_auth` has no effect and logs a WARN if set. `admin_password` only unlocks setup on an upgraded install.
 

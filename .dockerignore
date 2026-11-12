@@ -8,3 +8,7 @@ deploy
 config.json
 dev-config.json
 /uptime-monitor
+.env
+*.bak
+.superpowers
+docs/superpowers

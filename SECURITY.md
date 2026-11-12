@@ -6,12 +6,9 @@ Only the latest release gets security fixes.
 
 ## Reporting a vulnerability
 
-Report privately through GitHub security advisories: open the repository's
-Security tab and choose "Report a vulnerability". Please do not put details in a public
-issue.
-
-If private reporting isn't available, open an issue asking for a contact,
-without details.
+Report privately through GitHub's private vulnerability reporting: open the
+repository's Security tab and choose "Report a vulnerability". Please do not put
+details in a public issue.
 
 Include:
 

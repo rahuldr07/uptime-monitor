@@ -1,5 +1,9 @@
 # Security review: uptime-monitor
 
+> Historical snapshot from 2026-11-09, taken before the accounts work. It is
+> not kept up to date. Current behaviour is described in the
+> [README](../README.md) and [decisions.md](decisions.md).
+
 Date: 2026-11-09. Scope: the whole repository including the uncommitted
 production-hardening changes (Go backend, `html/template` UI, vanilla JS,
 Docker/compose/systemd/CI). Guidance used: Go general backend security spec
@@ -39,8 +43,8 @@ The rest is Low or informational.
 | SEC-5 | Low | HSTS is sent automatically and cannot be turned off | **Fixed**: removed; left to the reverse proxy |
 | SEC-6 | Low | Admin flash text can be injected via `?msg=` | **Fixed**: HMAC-signed flash messages; test |
 | SEC-7 | Low | Password comparison leaks the password length | **Fixed**: constant-time compare of SHA-256 digests |
-| SEC-8 | Low | Unauthenticated SMTP falls back to plaintext without STARTTLS | **Open, by choice**: credentials are already protected; `require_tls` option deferred |
-| SEC-9 | Low | Long-lived sessions with no idle timeout or session cap | **Open, by choice**: 30-day sessions kept for a single-admin tool |
+| SEC-8 | Low | Unauthenticated SMTP falls back to plaintext without STARTTLS | **Fixed**: the `mail` config has `require_tls` (default `true`), and alert email channels in non-operator workspaces always require TLS. Alert email channels in the operator workspace still fall back to plaintext when STARTTLS is not offered |
+| SEC-9 | Low | Long-lived sessions with no idle timeout or session cap | **Fixed**: sessions expire after 30 days or 7 days idle, and a user has at most 20 |
 | SEC-10 | Info | Accepted or by-design risks | Accepted |
 | SEC-11 | Medium | One slow-reading client blocks the public status page for everyone (found by code review) | **Fixed**: lock never held while writing; deterministic regression test confirmed to fail on the old code |
 | SEC-12 | Low | Backup file is briefly readable by others, and the existence check is racy (found by code review) | **Fixed**: `O_EXCL` 0600 creation, read-only source, missing source fails |
