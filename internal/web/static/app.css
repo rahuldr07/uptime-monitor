@@ -80,7 +80,7 @@ kbd{font:inherit;font-size:11px;padding:0 5px;border:1px solid var(--border-stro
 .chart svg{width:100%;height:auto;display:block}
 .chart svg text{fill:var(--muted);font-family:inherit}
 .c-axis{fill:var(--muted)}.c-grid{stroke:var(--border)}.c-line{stroke:var(--accent)}.c-dot{fill:var(--accent)}.c-down{stroke:var(--bad)}.c-shade{fill:var(--bad)}
-.scroll{overflow-x:auto}
+.scroll{overflow-x:auto}.scroll>table{min-width:640px}
 .empty{padding:40px 24px;text-align:center;color:var(--muted);border:1px dashed var(--border-strong);border-radius:var(--radius)}
 .flash{padding:10px 14px;border-radius:var(--radius);margin-bottom:14px;font-size:13px;background:var(--accent-bg);color:var(--accent-text)}.flash.error{background:var(--bad-bg);color:var(--bad-text)}
 footer{margin-top:40px;font-size:12px;color:var(--faint)}
