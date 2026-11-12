@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{template "auth-error" .}}
     <h1>Sign up</h1>
     {{if and (or .Invite .Open) (not .Hint)}}
     <p class="muted small" style="margin:4px 0 16px">Create your account and workspace.</p>

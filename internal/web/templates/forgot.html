@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{template "auth-error" .}}
     <h1>Forgot password</h1>
     {{if not .Sent}}
     <form method="post" action="/forgot">

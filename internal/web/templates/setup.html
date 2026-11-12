@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{template "auth-error" .}}
     <h1>Set up Uptime</h1>
     {{if .Form}}
     <p class="muted small" style="margin:4px 0 16px">Create the operator account. It owns the existing workspace and all of its monitors.</p>

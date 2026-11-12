@@ -634,17 +634,18 @@
       }
       bar.appendChild(pills);
     }
-    bar.appendChild(mk('span', 'dt-grow'));
+    var inline = !q && !spec.length; // nothing to filter: the View button joins the summary line instead of a bar of its own
+    var grow = mk('span', 'dt-grow');
     var vb = mk('button', 'dt-view sm'), vlab = mk('span'); vb.type = 'button'; vb.id = 'dt-' + T.id + '-view'; vb.setAttribute('aria-haspopup', 'menu'); vb.setAttribute('aria-expanded', 'false'); vb.setAttribute('aria-label', 'View: density and columns');
     vlab.textContent = 'View'; vb.appendChild(vlab); vb.appendChild(icon('i-chevron'));
     vb.addEventListener('click', function () { vb.focus({ preventScroll: true }); T.viewMenu(); });
     vb.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.viewMenu(); } });
-    bar.appendChild(vb);
+    (inline ? sum : bar).appendChild(grow); (inline ? sum : bar).appendChild(vb);
 
-    sum.setAttribute('aria-live', 'polite'); sum.hidden = !filterable;
+    sum.setAttribute('aria-live', 'polite'); sum.hidden = !filterable && !inline; sumT.hidden = !filterable;
     clear.type = 'button'; clear.id = 'dt-' + T.id + '-clear'; clear.textContent = 'Clear all'; clear.hidden = true;
     clear.addEventListener('click', function () { T.clearAll(); });
-    sum.appendChild(sumT); sum.appendChild(clear);
+    sum.insertBefore(clear, sum.firstChild); sum.insertBefore(sumT, sum.firstChild);
 
     wrap.setAttribute('role', 'region'); wrap.tabIndex = 0; wrap.id = 'dt-' + T.id + '-region'; // an id so a refresh can restore focus to it
     wrap.setAttribute('aria-label', T.noun + '. Arrow keys move' + (select ? ', Space selects' : '') + (T.rows.some(function (r) { return r.tr.getAttribute('data-href'); }) ? ', Enter opens' : '') + '.');
@@ -665,7 +666,7 @@
     eb.type = 'button'; eb.tabIndex = -1; eb.textContent = 'More columns →'; edge.appendChild(eb); box.appendChild(edge);
     eb.addEventListener('click', function () { wrap.scrollBy({ left: wrap.clientWidth * 0.8, behavior: 'smooth' }); });
     wrap.addEventListener('scroll', function () { T.edge(); }, { passive: true });
-    root.insertBefore(bar, box); root.insertBefore(sum, box); root.appendChild(foot); root.appendChild(live);
+    if (!inline) root.insertBefore(bar, box); root.insertBefore(sum, box); root.appendChild(foot); root.appendChild(live);
     T.sizeSel = sizeSel;
 
     // headers: sort button, column menu, resize grip

@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{template "auth-error" .}}
     <h1>Confirm your email</h1>
     {{if .Token}}
     <form method="post" action="/verify">

@@ -42,7 +42,7 @@
     {{if and (not .IsOperator) (not .DisabledAt)}}
     <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm-title="Reset password?" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Reset link</button></form>
     {{end}}
-    {{if not .IsOperator}}<a class="btn sm" href="{{$.Keep.DeleteURL .ID}}">Delete</a>{{end}}
+    {{if not .IsOperator}}<a class="btn sm danger" href="{{$.Keep.DeleteURL .ID}}">Delete</a>{{end}}
   </td>
 </tr>
 {{end}}

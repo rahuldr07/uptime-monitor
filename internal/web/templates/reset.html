@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{template "auth-error" .}}
     <h1>Reset password</h1>
     {{if .Token}}
     <form method="post" action="/reset">
