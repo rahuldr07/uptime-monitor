@@ -18,7 +18,7 @@
 {{if .Rows}}
 <div class="dt" data-table="admin-users" data-noun="users" data-paged="server" data-select data-cards data-empty="No users match.">
 <table>
-<thead><tr><th data-w="260" data-card="primary">Email</th><th data-w="220" data-hide-below="md">Workspace</th><th data-hide-below="lg">Created</th><th data-hide-below="sm">Last seen</th><th data-num data-hide-below="md">Monitors</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
+<thead><tr><th data-w="180" data-card="primary">Email</th><th data-hide-below="md">Workspace</th><th data-hide-below="lg">Created</th><th data-hide-below="sm">Last seen</th><th data-num data-hide-below="md">Monitors</th><th data-sort="false" data-pin="end" data-card="actions"><span class="sr">Actions</span></th></tr></thead>
 <tbody>
 {{range .Rows}}
 <tr data-id="{{.ID}}" data-label="{{.Email}}">
