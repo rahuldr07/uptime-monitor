@@ -6,17 +6,19 @@ import (
 	"testing"
 )
 
-// The served licence text must contain the vendored Lucide licence verbatim.
+// The served licence text must contain the project and the vendored Lucide licences verbatim.
 func TestLicensesTxtHasLucideLicense(t *testing.T) {
-	src, err := os.ReadFile("../../third_party/lucide/LICENSE")
-	if err != nil {
-		t.Fatal(err)
-	}
 	served, err := os.ReadFile("static/licenses.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(served), strings.TrimSpace(string(src))) {
-		t.Fatal("static/licenses.txt is out of sync with third_party/lucide/LICENSE")
+	for _, path := range []string{"../../LICENSE", "../../third_party/lucide/LICENSE"} {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(served), strings.TrimSpace(string(src))) {
+			t.Fatalf("static/licenses.txt is out of sync with %s", path)
+		}
 	}
 }

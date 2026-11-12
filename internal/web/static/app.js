@@ -132,7 +132,7 @@
           .then(function (r) { if (r.status === 401) { sessionExpired(); throw 0; } return r.json().then(function (j) { j._status = r.status; return j; }); })
           .then(function (j) {
             if (j.error) { toast(j.error, 'error'); return; }
-            if (j.message) toast(j.message, j.ok === false ? 'error' : /^Checking .*…$/.test(j.message) ? 'info' : 'ok'); // the pending check is not a success yet
+            if (j.message) toast(j.message, j.kind || (j.ok === false ? 'error' : 'ok')); // the pending check is not a success yet
             if (j.redirect) { location.href = j.redirect; } else { refresh(); }
           })
           .catch(function () { toast('Request failed', 'error'); })
@@ -1238,9 +1238,9 @@
   var liveOff = false;
   function dotState() { var d = $('.live'); if (d) d.classList.toggle('off', liveOff); }
   // One short pulse (about 5s), at most once a minute; a refresh that swaps the dot mid-pulse carries it over.
-  var lastBeat = 0;
+  var lastBeat = -Infinity;
   function beat() {
-    var d = $('.live'), now = Date.now(); if (!d || liveOff) return;
+    var d = $('.live'), now = window.performance ? performance.now() : Date.now(); if (!d || liveOff) return;
     if (now - lastBeat < 4500) { d.classList.add('beat'); return; }
     if (now - lastBeat < 60000) return;
     lastBeat = now; d.classList.add('beat');

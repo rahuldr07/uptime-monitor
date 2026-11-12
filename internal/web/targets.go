@@ -564,7 +564,7 @@ func (s *Server) targetCheck(w http.ResponseWriter, r *http.Request, a *authCtx)
 		msg = "A check is already running."
 	}
 	if wantsJSON(r) {
-		writeJSON(w, map[string]any{"ok": true, "message": msg})
+		writeJSON(w, map[string]any{"ok": true, "kind": "info", "message": msg})
 		return
 	}
 	redirect(w, r, backTo(r, fmt.Sprintf("/targets/%d", t.ID)), msg)
