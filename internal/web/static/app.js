@@ -710,7 +710,7 @@
       hm.addEventListener('click', function () { hm.focus({ preventScroll: true }); T.colMenu(c, hm); });
       hm.addEventListener('keydown', function (e) { if (e.key === 'ArrowDown') { e.preventDefault(); T.colMenu(c, hm); } });
       var g = mk('div', 'dt-grip'); g.setAttribute('role', 'separator'); g.setAttribute('aria-orientation', 'vertical'); g.tabIndex = 0;
-      g.id = 'dt-' + T.id + '-grip-' + c.i; g.setAttribute('aria-label', 'Resize ' + c.label); g.setAttribute('aria-valuemin', DT_MIN); g.setAttribute('aria-valuemax', DT_MAX);
+      g.id = 'dt-' + T.id + '-grip-' + c.i; g.setAttribute('aria-label', 'Resize ' + c.label); g.setAttribute('aria-valuemin', colMin(c)); g.setAttribute('aria-valuemax', DT_MAX);
       th.appendChild(g); c.grip = g; drag(c, g);
     });
 
@@ -801,15 +801,17 @@
     function savedWidths() { var p = prefs(); return p.widths[T.pk] || (p.widths[T.pk] = {}); }
     T.applyWidths = function () {
       var w = savedWidths(), any = Object.keys(w).length > 0, total = lead * 44;
+      var gone = T.cols.map(function (c) { return c.off || getComputedStyle(c.th).display === 'none'; }); // reads first, then writes
       table.classList.toggle('dt-fixed', any);
-      T.cols.forEach(function (c) {
+      T.cols.forEach(function (c, n) {
         var px = any && !c.off && w[c.id] ? w[c.id] : 0;
         c.th.style.width = px ? px + 'px' : ''; c.th.style.minWidth = px ? px + 'px' : c.w ? c.w + 'px' : '';
-        if (!c.off && getComputedStyle(c.th).display !== 'none') total += w[c.id] || c.w || 160; // not columns a breakpoint hides
+        if (!gone[n]) total += w[c.id] || c.w || 160; // not columns a breakpoint hides
       });
       table.style.tableLayout = any ? 'fixed' : ''; table.style.width = any ? total + 'px' : ''; table.style.minWidth = any ? '100%' : '';
       T.cols.forEach(function (c) { if (c.grip) c.grip.setAttribute('aria-valuenow', Math.round(c.th.getBoundingClientRect().width)); });
     };
+    T.hasWidths = function () { return Object.keys(savedWidths()).length > 0; };
     T.widen = function (c, px, save) { // px undefined resets this column
       var w = savedWidths();
       if (px !== undefined && !Object.keys(w).length) { // first resize: freeze every other column at its measured width
@@ -1015,7 +1017,7 @@
       T.cur = -1;
       if (S.cur != null && T.shown.length) {
         for (var ci = 0; ci < T.shown.length; ci++) if (T.shown[ci].id === S.cur) T.cur = ci;
-        if (T.cur < 0) { T.cur = Math.min(S.ci || 0, T.shown.length - 1); S.cur = T.shown[T.cur].id; S.ci = T.cur; }
+        if (T.cur < 0) T.cur = Math.min(S.ci || 0, T.shown.length - 1); // filtered out: show the nearest row but keep S.cur, so clearing the filter returns to the original row
       }
       T.paintSel();
       T.fit();
@@ -1031,10 +1033,16 @@
     $$('.dt', root).forEach(function (el) { if (!el._dt) el._dt = buildTable(el); });
   }
   var dtNarrow = null;
+  var dtRaf = 0;
   window.addEventListener('resize', function () {
-    var n = window.matchMedia && matchMedia('(max-width:639px)').matches; // the page list has 5 slots when narrow, 7 otherwise
-    dtLive.forEach(function (t) { t.applyWidths(); if (dtNarrow !== null && n !== dtNarrow) t.render(); else t.fit(); });
-    dtNarrow = n;
+    if (dtRaf) return;
+    dtRaf = requestAnimationFrame(function () {
+      dtRaf = 0;
+      var n = window.matchMedia && matchMedia('(max-width:639px)').matches; // the page list has 5 slots when narrow, 7 otherwise
+      dtLive.forEach(function (t) { if (t.hasWidths()) t.applyWidths(); }); // a breakpoint may hide or show columns of a fixed layout
+      dtLive.forEach(function (t) { if (dtNarrow !== null && n !== dtNarrow) t.render(); else t.fit(); });
+      dtNarrow = n;
+    });
   });
 
   // ---- search filter ----
