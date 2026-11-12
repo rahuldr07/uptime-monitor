@@ -18,7 +18,7 @@
   <a class="nav{{if eq .Page "alerts"}} active{{end}}" href="/alerts">{{template "i-bell"}}<span class="t">Alert channels</span></a>
   <a class="nav{{if eq .Page "maintenance"}} active{{end}}" href="/maintenance">{{template "i-wrench"}}<span class="t">Maintenance</span>{{if .Maint}}<span class="count maint">{{len .Maint}}</span>{{end}}</a>
   <a class="nav" href="{{.StatusURL}}" target="_blank" rel="noopener">{{template "i-ext"}}<span class="t">Status page</span></a>
-  {{if .IsOperator}}<a class="nav{{if eq .Page "admin"}} active{{end}}" href="/admin">{{template "i-ext"}}<span class="t">Admin</span></a>{{end}}
+  {{if .IsOperator}}<a class="nav{{if eq .Page "admin"}} active{{end}}" href="/admin">{{template "i-shield"}}<span class="t">Admin</span></a>{{end}}
   <div class="foot">
     <button type="button" class="ghost sm" data-action="theme" title="Theme (t)">{{template "i-moon"}}<span data-theme-label>{{if eq .Theme "dark"}}Dark{{else if eq .Theme "light"}}Light{{else}}Auto{{end}}</span></button>
     <a class="small muted" href="/account">{{.UserEmail}}</a>

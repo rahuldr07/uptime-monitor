@@ -100,6 +100,13 @@ func (s *Server) routeTable() []route {
 		{"GET", "/api/incidents", classWorkspace, nil, s.apiIncidents},
 
 		{"GET", "/admin", classOperator, nil, s.adminIndex},
+		{"GET", "/admin/users", classOperator, nil, s.adminUsers},
+		{"GET", "/admin/users/{id}/delete", classOperator, nil, s.adminDeletePage},
+		{"POST", "/admin/users/{id}/disable", classOperator, nil, s.adminDisable},
+		{"POST", "/admin/users/{id}/enable", classOperator, nil, s.adminEnable},
+		{"POST", "/admin/users/{id}/delete", classOperator, nil, s.adminDelete},
+		{"POST", "/admin/users/{id}/resend", classOperator, nil, s.adminResend},
+		{"POST", "/admin/users/{id}/reset-link", classOperator, nil, s.adminResetLink},
 	}
 }
 

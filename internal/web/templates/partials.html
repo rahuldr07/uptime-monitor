@@ -20,3 +20,4 @@
 {{end}}
 
 {{define "maint-banner"}}{{if .Maint}}<div class="banner maint"><span>{{template "i-wrench"}}<strong>Maintenance in progress</strong> · {{range $i, $m := .Maint}}{{if $i}}, {{end}}{{$m.Title}}{{if $m.Group}} ({{$m.Group}}){{end}}{{end}}</span><span class="small">{{with index .Maint 0}}ends {{ts .EndsAt}}{{end}}{{if .Admin}} · <a href="/maintenance">manage</a>{{end}}</span></div>{{end}}{{end}}
+{{define "admin-keep"}}<input type="hidden" name="q" value="{{.Q}}"><input type="hidden" name="host" value="{{.Host}}"><input type="hidden" name="page" value="{{.Page}}">{{end}}

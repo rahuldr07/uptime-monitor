@@ -1,0 +1,57 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Users</h1><div class="sub">{{.Total}} account{{if ne .Total 1}}s{{end}}</div></div>
+</div>
+<div class="tabs"><a class="active" href="/admin/users">Users</a><a href="/admin/invites">Invites</a></div>
+{{with .Link}}
+<div class="card block">
+  <h2>Reset link for {{$.LinkEmail}}</h2>
+  <p class="muted small" style="margin:6px 0 10px">Shown once. It works for one hour; send it to the user yourself. Leaving this page discards it.</p>
+  <input readonly value="{{.}}" aria-label="Reset link">
+</div>
+{{end}}
+<form method="get" action="/admin/users" class="btns" style="margin-bottom:12px">
+  <input name="q" value="{{.Keep.Q}}" placeholder="Email contains" aria-label="Email contains" style="width:220px">
+  <input name="host" value="{{.Keep.Host}}" placeholder="Monitored URL contains" aria-label="Monitored URL contains" style="width:220px">
+  <button type="submit">Search</button>
+</form>
+{{if .Rows}}
+<div class="card block" style="padding:0 18px">
+<table>
+<tr><th>Email</th><th>Workspace</th><th>Created</th><th>Last seen</th><th>Monitors</th><th></th></tr>
+{{range .Rows}}
+<tr>
+  <td>{{.Email}}
+    {{if .VerifiedAt}}<span class="badge up">verified</span>{{else}}<span class="badge paused">unverified</span>{{end}}
+    {{if .DisabledAt}}<span class="badge down">disabled</span>{{end}}
+    {{if .IsOperator}}<span class="badge accent">operator</span>{{end}}</td>
+  <td>{{if .WorkspaceSlug}}<a href="/s/{{.WorkspaceSlug}}">{{.WorkspaceName}}</a> <span class="faint small">{{.WorkspaceSlug}}</span>{{else}}<span class="faint">—</span>{{end}}</td>
+  <td>{{ts .CreatedAt}}</td>
+  <td>{{with .LastSeenAt}}{{ago .}}{{else}}<span class="faint">never</span>{{end}}</td>
+  <td>{{.Monitors}}</td>
+  <td class="btns">
+    {{if .DisabledAt}}
+    <form method="post" action="/admin/users/{{.ID}}/enable" data-confirm="Enable {{.Email}}? Their monitors start again.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Enable</button></form>
+    {{else if not .IsOperator}}
+    <form method="post" action="/admin/users/{{.ID}}/disable" data-confirm="Disable {{.Email}}? They are signed out and their monitors stop.">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Disable</button></form>
+    {{end}}
+    {{if and $.CanMail (not .VerifiedAt) (not .DisabledAt)}}
+    <form method="post" action="/admin/users/{{.ID}}/resend" data-confirm="Send {{.Email}} a new verification email?">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Resend verification</button></form>
+    {{end}}
+    {{if and (not .IsOperator) (not .DisabledAt)}}
+    <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm">Reset link</button></form>
+    {{end}}
+    {{if not .IsOperator}}<a class="btn sm" href="/admin/users/{{.ID}}/delete">Delete</a>{{end}}
+  </td>
+</tr>
+{{end}}
+</table>
+</div>
+{{else}}<div class="empty">No users match.</div>{{end}}
+{{if or .Prev .Next}}
+<div class="btns" style="margin-top:12px">
+  {{if .Prev}}<a href="{{.Prev}}">← Previous</a>{{end}}
+  {{if .Next}}<a href="{{.Next}}">Next →</a>{{end}}
+</div>
+{{end}}
+{{end}}

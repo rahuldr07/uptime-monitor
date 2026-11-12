@@ -70,6 +70,8 @@ type Server struct {
 	mux           *http.ServeMux
 
 	statusCache pageCache
+
+	adminMu sync.Mutex // serialises the panel's disable, enable and delete
 }
 
 // Mailer queues system email. Send charges the budgets first and calls
@@ -195,7 +197,7 @@ func New(o Options) (*Server, error) {
 		},
 	}
 	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
-	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance", "account"} {
+	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete"} {
 		files := append([]string{"templates/layout.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)

@@ -1,0 +1,13 @@
+{{define "content"}}
+<div class="topbar">
+  <div><h1>Delete user</h1><div class="sub">{{.Target.Email}}</div></div>
+</div>
+<div class="card block">
+  <p class="muted small" style="margin:6px 0 12px">Permanently deletes {{.Target.Email}}, their workspace, its monitors and all of their history. This cannot be undone. Enter your own password to confirm.</p>
+  <form method="post" action="/admin/users/{{.Target.ID}}/delete" style="max-width:360px">
+    {{template "admin-keep" .Keep}}
+    <div class="field"><label>Your password</label><input name="current" type="password" required autocomplete="current-password"></div>
+    <div style="margin-top:14px" class="btns"><button type="submit" class="danger">Delete user</button><a href="{{.Keep.URL .Keep.Page}}">Cancel</a></div>
+  </form>
+</div>
+{{end}}

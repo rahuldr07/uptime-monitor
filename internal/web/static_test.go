@@ -35,6 +35,12 @@ var sysAllowed = map[string][]string{
 	"reset.go|(*Server).resetPage":           {"PeekToken"},
 	"reset.go|(*Server).resetPost":           {"PeekToken", "ResetPassword", "CreateSession"},
 	"targets.go|(*Server).hostRateErr":       {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
+	"admin.go|(*Server).adminTarget":         {"UserByID"},
+	"admin.go|(*Server).adminUsersView":      {"ListUsers"},
+	"admin.go|(*Server).adminDisable":        {"SetUserDisabled"},
+	"admin.go|(*Server).adminEnable":         {"SetUserDisabled", "Workspace"},
+	"admin.go|(*Server).adminDelete":         {"SetUserDisabled", "DeleteAccount"},
+	"admin.go|(*Server).adminResetLink":      {"CreateToken"},
 	"web.go|(*Server).healthz":               {"Ping"},
 	"status.go|(*Server).statusRedirect":     {"Workspace"},                    // operator's page for anonymous visitors
 	"status.go|(*Server).statusPage":         {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
@@ -122,7 +128,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 49
+	const want = 56
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {
