@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -8,8 +9,24 @@ import (
 
 func (e *env) forgot(t *testing.T, ip, email string) (int, string) {
 	t.Helper()
-	resp, body := e.post(t, e.clientFrom(t, ip), "/forgot", url.Values{"email": {email}})
+	resp, body := e.forgotResp(t, ip, email)
 	return resp.StatusCode, body
+}
+
+func (e *env) forgotResp(t *testing.T, ip, email string) (*http.Response, string) {
+	t.Helper()
+	return e.post(t, e.clientFrom(t, ip), "/forgot", url.Values{"email": {email}})
+}
+
+func sessionValue(t *testing.T, e *env, c *http.Client) string {
+	t.Helper()
+	u, _ := url.Parse(e.ts.URL)
+	for _, ck := range c.Jar.Cookies(u) {
+		if ck.Name == "uptime_session" {
+			return ck.Value
+		}
+	}
+	return ""
 }
 
 func (e *env) resetWith(t *testing.T, link, pw string) (int, string) {
@@ -45,7 +62,11 @@ func TestForgotIdentical(t *testing.T) {
 	e.disable(t, "dis@x.example")
 	var first string
 	for i, em := range []string{"nobody@x.example", "ver@x.example", "unv@x.example", "dis@x.example"} {
-		code, body := e.forgot(t, "127.0.0.2", em)
+		resp, body := e.forgotResp(t, "127.0.0.2", em)
+		code := resp.StatusCode
+		if len(resp.Header.Values("Set-Cookie")) != 0 || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s: headers %v", em, resp.Header)
+		}
 		if code != 200 || !strings.Contains(body, msgForgotSent) {
 			t.Fatalf("%s: %d %s", em, code, body)
 		}
@@ -72,14 +93,24 @@ func TestForgotIdentical(t *testing.T) {
 
 func TestForgotRateLimit(t *testing.T) {
 	e := newEnvMail(t, openCfg)
+	e.account(t, "a@x.example")
 	for i := 0; i < 6; i++ {
-		if code, _ := e.forgot(t, "127.0.0.2", "nobody@x.example"); code != 200 {
+		em := "nobody@x.example"
+		if i%2 == 0 {
+			em = "a@x.example"
+		}
+		if code, _ := e.forgot(t, "127.0.0.2", em); code != 200 {
 			t.Fatalf("forgot %d: %d", i, code)
 		}
 	}
 	c := e.clientFrom(t, "127.0.0.2")
 	for i := 0; i < 4; i++ {
-		if resp, _ := e.post(t, c, "/verify/resend", url.Values{"email": {"nobody@x.example"}}); resp.StatusCode != 200 {
+		em := "nobody@x.example"
+		if i%2 == 0 {
+			e.addUnverified(t, "u"+string(rune('a'+i))+"@x.example")
+			em = "u" + string(rune('a'+i)) + "@x.example"
+		}
+		if resp, _ := e.post(t, c, "/verify/resend", url.Values{"email": {em}}); resp.StatusCode != 200 {
 			t.Fatalf("resend %d: %d", i, resp.StatusCode)
 		}
 	}
@@ -138,12 +169,63 @@ func TestResetSignedInSameUser(t *testing.T) {
 	c, _ := e.account(t, "a@x.example")
 	e.forgot(t, "127.0.0.2", "a@x.example")
 	link := linkFrom(e.mail.all()[0].Body)
+	old := sessionValue(t, e, c)
+	if old == "" {
+		t.Fatal("no session cookie before reset")
+	}
 	resp, body := e.post(t, c, "/reset", url.Values{"token": {linkToken(link)}, "password": {newSecretPW}, "confirm": {newSecretPW}})
 	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/" || cookieNamed(resp, "uptime_session") == nil {
 		t.Fatalf("reset: %d %s %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
 	if e.status(t, c) != 200 {
 		t.Fatal("new session does not work")
+	}
+	if now := sessionValue(t, e, c); now == old {
+		t.Fatal("session cookie was not replaced")
+	}
+	stale := e.client(t)
+	u, _ := url.Parse(e.ts.URL)
+	stale.Jar.SetCookies(u, []*http.Cookie{{Name: "uptime_session", Value: old, Path: "/"}})
+	if e.status(t, stale) != 401 {
+		t.Fatal("old session still signs in")
+	}
+}
+
+func TestResetStaleCookieSignsIn(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.account(t, "a@x.example")
+	e.forgot(t, "127.0.0.2", "a@x.example")
+	link := linkFrom(e.mail.all()[0].Body)
+	c := e.client(t)
+	u, _ := url.Parse(e.ts.URL)
+	c.Jar.SetCookies(u, []*http.Cookie{{Name: "uptime_session", Value: "stale-garbage", Path: "/"}})
+	resp, body := e.post(t, c, "/reset", url.Values{"token": {linkToken(link)}, "password": {newSecretPW}, "confirm": {newSecretPW}})
+	if resp.StatusCode != 303 || cookieNamed(resp, "uptime_session") == nil {
+		t.Fatalf("reset: %d %s", resp.StatusCode, body)
+	}
+	if e.status(t, c) != 200 {
+		t.Fatal("fresh session does not work")
+	}
+}
+
+func TestResetPageShownToSignedIn(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	c, _ := e.account(t, "a@x.example")
+	e.forgot(t, "127.0.0.2", "a@x.example")
+	link := linkFrom(e.mail.all()[0].Body)
+	resp, body := e.get(t, c, linkPath(link))
+	if resp.StatusCode != 200 || !strings.Contains(body, `name="password"`) {
+		t.Fatalf("GET /reset signed in: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestForgotNoStore(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	if resp, _ := e.get(t, e.client(t), "/forgot"); resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET Cache-Control = %q", resp.Header.Get("Cache-Control"))
+	}
+	if resp, _ := e.forgotResp(t, "127.0.0.2", "a@x.example"); resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("POST Cache-Control = %q", resp.Header.Get("Cache-Control"))
 	}
 }
 

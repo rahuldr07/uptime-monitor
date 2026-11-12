@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -87,6 +88,7 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "reset", d)
 		return
 	}
+	ctx = context.WithoutCancel(ctx)
 	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
 	if err != nil {
 		s.fail(w, err)

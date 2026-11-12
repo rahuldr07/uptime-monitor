@@ -462,3 +462,4 @@ Full design:
   - `/verify` (GET and POST) and `/reset` (GET and POST) are `classPublic`: a signed-in user who opens an emailed link sees the page instead of being redirected to `/`. `/forgot` is `classGuest`.
   - `/forgot` answers 200 with the same body for every address (unknown, unverified, disabled or verified), and 404 when no system mail is configured. Unverified accounts get a reset link; completing the reset verifies the address.
   - A reset and a password change on `/account` each send a "Your password was changed" notice through `Mailer.Notice`.
+  - Accepted risk: `/forgot` and `/verify/resend` for an existing user write a token (through the serialised SQLite writer), so under heavy write load their timing can differ from unknown addresses. The responses are identical.
