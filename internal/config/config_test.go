@@ -358,3 +358,54 @@ func TestValidateNotifyRestricted(t *testing.T) {
 		}
 	}
 }
+
+func TestOAuthConfig(t *testing.T) {
+	const base = `"base_url":"https://status.example.com"`
+	for _, tc := range []struct {
+		name, in string
+		wantErr  string
+		google   bool
+		github   bool
+		nilBlock bool
+	}{
+		{"both", `{` + base + `,"oauth":{"google":{"client_id":"a","client_secret":"b"},"github":{"client_id":"c","client_secret":"d"}}}`, "", true, true, false},
+		{"absent", `{}`, "", false, false, true},
+		{"blank dropped, no base_url needed", `{"oauth":{"google":{"client_id":"","client_secret":""},"github":{}}}`, "", false, false, true},
+		{"one blank dropped", `{` + base + `,"oauth":{"google":{"client_id":"","client_secret":""},"github":{"client_id":"c","client_secret":"d"}}}`, "", false, true, false},
+		{"secret missing", `{` + base + `,"oauth":{"google":{"client_id":"a","client_secret":""}}}`, "oauth.google needs both", false, false, false},
+		{"id missing", `{` + base + `,"oauth":{"github":{"client_secret":"d"}}}`, "oauth.github needs both", false, false, false},
+		{"no base_url", `{"oauth":{"github":{"client_id":"c","client_secret":"d"}}}`, "https base_url", false, false, false},
+		{"http base_url", `{"base_url":"http://status.example.com","oauth":{"github":{"client_id":"c","client_secret":"d"}}}`, "https base_url", false, false, false},
+		{"loopback http ok", `{"base_url":"http://localhost:8080","oauth":{"github":{"client_id":"c","client_secret":"d"}}}`, "", false, true, false},
+		{"unknown provider", `{` + base + `,"oauth":{"gitlab":{"client_id":"c","client_secret":"d"}}}`, "unknown field", false, false, false},
+	} {
+		c, err := Parse([]byte(tc.in))
+		if tc.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if (c.OAuth == nil) != tc.nilBlock {
+			t.Errorf("%s: OAuth = %+v", tc.name, c.OAuth)
+		}
+		if c.OAuth != nil && ((c.OAuth.Google != nil) != tc.google || (c.OAuth.GitHub != nil) != tc.github) {
+			t.Errorf("%s: OAuth = %+v", tc.name, c.OAuth)
+		}
+	}
+}
+
+func TestOAuthUnsetEnvDropsProviders(t *testing.T) {
+	t.Setenv("OAUTH_TEST_ID", "")
+	t.Setenv("OAUTH_TEST_SECRET", "")
+	path := filepath.Join(t.TempDir(), "c.json")
+	os.WriteFile(path, []byte(`{"oauth":{"github":{"client_id":"${OAUTH_TEST_ID}","client_secret":"${OAUTH_TEST_SECRET}"}}}`), 0o600)
+	c, err := Load(path)
+	if err != nil || c.OAuth != nil {
+		t.Fatalf("OAuth = %+v, err = %v", c.OAuth, err)
+	}
+}

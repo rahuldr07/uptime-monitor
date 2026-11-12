@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,10 +108,33 @@ type Config struct {
 	Targets             []Target `json:"targets"`
 	Notify              Notify   `json:"notify"`
 
-	BaseURL string `json:"base_url"` // public origin for links; empty derives one from listen
-	Signup  string `json:"signup"`   // closed (default), invite or open (open needs mail)
-	Mail    *Mail  `json:"mail"`     // system email; nil means no system mail (links need base_url)
-	Limits  Limits `json:"limits"`
+	BaseURL string       `json:"base_url"` // public origin for links; empty derives one from listen
+	Signup  string       `json:"signup"`   // closed (default), invite or open (open needs mail)
+	Mail    *Mail        `json:"mail"`     // system email; nil means no system mail (links need base_url)
+	OAuth   *OAuthConfig `json:"oauth"`    // sign in with Google or GitHub; nil means neither
+	Limits  Limits       `json:"limits"`
+}
+
+// OAuthClient holds one provider's registered OAuth app credentials.
+type OAuthClient struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// OAuthConfig lists the enabled social sign-in providers. A nil field means
+// that provider is off.
+type OAuthConfig struct {
+	Google *OAuthClient `json:"google"`
+	GitHub *OAuthClient `json:"github"`
+}
+
+// UnmarshalJSON rejects unknown provider keys, so a typo like "githb" fails
+// startup instead of silently leaving sign-in off.
+func (o *OAuthConfig) UnmarshalJSON(b []byte) error {
+	type plain OAuthConfig
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode((*plain)(o))
 }
 
 // Limits caps what accounts may do. Pointer fields tell "not given" (default)
@@ -293,9 +317,12 @@ func (c *Config) applyDefaults() error {
 		if c.BaseURL == "" {
 			return fmt.Errorf("config: signup %q needs base_url", c.Signup)
 		}
-		if u, err := url.Parse(c.BaseURL); err != nil || (u.Scheme == "http" && !isLoopbackHost(u.Hostname())) {
+		if !secureBase(c.BaseURL) {
 			return fmt.Errorf("config: signup %q needs an https base_url (http is allowed only for localhost or a loopback address)", c.Signup)
 		}
+	}
+	if err := c.validateOAuth(); err != nil {
+		return err
 	}
 	if err := c.Limits.applyDefaults(); err != nil {
 		return err
@@ -328,6 +355,40 @@ func (c *Config) applyDefaults() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	return nil
+}
+
+// validateOAuth drops providers left blank by unset variables and checks the rest.
+func (c *Config) validateOAuth() error {
+	o := c.OAuth
+	if o == nil {
+		return nil
+	}
+	for name, p := range map[string]**OAuthClient{"google": &o.Google, "github": &o.GitHub} {
+		if *p == nil {
+			continue
+		}
+		id, secret := (*p).ClientID, (*p).ClientSecret
+		switch {
+		case id == "" && secret == "":
+			*p = nil
+		case id == "" || secret == "":
+			return fmt.Errorf("config: oauth.%s needs both client_id and client_secret", name)
+		}
+	}
+	if o.Google == nil && o.GitHub == nil {
+		c.OAuth = nil
+		return nil
+	}
+	if c.BaseURL == "" || !secureBase(c.BaseURL) {
+		return errors.New("config: oauth needs an https base_url (http is allowed only for localhost or a loopback address)")
+	}
+	return nil
+}
+
+// secureBase reports whether base is https, or http on a loopback host.
+func secureBase(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && (u.Scheme != "http" || isLoopbackHost(u.Hostname()))
 }
 
 // dropEmpty removes channels whose fields are all blank, which is what a
