@@ -41,7 +41,7 @@ New optional key:
   - any provider is configured while `base_url` is empty or not `https://`. Plain `http` is allowed only for localhost and loopback, as with invites;
   - an unknown provider key.
 - **Callback URLs:** `<base_url>/auth/google/callback` and `<base_url>/auth/github/callback`. The README lists them for registering the apps.
-- **Requested scopes:** Google `openid email`, GitHub `read:user user:email`.
+- **Requested scopes:** Google `openid email`, GitHub `user:email`. The GitHub `/user` endpoint returns the account `id` without extra scopes, and `/user/emails` needs `user:email`.
 
 ## 4. Data model (schema v3)
 
@@ -80,8 +80,7 @@ New optional key:
   - the value is the state, the verifier, the provider, the intent, the safe `next`, the invite token if any, the user ID for link/reauth, and an issue time;
   - it is signed with HMAC-SHA256 using a per-process key, like the device cookie, and base64url-encoded.
 - It redirects 303 to the provider's authorization URL with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge` and `code_challenge_method=S256`.
-- Google also gets `prompt=select_account`.
-- For `reauth`, Google also gets `prompt=consent select_account`, so the user goes through an interaction step. GitHub has no prompt or max_age.
+- Both providers get `prompt=select_account` (documented for Google and GitHub), so the account picker is shown. Neither provider documents a way to force a fresh login: Google doesn't document `max_age`, and GitHub has no such parameter.
 - **Limit, stated plainly:** the server doesn't read the ID token's `auth_time`, so reauth proves only that this browser holds a live session for the linked provider account, not that the user just typed a password. That is weaker than asking for a password, and it's accepted for social-only accounts (D-129).
 
 **Callback:** `GET /auth/{provider}/callback?code=…&state=…`
@@ -97,7 +96,8 @@ New optional key:
 - **Code exchange:** POST the token endpoint with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `client_secret` and `code_verifier`, with `Accept: application/json`. The access token stays in memory only.
 - **Fetching the identity:**
   - **Google:** `GET https://openidconnect.googleapis.com/v1/userinfo`. It needs `sub`, `email` and `email_verified == true`.
-  - **GitHub:** `GET https://api.github.com/user` for `id`, then `GET https://api.github.com/user/emails`, taking the entry with `primary && verified`.
+  - **GitHub:** `GET https://api.github.com/user` for `id`, then `GET https://api.github.com/user/emails?per_page=100`, taking the entry with `primary && verified`. Requests send `User-Agent` (required by GitHub), `Accept: application/vnd.github+json` and `X-GitHub-Api-Version`.
+  - **Token errors:** GitHub doesn't document the HTTP status of token errors (`bad_verification_code` and others), so a response body with an `error` field is a failure whatever the status.
   - Without a verified email the result is "Your Google account has no verified email address." or the GitHub equivalent, status 400.
   - The subject is the stable ID: Google `sub`, GitHub numeric `id` as a decimal string.
   - The email is normalized with the existing `NormalizeEmail`. If it fails to normalize, that is the same no-verified-email error.
