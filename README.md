@@ -30,6 +30,13 @@ build step for the frontend.
 - JSON API for scripting
 - State is restored on restart, so an ongoing incident is not re-alerted
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Overview, dark](docs/screenshots/overview-dark.png) | ![Monitor detail, light](docs/screenshots/monitor-light.png) |
+| ![Public status page](docs/screenshots/status-page-dark.png) | ![Operator panel](docs/screenshots/admin-users-dark.png) |
+
 ## Quick start
 
 ```bash
@@ -508,3 +515,12 @@ go vet ./...
 - The public status page is cached for 10 seconds for anonymous visitors and rebuilt by one request at a time while others get the previous copy (at most 2 rebuilds run at once, and each client address is limited to 120 requests per minute), so heavy or slow traffic cannot crowd out check recording or stall other visitors. The workspace owner always sees live data.
 - Passwords are hashed with argon2id, and failed sign-ins are rate limited per address and per email. Secrets are never logged, except the setup, reset and invite links, which are printed on purpose.
 - Email uses implicit TLS on port 465 and STARTTLS elsewhere, never sends credentials over an unencrypted connection, and gives up on a stalled server after 30 seconds. Alert channels are delivered in parallel, so one slow channel does not delay the others.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues as described in
+[SECURITY.md](SECURITY.md), not in a public issue.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
