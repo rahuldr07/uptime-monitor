@@ -919,6 +919,9 @@ func TestOAuthButtons(t *testing.T) {
 	if strings.Contains(body, "Continue with") || strings.Contains(body, "/auth/") {
 		t.Errorf("buttons without providers: %s", body)
 	}
+	if strings.Contains(body, `class="oauth-logo"`) {
+		t.Errorf("logo without providers: %s", body)
+	}
 
 	o := newOEnv(t, `{"signup":"open"}`)
 	c = o.client(t)
@@ -926,6 +929,9 @@ func TestOAuthButtons(t *testing.T) {
 	if !has(body, "google") || !has(body, "github") || !strings.Contains(body, "Continue with Google") ||
 		!strings.Contains(body, "Continue with GitHub") || !strings.Contains(body, "next=%2Ftargets") {
 		t.Errorf("login buttons: %s", body)
+	}
+	if !strings.Contains(body, `class="oauth-logo"`) {
+		t.Errorf("login buttons lack logos: %s", body)
 	}
 	_, body = o.get(t, c, "/signup")
 	if !has(body, "google") || !has(body, "github") || !strings.Contains(body, "Continue with Google") {

@@ -10,4 +10,4 @@ The notice travels with every build: the binary serves it at `/static/licenses.t
 
 ## Google and GitHub logos
 
-The Google "G" and GitHub Invertocat logos on the sign-in and sign-up buttons (`internal/web/templates/partials.html`) are trademarks of their owners. They are used only to identify the sign-in providers, following their brand guidelines, and are not covered by the project's MIT licence.
+The Google "G" and GitHub Invertocat logos on the sign-in and sign-up buttons (`internal/web/templates/partials.html`) are trademarks of their owners. They are used only to identify the sign-in providers, and are not covered by the project's MIT licence.

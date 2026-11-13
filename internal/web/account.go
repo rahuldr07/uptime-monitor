@@ -77,8 +77,8 @@ func (s *Server) reauthState(a *authCtx, ids []store.Identity, next string) (boo
 	var links []oauthLink
 	for _, i := range ids {
 		if s.oauth[i.Provider] != nil {
-			links = append(links, oauthLink{providerLabel(i.Provider), "/auth/" + i.Provider + "/start?" +
-				url.Values{"intent": {"reauth"}, "next": {next}}.Encode(), i.Provider})
+			links = append(links, oauthLink{Label: providerLabel(i.Provider), Name: i.Provider, Href: "/auth/" + i.Provider + "/start?" +
+				url.Values{"intent": {"reauth"}, "next": {next}}.Encode()})
 		}
 	}
 	return true, links

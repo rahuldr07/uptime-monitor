@@ -129,7 +129,7 @@ func (s *Server) oauthLinks(next, invite string) []oauthLink {
 		if invite != "" {
 			q.Set("invite", invite)
 		}
-		out = append(out, oauthLink{p.Label(), "/auth/" + p.Name() + "/start?" + q.Encode(), p.Name()})
+		out = append(out, oauthLink{Label: p.Label(), Href: "/auth/" + p.Name() + "/start?" + q.Encode(), Name: p.Name()})
 	}
 	return out
 }
