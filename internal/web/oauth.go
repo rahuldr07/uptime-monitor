@@ -115,7 +115,7 @@ func (s *Server) useOAuthState(state string) bool {
 }
 
 // oauthLink is a sign-in button on the login or sign-up page.
-type oauthLink struct{ Label, Href string }
+type oauthLink struct{ Label, Href, Name string }
 
 // oauthLinks lists a start link per enabled provider. next and invite are
 // carried when set.
@@ -129,7 +129,7 @@ func (s *Server) oauthLinks(next, invite string) []oauthLink {
 		if invite != "" {
 			q.Set("invite", invite)
 		}
-		out = append(out, oauthLink{p.Label(), "/auth/" + p.Name() + "/start?" + q.Encode()})
+		out = append(out, oauthLink{p.Label(), "/auth/" + p.Name() + "/start?" + q.Encode(), p.Name()})
 	}
 	return out
 }

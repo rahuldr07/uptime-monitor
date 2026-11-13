@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-11-13
+
+### Changed
+
+- Sign-in and sign-up buttons show the Google and GitHub logos.
+
 ## [1.2.0] - 2026-11-12
 
 ### Added
