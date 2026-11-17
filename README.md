@@ -382,7 +382,7 @@ reported one; or pick a zone from the list. Which zone shows where:
 | System email (sign-in method notices) | the recipient's zone, with its abbreviation |
 | Alert email, own SMTP or the server's fallback | the workspace owner's zone, with its abbreviation |
 | 90-day daily uptime bars | UTC days (that is how rollups are stored), labelled as such |
-| JSON API, webhook payloads, logs | UTC (RFC 3339), always |
+| JSON API, logs | UTC (RFC 3339), always |
 
 The maintenance form reads its start time in the viewer's zone. Telegram and
 Slack messages carry no absolute time. Zones are built in, so no system tz

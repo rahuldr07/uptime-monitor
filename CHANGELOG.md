@@ -16,7 +16,7 @@ All notable changes to this project are documented here. The format follows
 - The public status page shows times in the workspace owner's zone with its abbreviation. The 90-day daily bars keep UTC days and say so.
 - System email (sign-in method notices) uses the recipient's zone, and alert emails the workspace owner's, written as "2026-11-17 16:30 IST" instead of RFC 3339 UTC.
 - The hourly availability cells are labelled with their start time in the viewer's zone (a UTC hour starts at :30 in some zones).
-- The JSON API, webhook payloads and logs stay in UTC.
+- The JSON API and logs stay in UTC.
 - Upgrading: until a user's browser has reported its zone, times show in UTC, which is what a Docker install already showed.
 
 ## [1.4.0] - 2026-11-17
