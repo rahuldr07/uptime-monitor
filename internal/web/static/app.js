@@ -1217,7 +1217,7 @@
     if (reduced()) return;
     $$('.dt[data-table] tr[data-id][data-k]', root).forEach(function (r) {
       var k = before[r.closest('.dt').getAttribute('data-table') + ':' + r.getAttribute('data-id')];
-      if (k !== undefined && k !== r.getAttribute('data-k')) r.classList.add('flash');
+      if (k !== undefined && k !== r.getAttribute('data-k')) r.classList.add('row-flash');
     });
   }
   window.refresh = function () {
@@ -1267,7 +1267,10 @@
     if (now - lastBeat < 60000) return;
     lastBeat = now; d.classList.add('beat');
   }
-  document.addEventListener('animationend', function (e) { if (e.target.classList && e.target.classList.contains('live')) e.target.classList.remove('beat'); });
+  document.addEventListener('animationend', function (e) {
+    if (e.target.classList && e.target.classList.contains('live')) e.target.classList.remove('beat');
+    if (e.animationName === 'row-flash') { var tr = e.target.closest('tr'); if (tr) tr.classList.remove('row-flash'); }
+  });
   // Infinite animations (the Check spinner) stop while the tab is hidden.
   function syncPaused() { document.documentElement.classList.toggle('paused', document.hidden); }
   document.addEventListener('visibilitychange', syncPaused); syncPaused();
