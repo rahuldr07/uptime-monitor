@@ -2,7 +2,7 @@
 <div class="login">
   <div class="card">
     {{template "auth-error" .}}
-    <h1>Reset password</h1>
+    <h1>{{if .Choose}}Choose a password{{else}}Reset password{{end}}</h1>
     {{if .Token}}
     <form method="post" action="/reset">
       <input type="hidden" name="token" value="{{.Token}}">

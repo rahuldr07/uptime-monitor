@@ -26,8 +26,10 @@ func (o *oenv) socialClient(t *testing.T, email, provider, subject string) (*htt
 
 var newPW = url.Values{"new": {testSecret}, "confirm": {testSecret}}
 
+// Without mail there is no emailed link, so a first password is set in place after a recent sign-in.
 func TestSetFirstPasswordRecentAuth(t *testing.T) {
 	o := newOEnv(t, `{}`, "google")
+	o.srv.mail = nil
 	c, u := o.socialClient(t, "person@example.com", "google", "12345")
 
 	// The page offers "Set a password" and no current-password prompts.
@@ -370,7 +372,7 @@ func TestLinkNeedsRecentAuthSocialOnly(t *testing.T) {
 	}
 	_, body := o.get(t, c, "/settings/security")
 	if strings.Contains(body, `/auth/github/start?intent=link`) || strings.Contains(body, "/connect") ||
-		strings.Count(body, "To set a password or change your sign-in methods, sign in again with Google first.") != 1 {
+		strings.Count(body, "To change your sign-in methods, sign in again with Google first.") != 1 {
 		t.Errorf("account page outside window: %s", body)
 	}
 	if ids, _ := o.st.Identities(t.Context(), u.ID); len(ids) != 1 {

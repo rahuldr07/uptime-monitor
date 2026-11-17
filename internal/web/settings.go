@@ -28,6 +28,7 @@ type settingsData struct {
 	Section     string
 	CanDelete   bool // operators cannot delete their account here
 	HasPassword bool
+	MailOn      bool // the server can email links: a first password is set through one
 	Providers   []accountProvider
 	SignInLabel string      // the connected providers, for "You sign in with …"
 	SoleMethod  bool        // the only way to sign in is one provider: it cannot be disconnected
@@ -51,7 +52,7 @@ func (s *Server) settingsView(r *http.Request, a *authCtx, section string) (sett
 		return settingsData{}, err
 	}
 	d := s.settingsBase(r, a, section)
-	d.HasPassword = a.HasPassword
+	d.HasPassword, d.MailOn = a.HasPassword, s.mail != nil
 	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(store.CanonicalZone(a.User.Location().String()), d.Now)
 	d.Recent = s.recentAuth(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/settings/"+section)

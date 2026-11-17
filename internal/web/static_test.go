@@ -36,6 +36,7 @@ var sysAllowed = map[string][]string{
 	"oauth.go|(*oauthReq).reauth":                 {"MarkReauth"},
 	"account.go|(*Server).accountPassword":        {"SetPassword", "SetFirstPassword"},
 	"account.go|(*Server).accountSignOutAll":      {"DeleteUserSessions"},
+	"account.go|(*Server).accountPasswordLink":    {"CreateToken"},
 	"timezone.go|(*Server).accountTimeZone":       {"SetTimeZone"},
 	"timezone.go|(*Server).accountDetectedZone":   {"SetDetectedZone"},
 	"timezone.go|(*Server).resetOwnedStatus":      {"OwnedWorkspaceIDs"},
@@ -45,8 +46,9 @@ var sysAllowed = map[string][]string{
 	"account.go|(*Server).myIdentities":           {"Identities"},
 	"account.go|(*Server).accountIdentityDelete":  {"UnlinkIdentity"},
 	"admin.go|(*Server).adminUsersView":           {"ListUsers", "IdentityProviders"},
-	"reset.go|(*Server).resetPage":                {"PeekToken"},
+	"reset.go|(*Server).resetPage":                {"PeekToken", "HasPassword"},
 	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword", "CreateSession"},
+	"reset.go|(*Server).chooseWording":            {"PeekToken", "HasPassword"},
 	"targets.go|(*Server).hostRateErr":            {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
 	"admin.go|(*Server).adminTarget":              {"UserByID"},
 	"admin.go|(*Server).adminDisable":             {"SetUserDisabled"},
@@ -144,7 +146,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 80
+	const want = 81
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

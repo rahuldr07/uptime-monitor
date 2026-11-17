@@ -3,10 +3,13 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rahuldr07/uptime-monitor/internal/password"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
@@ -19,6 +22,12 @@ const (
 	msgSignedOutAll    = "Signed out everywhere."
 	msgLastOperator    = "The last operator can't delete their account."
 	msgAccountDeleted  = "Your account was deleted."
+
+	msgPwLinkSent     = "We sent a link to %s. It works for 1 hour."
+	msgPwLinkTooMany  = "A link was sent recently. Check your inbox or try again later."
+	msgPwLinkFailed   = "We couldn't send the email. Try again later."
+	msgPwLinkUseEmail = "To set a password, use Set a password to get a link by email."
+	pwLinkPerHour     = 3
 
 	passwordCheckWindow = 15 * time.Minute
 	passwordCheckMax    = 5
@@ -76,6 +85,12 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		d.Error = msg
 		s.renderStatus(w, r, code, "settings", d)
 	}
+	// With mail, the first password is chosen through the emailed link: the
+	// inbox, not a recent Google or GitHub sign-in, is the proof.
+	if !a.HasPassword && s.mail != nil {
+		fail(http.StatusConflict, msgPwLinkUseEmail)
+		return
+	}
 	cur, pw := r.FormValue("current"), r.FormValue("new")
 	if err := password.CheckLength(pw); err != nil {
 		fail(http.StatusUnprocessableEntity, err.Error())
@@ -114,6 +129,67 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 	s.logger.Info("password changed", "event", "password_changed", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	s.noticePasswordChanged(a.User.Email)
 	redirect(w, r, "/settings/security", msgPasswordChanged)
+}
+
+// accountPasswordLink emails the account address a reset link worded for
+// choosing a first password. It is the same token and page as /forgot; the
+// token is created inside compose so a dropped message never replaces a link.
+func (s *Server) accountPasswordLink(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	if s.mail == nil {
+		s.notFound(w, r)
+		return
+	}
+	d, err := s.settingsView(r, a, secSecurity)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if a.HasPassword {
+		d.Error = "This account already has a password. Reload the page."
+		s.renderStatus(w, r, http.StatusConflict, "settings", d)
+		return
+	}
+	if ok, _ := s.pwLinkByUser.Take(strconv.FormatInt(a.User.ID, 10)); !ok {
+		redirect(w, r, "/settings/security", msgPwLinkTooMany)
+		return
+	}
+	if ok, _ := s.mailByAddr.Take(clientKey(r, s.cfg.ProxyHops())); !ok {
+		s.logger.Warn("set-password link throttled", "event", "mail_throttled", "ip", clientIP(r, s.cfg.ProxyHops()))
+		redirect(w, r, "/settings/security", msgPwLinkTooMany)
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	if err := s.mail.Send(a.User.Email, func() (string, string, error) {
+		raw, err := s.sys.CreateToken(ctx, store.TokenReset, a.User.ID, resetTTL, s.now())
+		if err != nil {
+			return "", "", err
+		}
+		subject, body := setPasswordMail(s.cfg.BaseURL + "/reset?token=" + raw)
+		return subject, body, nil
+	}); err != nil {
+		s.logger.Error("set password: cannot send link", "err", err, "user_id", a.User.ID)
+		d.Error = msgPwLinkFailed
+		s.renderStatus(w, r, http.StatusBadGateway, "settings", d)
+		return
+	}
+	s.logger.Info("set-password link sent", "event", "password_link_sent", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
+	redirect(w, r, "/settings/security", fmt.Sprintf(msgPwLinkSent, maskEmail(a.User.Email)))
+}
+
+// maskEmail shows enough of an address to recognise it: the first letter of
+// the local part and the whole domain. A one-letter local part is hidden
+// completely, and anything that is not an address becomes "your email".
+func maskEmail(addr string) string {
+	at := strings.LastIndexByte(addr, '@')
+	if at < 1 || at == len(addr)-1 {
+		return "your email"
+	}
+	local, domain := addr[:at], addr[at:]
+	if utf8.RuneCountInString(local) == 1 {
+		return "…" + domain
+	}
+	first, _ := utf8.DecodeRuneInString(local)
+	return string(first) + "…" + domain
 }
 
 func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *authCtx) {

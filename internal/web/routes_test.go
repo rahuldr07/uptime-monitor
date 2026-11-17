@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 80 {
-		t.Errorf("len = %d, want 80", len(routes))
+	if len(routes) != 81 {
+		t.Errorf("len = %d, want 81", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -50,7 +50,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 		classSetup:  {"GET /setup", "POST /setup"},
 		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /forgot", "POST /forgot"},
 		classUser: {"POST /logout", "GET /settings", "GET /settings/profile", "POST /settings/profile/timezone", "POST /settings/tz-detected", "GET /settings/security",
-			"POST /settings/security/password", "POST /settings/security/signout-all", "POST /settings/security/identities/{provider}/delete", "POST /settings/security/identities/{provider}/connect",
+			"POST /settings/security/password", "POST /settings/security/password-link", "POST /settings/security/signout-all", "POST /settings/security/identities/{provider}/delete", "POST /settings/security/identities/{provider}/connect",
 			"GET /settings/danger", "POST /settings/danger/delete",
 			"GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete", "POST /account/identities/{provider}/delete", "POST /account/identities/{provider}/connect", "POST /account/timezone", "POST /account/tz-detected"},
 		classOperator: {"GET /admin", "GET /admin/users", "GET /admin/users/{id}/delete", "POST /admin/users/{id}/disable",

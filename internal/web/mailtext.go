@@ -25,6 +25,11 @@ func resetMail(link string) (subject, body string) {
 		fmt.Sprintf("Open this link to choose a new password. It is valid for 1 hour.\n\n%s\n\nIf you did not ask for this, ignore this email.\n", link)
 }
 
+func setPasswordMail(link string) (subject, body string) {
+	return "Set a password for your Uptime account",
+		fmt.Sprintf("Open this link to choose a password for your account. It is valid for 1 hour.\n\n%s\n\nIf you did not ask for this, ignore this email.\n", link)
+}
+
 func passwordChangedMail(base string) (subject, body string) {
 	return "Your password was changed",
 		fmt.Sprintf("The password for your account was just changed. If this was not you, reset it now:\n\n%s/forgot\n", base)

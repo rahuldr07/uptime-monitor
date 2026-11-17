@@ -21,7 +21,7 @@
 {{else if eq .Section "security"}}
 <div class="card block" id="methods">
   <h2>Sign-in methods</h2>
-  {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "set a password or change your sign-in methods"}}{{end}}
+  {{if .NeedReauth}}{{$what := "set a password or change your sign-in methods"}}{{if .MailOn}}{{$what = "change your sign-in methods"}}{{end}}{{template "reauth-notice" dict "Links" .Reauth "What" $what}}{{end}}
   <h3 style="margin:14px 0 0;font-size:13px">Password</h3>
   {{if .HasPassword}}
   <form method="post" action="/settings/security/password" style="max-width:360px;margin-top:10px">
@@ -31,11 +31,17 @@
     <div style="margin-top:14px"><button type="submit" class="primary">Change password</button></div>
     <p class="muted small" style="margin-top:8px">Your other sessions are signed out.</p>
   </form>
+  {{else if .MailOn}}
+  <form method="post" action="/settings/security/password-link" style="max-width:480px;margin-top:10px">
+    <p class="muted small" style="margin:0 0 10px">You sign in with {{.SignInLabel}} and have no password. Set one to also sign in with your email. We email a link to {{.UserEmail}} to confirm it's you.</p>
+    <button type="submit" class="primary">Set a password</button>
+    <p class="muted small" style="margin-top:8px">The link works for 1 hour. Your other sessions are signed out when you choose the password.</p>
+  </form>
   {{else if .NeedReauth}}
   <p class="muted small" style="margin:6px 0 0">You sign in with {{.SignInLabel}} and have no password yet.</p>
   {{else}}
   <form method="post" action="/settings/security/password" style="max-width:360px;margin-top:10px">
-    <p class="muted small" style="margin:0 0 10px">You sign in with {{.SignInLabel}} and have no password yet. Set one to also sign in with your email.</p>
+    <p class="muted small" style="margin:0 0 10px">You sign in with {{.SignInLabel}} and have no password yet. Set one to also sign in with your email. This server can't send email, so a recent {{.SignInLabel}} sign-in confirms it's you instead.</p>
     <div class="field"><label for="acc-new">New password</label><input id="acc-new" name="new" type="password" required minlength="10" autocomplete="new-password"></div>
     <div class="field"><label for="acc-confirm">Confirm new password</label><input id="acc-confirm" name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
     <div style="margin-top:14px"><button type="submit" class="primary">Set a password</button></div>

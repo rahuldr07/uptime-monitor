@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
 func TestSettingsRedirectsToProfile(t *testing.T) {
@@ -214,4 +216,170 @@ func TestMainNavHasNoAlertChannels(t *testing.T) {
 	if !strings.Contains(body, `href="/settings/notifications"`) {
 		t.Error("overview onboarding no longer links to the channels")
 	}
+}
+
+const setPwLink = "/settings/security/password-link"
+
+func TestSetPasswordLinkSends(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	c, u := o.socialClient(t, "sam@example.com", "google", "12345")
+	before := len(o.mail.all())
+	resp, _ := o.post(t, c, setPwLink, nil)
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != "We sent a link to s…@example.com. It works for 1 hour." {
+		t.Fatalf("POST: %d %s %q", resp.StatusCode, p, m)
+	}
+	sent := o.mail.all()[before:]
+	if len(sent) != 1 || sent[0].To != "sam@example.com" || sent[0].Subject != "Set a password for your Uptime account" || !strings.Contains(sent[0].Body, "/reset?token=") {
+		t.Fatalf("mail = %+v", sent)
+	}
+	tok, err := o.st.PeekToken(t.Context(), store.TokenReset, linkToken(linkFrom(sent[0].Body)), o.now())
+	if err != nil || tok.UserID != u.ID {
+		t.Fatalf("token: %+v %v", tok, err)
+	}
+}
+
+func TestSetPasswordLinkLimit(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	c, _ := o.socialClient(t, "sam@example.com", "google", "12345")
+	before := len(o.mail.all())
+	for i := 0; i < 3; i++ {
+		if resp, _ := o.post(t, c, setPwLink, nil); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("POST %d: %d", i, resp.StatusCode)
+		}
+	}
+	resp, _ := o.post(t, c, setPwLink, nil)
+	if _, m := flashOf(t, resp); m != msgPwLinkTooMany {
+		t.Errorf("4th POST: %d %q", resp.StatusCode, m)
+	}
+	if n := len(o.mail.all()) - before; n != 3 {
+		t.Errorf("%d messages sent, want 3", n)
+	}
+	// An hour later the budget is back.
+	o.advance(time.Hour + time.Second)
+	if _, m := flashOf(t, mustPost(t, o, c, setPwLink)); strings.Contains(m, "recently") {
+		t.Errorf("after an hour: %q", m)
+	}
+}
+
+func TestSetPasswordLinkOnlyWithoutPassword(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	c, _ := o.account(t, "pw@example.com")
+	before := len(o.mail.all())
+	resp, _ := o.post(t, c, setPwLink, nil)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("status %d, want 409", resp.StatusCode)
+	}
+	if n := len(o.mail.all()) - before; n != 0 {
+		t.Errorf("%d messages sent", n)
+	}
+}
+
+func TestSetPasswordCardWithMail(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	c, _ := o.socialClient(t, "sam@example.com", "google", "12345")
+	_, body := o.get(t, c, "/settings/security")
+	if !strings.Contains(body, `action="/settings/security/password-link"`) || !strings.Contains(body, "Set a password</button>") ||
+		strings.Contains(body, `name="new"`) {
+		t.Errorf("with mail: %s", body)
+	}
+	// The in-place form is gone, so its POST no longer sets a first password either.
+	if resp, _ := o.post(t, c, "/settings/security/password", newPW); resp.StatusCode == http.StatusSeeOther {
+		t.Error("first password set in place on an install with mail")
+	}
+}
+
+func TestSetPasswordNoMailFallback(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	o.srv.mail = nil
+	c, u := o.socialClient(t, "sam@example.com", "google", "12345")
+	_, body := o.get(t, c, "/settings/security")
+	if strings.Contains(body, "password-link") || !strings.Contains(body, `name="new"`) || !strings.Contains(body, "Set a password</button>") {
+		t.Errorf("without mail: %s", body)
+	}
+	if resp, _ := o.post(t, c, setPwLink, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("password-link without mail: %d", resp.StatusCode)
+	}
+	// Outside the recent sign-in window the form is replaced by the re-sign-in rule.
+	o.advance(recentAuthWindow + time.Second)
+	if resp, _ := o.post(t, c, "/settings/security/password", newPW); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("outside window: %d", resp.StatusCode)
+	}
+	if r, _ := o.run(t, c, "google", "intent=reauth&next=%2Fsettings%2Fsecurity"); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("reauth: %d", r.StatusCode)
+	}
+	resp, _ := o.post(t, c, "/settings/security/password", newPW)
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != msgPasswordChanged {
+		t.Fatalf("set: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if has, _ := o.st.HasPassword(t.Context(), u.ID); !has {
+		t.Fatal("password not set")
+	}
+}
+
+func TestResetWordingFollowsCurrentState(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	c, u := o.socialClient(t, "sam@example.com", "google", "12345")
+	o.post(t, c, setPwLink, nil)
+	sent := o.mail.all()
+	link := linkFrom(sent[len(sent)-1].Body)
+	_, body := o.get(t, o.client(t), linkPath(link))
+	if !strings.Contains(body, "Choose a password") || strings.Contains(body, "Reset password") {
+		t.Errorf("no password yet: %s", body)
+	}
+	// A failed submit keeps the wording.
+	if resp, body := o.post(t, o.client(t), "/reset", url.Values{"token": {linkToken(link)}, "password": {"short"}, "confirm": {"short"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Choose a password") {
+		t.Errorf("failed submit: %d %s", resp.StatusCode, body)
+	}
+	if code, b := o.resetWith(t, link, newSecretPW); code != http.StatusSeeOther {
+		t.Fatalf("set: %d %s", code, b)
+	}
+	if has, _ := o.st.HasPassword(t.Context(), u.ID); !has {
+		t.Fatal("password not set")
+	}
+	// Any later link (Forgot password) reads as a reset, and works.
+	raw, err := o.st.CreateToken(t.Context(), store.TokenReset, u.ID, resetTTL, o.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body = o.get(t, o.client(t), "/reset?token="+raw)
+	if !strings.Contains(body, "Reset password") || strings.Contains(body, "Choose a password") {
+		t.Errorf("has password: %s", body)
+	}
+	if code, b := o.resetWith(t, "x?token="+raw, testSecret); code != http.StatusSeeOther {
+		t.Fatalf("reset: %d %s", code, b)
+	}
+	if r, _ := o.post(t, o.client(t), "/login", url.Values{"email": {"sam@example.com"}, "password": {testSecret}}); r.StatusCode != http.StatusSeeOther {
+		t.Errorf("sign-in with the new password: %d", r.StatusCode)
+	}
+}
+
+func TestMaskEmail(t *testing.T) {
+	for in, want := range map[string]string{
+		"sam@example.com": "s…@example.com",
+		"a@x.com":         "…@x.com",
+		"ab@x.com":        "a…@x.com",
+		"bad":             "your email",
+		"":                "your email",
+		"@x.com":          "your email",
+		"a@":              "your email",
+		"é@x.com":         "…@x.com",
+		"éa@x.com":        "é…@x.com",
+	} {
+		if got := maskEmail(in); got != want {
+			t.Errorf("maskEmail(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSetPasswordMail(t *testing.T) {
+	subject, body := setPasswordMail("https://up.example/reset?token=abc")
+	if subject != "Set a password for your Uptime account" || !strings.Contains(body, "https://up.example/reset?token=abc") || !strings.Contains(body, "1 hour") {
+		t.Errorf("%q %q", subject, body)
+	}
+}
+
+func mustPost(t *testing.T, o *oenv, c *http.Client, path string) *http.Response {
+	t.Helper()
+	resp, _ := o.post(t, c, path, nil)
+	return resp
 }

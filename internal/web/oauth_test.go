@@ -894,7 +894,6 @@ func TestOAuthSocialOnlyAccount(t *testing.T) {
 	}{
 		{"/settings/danger/delete", url.Values{"current": {"x"}}},
 		{"/settings/danger/delete", url.Values{"current": {""}}},
-		{"/settings/security/password", url.Values{"current": {""}, "new": {testSecret}, "confirm": {testSecret}}},
 	} {
 		resp, body := o.post(t, c, p.path, p.form)
 		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Sign in again to continue") {

@@ -77,6 +77,7 @@ type Server struct {
 	testURL       *ratelimit.Limiter // Test URL, per workspace
 	alertTest     *ratelimit.Limiter // alert test sends, per workspace
 	tzDetect      *ratelimit.Limiter // browser time zone reports, per user
+	pwLinkByUser  *ratelimit.Limiter // "Set a password" emails, per user
 	pages         map[string]*template.Template
 	mux           http.Handler
 
@@ -172,7 +173,8 @@ func New(o Options) (*Server, error) {
 	s.testURL = ratelimit.New(time.Minute, 10, 0)
 	s.alertTest = ratelimit.New(time.Minute, 5, 0)
 	s.tzDetect = ratelimit.New(time.Minute, 10, 0)
-	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest, s.tzDetect} {
+	s.pwLinkByUser = ratelimit.New(time.Hour, pwLinkPerHour, 0)
+	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest, s.tzDetect, s.pwLinkByUser} {
 		l.Now = now
 	}
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)

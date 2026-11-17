@@ -76,6 +76,7 @@ func (s *Server) routeTable() []route {
 		{"POST", "/settings/tz-detected", classUser, nil, s.accountDetectedZone},
 		{"GET", "/settings/security", classUser, nil, s.settingsPage(secSecurity)},
 		{"POST", "/settings/security/password", classUser, nil, s.accountPassword},
+		{"POST", "/settings/security/password-link", classUser, nil, s.accountPasswordLink},
 		{"POST", "/settings/security/signout-all", classUser, nil, s.accountSignOutAll},
 		{"POST", "/settings/security/identities/{provider}/connect", classUser, nil, s.accountIdentityConnect},
 		{"POST", "/settings/security/identities/{provider}/delete", classUser, nil, s.accountIdentityDelete},

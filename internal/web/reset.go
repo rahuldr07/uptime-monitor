@@ -16,7 +16,20 @@ const (
 
 type resetData struct {
 	base
-	Token string // set only when the token is valid, which shows the form
+	Token  string // set only when the token is valid, which shows the form
+	Choose bool   // the account has no password yet: worded "Choose a password"
+}
+
+// chooseWording says whether the token's account still has no password. The
+// link is the same either way, so the wording follows the account's state now,
+// not the state when the link was sent. Anything unknown reads as a reset.
+func (s *Server) chooseWording(ctx context.Context, tok string) bool {
+	t, err := s.sys.PeekToken(ctx, store.TokenReset, tok, s.now())
+	if err != nil {
+		return false
+	}
+	has, err := s.sys.HasPassword(ctx, t.UserID)
+	return err == nil && !has
 }
 
 // resetPage only looks at the token: link scanners and prefetching must not
@@ -25,8 +38,16 @@ func (s *Server) resetPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	d := resetData{base: s.page(r, "Reset password")}
 	tok := r.URL.Query().Get("token")
-	if _, err := s.sys.PeekToken(r.Context(), store.TokenReset, tok, s.now()); err == nil {
+	if t, err := s.sys.PeekToken(r.Context(), store.TokenReset, tok, s.now()); err == nil {
 		d.Token = tok
+		has, err := s.sys.HasPassword(r.Context(), t.UserID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if !has {
+			d.Choose, d.Title = true, "Choose a password"
+		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)
 		return
@@ -43,6 +64,9 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 	d := resetData{base: s.page(r, "Reset password"), Token: tok}
 	fail := func(code int, msg string) {
 		d.Error = msg
+		if d.Choose = s.chooseWording(ctx, tok); d.Choose {
+			d.Title = "Choose a password"
+		}
 		s.renderStatus(w, r, code, "reset", d)
 	}
 	// Input checks come first, so a bad form never reaches the token lookup.
