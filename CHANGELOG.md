@@ -17,6 +17,10 @@ All notable changes to this project are documented here. The format follows
 - System email (sign-in method notices) uses the recipient's zone, and alert emails the workspace owner's, written as "2026-11-17 16:30 IST" instead of RFC 3339 UTC.
 - The hourly availability cells are labelled with their start time in the viewer's zone (a UTC hour starts at :30 in some zones).
 - The JSON API and logs stay in UTC.
+- Scroll bars are thin and follow the light or dark theme. The page no longer scrolls sideways at any width (320 px and up): long monitor names, URLs, error messages, maintenance titles and status page titles wrap or truncate inside their own boxes, and tables scroll sideways only inside their own frame.
+- Behind an open slide-over or dialog the page no longer scrolls, and scrolling inside them or inside a menu no longer scrolls the page. Dialogs taller than the screen scroll inside themselves.
+- Narrow screens: the navigation wraps instead of scrolling, buttons, fields, tabs, pager buttons and menu rows are at least 40 px tall on phones and touch devices, form fields use 16 px text there (no zoom on focus), and menu option labels are cut with an ellipsis instead of widening the menu. A menu with a filter stays above the on-screen keyboard.
+- On very wide screens the content column is centred next to the sidebar. Truncated monitor URLs and error text show the full value as a tooltip.
 - Upgrading: until a user's browser has reported its zone, times show in UTC, which is what a Docker install already showed.
 
 ## [1.4.0] - 2026-11-17
