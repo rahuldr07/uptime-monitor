@@ -19,6 +19,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/notify"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -1343,5 +1344,79 @@ func TestDisabledStaysStoppedAfterRestart(t *testing.T) {
 	}
 	if got := m2.Snapshot(ws); len(got) != 0 {
 		t.Fatalf("disabled workspace has %d tracked targets", len(got))
+	}
+}
+
+// flakySender fails its first fail sends and records every attempt.
+type flakySender struct {
+	mu    sync.Mutex
+	fail  int
+	calls [][]string
+}
+
+func (s *flakySender) Send(_ context.Context, to []string, _, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, to)
+	if s.fail > 0 {
+		s.fail--
+		return errors.New("smtp down")
+	}
+	return nil
+}
+
+func (s *flakySender) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
+
+// serverEmailFixture routes the fixture's alerts through the fallback email.
+func serverEmailFixture(t *testing.T, fail int) (*fixture, *mail.Queue, *flakySender) {
+	t.Helper()
+	f := setup(t, 1)
+	f.mon.states[f.target.ID] = &state{State: State{Target: f.target}}
+	snd := &flakySender{fail: fail}
+	q := mail.New(mail.Options{Sender: snd, PerHour: 100, Now: f.now})
+	f.mon.SetNotifiers(1, notify.Multi{{Name: notify.ServerEmailName, Notifier: notify.ServerEmail{Workspace: 1, Mail: q,
+		Recipients: func(context.Context) ([]string, error) { return []string{"owner@example.com"}, nil }}}})
+	return f, q, snd
+}
+
+func TestServerEmailChargedOncePerAlertAcrossRetries(t *testing.T) {
+	f, q, snd := serverEmailFixture(t, 2) // two failed attempts, then delivered
+	atomic.StoreInt32(&f.status, 500)
+	f.tick(t)
+	if snd.count() != 3 {
+		t.Fatalf("attempts = %d, want 3", snd.count())
+	}
+	last, _ := f.st.Workspace(1).LastAlerts(context.Background())
+	if a := last[notify.ServerEmailName]; !a.OK {
+		t.Fatalf("alert not recorded as delivered: %+v", a)
+	}
+	// One alert used one of the 10 hourly slots, not three.
+	for i := 0; i < 9; i++ {
+		if r := q.Admit(1); r != "" {
+			t.Fatalf("admit %d refused (%s): the retries were charged", i+2, r)
+		}
+	}
+	if r := q.Admit(1); r != "workspace_hour" {
+		t.Fatalf("10 alerts should spend the hour budget, got %q", r)
+	}
+}
+
+func TestServerEmailOverBudgetRecordsLimitReached(t *testing.T) {
+	f, q, snd := serverEmailFixture(t, 0)
+	for i := 0; i < 10; i++ {
+		q.Admit(1)
+	}
+	atomic.StoreInt32(&f.status, 500)
+	f.tick(t)
+	if snd.count() != 0 {
+		t.Fatalf("a dropped alert was sent %d times", snd.count())
+	}
+	last, _ := f.st.Workspace(1).LastAlerts(context.Background())
+	if a := last[notify.ServerEmailName]; a.OK || a.Error != "Limit reached" {
+		t.Fatalf("status = %+v, want a failed alert reading Limit reached", a)
 	}
 }

@@ -1566,3 +1566,37 @@ func slugRows(t *testing.T, s *Store, slug string) int {
 	}
 	return n
 }
+
+func TestMemberEmailsOnlyVerifiedActive(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	_, ws, err := s.CreateAccount(ctx, AccountInput{Email: "owner@x.co", PasswordHash: "x", WorkspaceName: "A", Slug: "alpha", Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(email string, verified bool) User {
+		u, _, err := s.CreateAccount(ctx, AccountInput{Email: email, PasswordHash: "x", WorkspaceName: email, Slug: strings.Split(email, "@")[0], Verified: verified, Now: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO memberships (user_id, workspace_id, role, created_at) VALUES (?, ?, 'editor', ?)`, u.ID, ws.ID(), now.Add(time.Minute).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	add("member@x.co", true)
+	add("unverified@x.co", false)
+	off := add("off@x.co", true)
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, now.UnixMilli(), off.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else's workspace owner is not a member here.
+	if _, _, err := s.CreateAccount(ctx, AccountInput{Email: "stranger@x.co", PasswordHash: "x", WorkspaceName: "S", Slug: "sigma", Verified: true, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ws.MemberEmails(ctx)
+	if err != nil || strings.Join(got, ",") != "owner@x.co,member@x.co" {
+		t.Fatalf("MemberEmails = %v, %v", got, err)
+	}
+}

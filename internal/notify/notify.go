@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/textproto"
 	neturl "net/url"
 	"strconv"
 	"strings"
@@ -140,13 +141,101 @@ type Email struct {
 const emailTimeout = 30 * time.Second
 
 func (e Email) Notify(ctx context.Context, ev Event) error {
-	subject := "[uptime] " + ev.Target + " is "
+	subject, body := emailMessage(ev)
+	return e.Send(ctx, e.To, subject, body)
+}
+
+// emailMessage renders the subject and body of an alert email.
+func emailMessage(ev Event) (subject, body string) {
+	subject = "[uptime] " + ev.Target + " is "
 	if ev.Up {
 		subject += "UP"
 	} else {
 		subject += "DOWN"
 	}
-	return e.Send(ctx, e.To, subject, ev.Message()+"\r\nAt: "+ev.At.UTC().Format(time.RFC3339)+"\r\n")
+	return subject, ev.Message() + "\r\nAt: " + ev.At.UTC().Format(time.RFC3339) + "\r\n"
+}
+
+// ErrLimit means an alert email was dropped because a budget is spent.
+var ErrLimit = errors.New("Limit reached")
+
+// LoginRejected is the status shown when an SMTP server refuses the login.
+const LoginRejected = "Login rejected — check the username and password"
+
+// StatusText is the short status shown for a failed delivery: friendly text
+// for a spent budget or a refused SMTP login, the error itself otherwise. The
+// raw error stays in the log.
+func StatusText(err error) string {
+	var te *textproto.Error
+	switch {
+	case errors.Is(err, ErrLimit):
+		return ErrLimit.Error()
+	case errors.As(err, &te) && (te.Code == 530 || te.Code == 534 || te.Code == 535 || te.Code == 538):
+		return LoginRejected
+	}
+	return err.Error()
+}
+
+// Admitter is implemented by a notifier whose use is budgeted. Admit is
+// called once per alert, before delivery, so retries are not charged again.
+type Admitter interface {
+	Admit(ctx context.Context) error
+}
+
+// SystemMail is the server's own mail path (internal/mail.Queue).
+type SystemMail interface {
+	// Admit charges one alert email to the workspace and instance budgets and
+	// returns why it was refused, or "" when it may be sent.
+	Admit(workspace int64) (reason string)
+	Deliver(ctx context.Context, to []string, subject, body string) error
+}
+
+// ServerEmailName is the channel name of the fallback alert email.
+const ServerEmailName = "server-email"
+
+// ServerEmail sends alert email through the server's system mail to the
+// workspace's verified member addresses, never to an address a user typed.
+type ServerEmail struct {
+	Workspace  int64
+	Mail       SystemMail
+	Recipients func(ctx context.Context) ([]string, error)
+}
+
+// Admit refuses when nobody can receive the alert or a budget is spent.
+func (s ServerEmail) Admit(ctx context.Context) error {
+	to, err := s.Recipients(ctx)
+	if err != nil {
+		return err
+	}
+	if len(to) == 0 {
+		return errors.New("no verified account email")
+	}
+	if reason := s.Mail.Admit(s.Workspace); reason != "" {
+		return fmt.Errorf("%w (%s)", ErrLimit, reason)
+	}
+	return nil
+}
+
+func (s ServerEmail) Notify(ctx context.Context, ev Event) error {
+	to, err := s.Recipients(ctx)
+	if err != nil {
+		return err
+	}
+	if len(to) == 0 {
+		return errors.New("no verified account email")
+	}
+	subject, body := emailMessage(ev)
+	return s.Mail.Deliver(ctx, to, subject, body)
+}
+
+// WithServerEmail adds the fallback alert email to m when the server has mail
+// (sm non-nil), the workspace has no email channel (no SMTP host; a disabled
+// channel with a host counts as set up) and the switch is not off.
+func WithServerEmail(m Multi, cfg config.Notify, sm SystemMail, workspace int64, recipients func(ctx context.Context) ([]string, error)) Multi {
+	if sm == nil || cfg.ServerEmailOff || (cfg.Email != nil && cfg.Email.SMTPHost != "") {
+		return m
+	}
+	return append(m, Named{ServerEmailName, ServerEmail{Workspace: workspace, Mail: sm, Recipients: recipients}})
 }
 
 // Send delivers one plain-text message to the given recipients.

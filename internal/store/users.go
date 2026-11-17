@@ -421,3 +421,25 @@ func (s *Store) VerifyEmail(ctx context.Context, raw string, now time.Time) (Use
 	}
 	return u, nil
 }
+
+// MemberEmails returns the sign-in addresses of the workspace's members whose
+// account is verified and not disabled, oldest membership first.
+func (w *WS) MemberEmails(ctx context.Context) ([]string, error) {
+	rows, err := w.db.QueryContext(ctx,
+		`SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id
+		 WHERE m.workspace_id = ? AND u.verified_at IS NOT NULL AND u.disabled_at IS NULL
+		 ORDER BY m.created_at, u.id`, w.id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

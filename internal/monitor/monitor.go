@@ -883,7 +883,7 @@ func (m *Monitor) alert(incidentID, targetID, ws int64, ev notify.Event) {
 			a := store.Alert{IncidentID: incidentID, TargetID: targetID, SentAt: m.now().UTC(),
 				Channel: n.Name, Event: event, OK: err == nil}
 			if err != nil {
-				a.Error = err.Error()
+				a.Error = notify.StatusText(err)
 				m.logger.Error("alert not delivered", "channel", n.Name, "target", ev.Target, "err", err)
 			}
 			// Record the outcome even if the delivery used up the whole budget.
@@ -899,6 +899,12 @@ func (m *Monitor) alert(incidentID, targetID, ws int64, ev notify.Event) {
 
 // deliver sends ev through one channel, retrying with exponential backoff.
 func (m *Monitor) deliver(ctx context.Context, n notify.Named, ev notify.Event) error {
+	// A budgeted channel is charged once per alert, not once per attempt.
+	if a, ok := n.Notifier.(notify.Admitter); ok {
+		if err := a.Admit(ctx); err != nil {
+			return err
+		}
+	}
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
@@ -924,6 +930,11 @@ func (m *Monitor) deliver(ctx context.Context, n notify.Named, ev notify.Event) 
 func (m *Monitor) SendTest(ctx context.Context, ws int64, channel string) error {
 	for _, n := range m.Notifiers(ctx, ws) {
 		if n.Name == channel {
+			if a, ok := n.Notifier.(notify.Admitter); ok {
+				if err := a.Admit(ctx); err != nil {
+					return err
+				}
+			}
 			return n.Notify(ctx, notify.Event{Target: "test", URL: "https://example.com", Up: true, At: m.now()})
 		}
 	}

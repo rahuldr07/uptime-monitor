@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"sync"
 	"testing"
@@ -342,5 +343,120 @@ func TestFromConfigRestrictedDropsInvalidChannels(t *testing.T) {
 	// The operator's channels are not re-checked.
 	if m := FromConfig(cfg, slog.Default(), true, false); len(m) != 3 {
 		t.Fatalf("unrestricted: want 3 channels, got %+v", m)
+	}
+}
+
+type fakeSys struct {
+	mu      sync.Mutex
+	reason  string
+	admits  int
+	to      [][]string
+	subject []string
+	err     error
+}
+
+func (f *fakeSys) Admit(int64) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.admits++
+	return f.reason
+}
+
+func (f *fakeSys) Deliver(_ context.Context, to []string, subject, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.to = append(f.to, to)
+	f.subject = append(f.subject, subject)
+	return f.err
+}
+
+func TestWithServerEmail(t *testing.T) {
+	owner := func(context.Context) ([]string, error) { return []string{"owner@example.com"}, nil }
+	base := Multi{{Name: "log", Notifier: Log{Logger: slog.Default()}}}
+	names := func(m Multi) string {
+		var n []string
+		for _, x := range m {
+			n = append(n, x.Name)
+		}
+		return strings.Join(n, ",")
+	}
+	sys := &fakeSys{}
+	for _, tc := range []struct {
+		name string
+		cfg  config.Notify
+		sm   SystemMail
+		want string
+	}{
+		{"no email channel", config.Notify{}, sys, "log,server-email"},
+		{"email without host", config.Notify{Email: &config.Email{From: "a@b.c", To: []string{"x@y.z"}}}, sys, "log,server-email"},
+		{"own SMTP", config.Notify{Email: &config.Email{SMTPHost: "smtp.example.com"}}, sys, "log"},
+		{"own SMTP disabled", config.Notify{Email: &config.Email{SMTPHost: "smtp.example.com", Disabled: true}}, sys, "log"},
+		{"switch off", config.Notify{ServerEmailOff: true}, sys, "log"},
+		{"server has no mail", config.Notify{}, nil, "log"},
+	} {
+		if got := names(WithServerEmail(base, tc.cfg, tc.sm, 1, owner)); got != tc.want {
+			t.Errorf("%s: channels = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestServerEmailSendsToRecipientsOnly(t *testing.T) {
+	sys := &fakeSys{}
+	// The channel's To list is never consulted: it is not even an input.
+	se := ServerEmail{Workspace: 4, Mail: sys, Recipients: func(context.Context) ([]string, error) {
+		return []string{"owner@example.com", "member@example.com"}, nil
+	}}
+	ev := Event{Target: "api", URL: "https://a", Up: false, StatusCode: 503, At: time.Unix(0, 0)}
+	if err := se.Admit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := se.Notify(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(sys.to) != 1 || strings.Join(sys.to[0], ",") != "owner@example.com,member@example.com" || sys.subject[0] != "[uptime] api is DOWN" {
+		t.Fatalf("delivered %v %v", sys.to, sys.subject)
+	}
+	// Same subject as the user's own email channel.
+	if s, _ := emailMessage(ev); s != sys.subject[0] {
+		t.Fatalf("subject %q", s)
+	}
+}
+
+func TestServerEmailAdmit(t *testing.T) {
+	none := ServerEmail{Mail: &fakeSys{}, Recipients: func(context.Context) ([]string, error) { return nil, nil }}
+	if err := none.Admit(context.Background()); err == nil || errors.Is(err, ErrLimit) {
+		t.Fatalf("no verified address: %v", err)
+	}
+	sys := &fakeSys{reason: "workspace_hour"}
+	se := ServerEmail{Mail: sys, Recipients: func(context.Context) ([]string, error) { return []string{"a@example.com"}, nil }}
+	err := se.Admit(context.Background())
+	if !errors.Is(err, ErrLimit) || StatusText(err) != "Limit reached" {
+		t.Fatalf("over budget: %v", err)
+	}
+}
+
+func TestStatusTextMapsLoginFailures(t *testing.T) {
+	for _, code := range []int{530, 534, 535, 538} {
+		err := fmt.Errorf("email: %w", &textproto.Error{Code: code, Msg: "5.7.8 Username and Password not accepted"})
+		if got := StatusText(err); got != LoginRejected {
+			t.Errorf("%d: %q", code, got)
+		}
+	}
+	if got := StatusText(fmt.Errorf("email: %w", &textproto.Error{Code: 550, Msg: "mailbox unavailable"})); !strings.Contains(got, "550") {
+		t.Errorf("other SMTP errors keep their text: %q", got)
+	}
+	if StatusText(errors.New("boom")) != "boom" {
+		t.Error("plain error")
+	}
+}
+
+func TestSMTPAuthFailureThroughSend(t *testing.T) {
+	e := Email{Host: "h", Port: 587, Username: "u", Password: "p", From: "a@b.c",
+		SendMail: func(string, smtp.Auth, string, []string, []byte) error {
+			return &textproto.Error{Code: 535, Msg: "5.7.8 bad credentials"}
+		}}
+	err := e.Send(context.Background(), []string{"x@y.z"}, "s", "b")
+	if err == nil || StatusText(err) != LoginRejected || !strings.Contains(err.Error(), "535") {
+		t.Fatalf("err %v, status %q (the raw error must stay in err)", err, StatusText(err))
 	}
 }
