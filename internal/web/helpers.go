@@ -93,12 +93,12 @@ type notFoundData struct {
 // (inside the layout when signed in); partial refreshes, the JSON API, JSON
 // callers and non-GET requests get the plain 404 they can act on.
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
 	if (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.Header.Get("X-Partial") == "1" ||
 		strings.HasPrefix(r.URL.Path, "/api/") || wantsJSON(r) {
-		http.NotFound(w, r)
+		http.NotFound(w, r) // bare, so it matches the mux's own 404 for unknown paths (the /admin gate relies on that)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	p := []rune(r.URL.Path)
 	if len(p) > 80 {
 		p = append(p[:80], '…')

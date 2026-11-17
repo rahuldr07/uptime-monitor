@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -121,4 +122,29 @@ func readBody(resp *http.Response) string {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return string(b)
+}
+
+// The /admin gate must be indistinguishable from an unknown path (D-127):
+// same status, headers and body, for a visitor who is not an operator.
+func TestAdminGateMatchesUnknownPath(t *testing.T) {
+	e := newEnv(t)
+	bob, _ := e.account(t, "bob@example.com")
+	for name, c := range map[string]*http.Client{"anonymous": e.client(t), "non-operator": bob} {
+		for _, m := range []string{"GET", "POST", "PUT"} {
+			var got [2]string
+			for i, path := range []string{"/admin/users/1/disable", "/zzz/users/1/disable"} {
+				req, _ := http.NewRequest(m, e.ts.URL+path, nil)
+				resp, err := c.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := readBody(resp)
+				resp.Header.Del("Date")
+				got[i] = fmt.Sprint(resp.StatusCode, resp.Header, strings.ReplaceAll(body, path, "PATH"))
+			}
+			if got[0] != got[1] {
+				t.Errorf("%s %s: /admin differs from an unknown path:\n%s\n%s", name, m, got[0], got[1])
+			}
+		}
+	}
 }
