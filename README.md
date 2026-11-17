@@ -378,13 +378,13 @@ reported one; or pick a zone from the list. Which zone shows where:
 | Where | Zone |
 | --- | --- |
 | Signed-in pages (times, chart axes, maintenance form) | the viewer's zone; the footer says which |
-| Public status page | the workspace owner's zone, with its abbreviation (for example "IST") |
-| System email (sign-in method notices) | the recipient's zone, with its abbreviation |
+| Public status page | the workspace owner's zone, with its abbreviation (for example "IST"); the footer names it |
+| System email (sign-in method notices) | the recipient's zone, as "2026-11-17 16:30 IST (UTC+05:30)" |
 | Alert email, own SMTP or the server's fallback | the workspace owner's zone, with its abbreviation |
 | 90-day daily uptime bars | UTC days (that is how rollups are stored), labelled as such |
 | JSON API, logs | UTC (RFC 3339), always |
 
-The maintenance form reads its start time in the viewer's zone. Telegram and
+Only listed zones and the usual old aliases (such as `Asia/Calcutta`) are accepted. The maintenance form reads its start time in the viewer's zone, refuses a time that does not exist (a daylight saving gap) and a form shown before the zone changed. Telegram and
 Slack messages carry no absolute time. Zones are built in, so no system tz
 database is needed (for example in a `scratch` image).
 

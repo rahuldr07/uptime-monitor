@@ -2,12 +2,15 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"html"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata" // the tests must not depend on the host tz database
 
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -57,8 +60,8 @@ func TestAccountPageShowsZoneField(t *testing.T) {
 	}
 	_, body := e.get(t, e.op, "/account")
 	body = html.UnescapeString(body)
-	for _, want := range []string{`id="timezone"`, `<option value="" selected>Automatic (Asia/Kolkata)</option>`,
-		`<option value="Asia/Kolkata">Asia/Kolkata (UTC+05:30)</option>`, `now Asia/Kolkata (UTC+05:30)`} {
+	for _, want := range []string{`id="timezone"`, `<option value="" selected>Automatic: Asia/Kolkata (UTC+05:30)</option>`,
+		`<option value="Asia/Kolkata">Asia/Kolkata (UTC+05:30)</option>`, `<b>Asia/Kolkata (UTC+05:30)</b>`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("account page lacks %q", want)
 		}
@@ -156,13 +159,13 @@ func TestPublicStatusPageUsesOwnerZone(t *testing.T) {
 	}
 	anon := e.client(t)
 	_, body := e.get(t, anon, "/s/default")
-	if !strings.Contains(body, "Nov 8 12:00:00 UTC") {
+	if !strings.Contains(body, "Nov 8 12:00 UTC") {
 		t.Fatalf("owner without a zone: status page should show UTC with its label:\n%s", body)
 	}
 	// Viewer zones do not matter: an anonymous visitor sees the owner's. Changing it drops the cached page.
 	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
 	_, body = e.get(t, anon, "/s/default")
-	if !strings.Contains(body, "Nov 8 17:30:00 IST") || strings.Contains(body, "12:00:00 UTC") {
+	if !strings.Contains(body, "Nov 8 17:30 IST") || strings.Contains(body, "12:00 UTC") {
 		t.Fatal("status page should use the owner's zone, with its abbreviation")
 	}
 	// Daily bars stay UTC days whatever the zone: 2026-11-07 12:00 UTC is already Nov 8 in Auckland.
@@ -176,7 +179,7 @@ func TestPublicStatusPageUsesOwnerZone(t *testing.T) {
 	}
 	e.srv.resetStatus(e.opWS)
 	_, body = e.get(t, anon, "/s/default")
-	if !strings.Contains(body, `title="Nov 7 UTC · `) || strings.Contains(body, `title="Nov 8 UTC · `) || !strings.Contains(body, "days in UTC") {
+	if !strings.Contains(body, `title="Nov 7 UTC · `) || strings.Contains(body, `title="Nov 8 UTC · `) || !strings.Contains(body, "Each bar is one UTC day.") {
 		t.Fatal("daily bars should be UTC days")
 	}
 }
@@ -185,11 +188,142 @@ func TestSignInMethodMailUsesRecipientZone(t *testing.T) {
 	at := time.Date(2026, 11, 17, 11, 0, 0, 0, time.UTC)
 	kolkata, _ := time.LoadLocation("Asia/Kolkata")
 	_, body := signInMethodMail("https://m.example", "GitHub", true, at, kolkata)
-	if !strings.Contains(body, "on 2026-11-17 16:30 IST.") {
+	if !strings.Contains(body, "on 2026-11-17 16:30 IST (UTC+05:30).") {
 		t.Errorf("body = %q", body)
 	}
 	_, body = signInMethodMail("https://m.example", "GitHub", true, at, nil)
 	if !strings.Contains(body, "on 2026-11-17 11:00 UTC.") {
 		t.Errorf("body = %q", body)
+	}
+}
+
+// A stored zone that no longer loads (a tz database change, a bad row) must not
+// take the Account page or the pages' footers down.
+func TestStoredJunkZoneDoesNotBreakPages(t *testing.T) {
+	e := newEnv(t)
+	raw, err := sql.Open("sqlite", "file:"+e.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`UPDATE users SET time_zone = 'Gone/Zone', detected_tz = 'Also/Gone'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/account", "/maintenance", "/"} {
+		resp, body := e.get(t, e.op, path)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Times in UTC") {
+			t.Errorf("%s: %d, want a page in UTC", path, resp.StatusCode)
+		}
+	}
+	_, body := e.get(t, e.op, "/account")
+	if !strings.Contains(body, `<option value="" selected>Automatic: UTC`) {
+		t.Error("an unloadable saved zone should show as Automatic")
+	}
+}
+
+func TestZoneAliasesDisplayAsListedNames(t *testing.T) {
+	e := newEnv(t)
+	if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Calcutta"}}); resp.StatusCode != http.StatusOK {
+		t.Fatal(resp.StatusCode)
+	}
+	_, body := e.get(t, e.op, "/account")
+	body = html.UnescapeString(body)
+	for _, want := range []string{`data-tz="Asia/Calcutta"`, "Times in IST (Asia/Kolkata)", `<option value="" selected>Automatic: Asia/Kolkata (UTC+05:30)</option>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	// The browser flipping between the alias and the listed name changes nothing.
+	if _, b := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); !strings.Contains(b, `"changed": false`) {
+		t.Errorf("alias vs listed name: %s", b)
+	}
+	// A saved alias selects the listed option; underscores read as spaces in labels.
+	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/Buenos_Aires"}})
+	_, body = e.get(t, e.op, "/account")
+	if !strings.Contains(body, `<option value="America/Argentina/Buenos_Aires" selected>America/Argentina/Buenos Aires (`) {
+		t.Error("saved alias should select its listed zone")
+	}
+}
+
+func TestTimeZoneRateLimits(t *testing.T) {
+	e := newEnv(t)
+	for i := 0; i < 10; i++ {
+		if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusOK {
+			t.Fatalf("detect %d: %d", i, resp.StatusCode)
+		}
+		if resp, _ := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("save %d: %d", i, resp.StatusCode)
+		}
+	}
+	if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("detect over the limit: %d", resp.StatusCode)
+	}
+	if resp, body := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many changes") {
+		t.Errorf("save over the limit: %d", resp.StatusCode)
+	}
+}
+
+// A page rendered for a POST must not trigger detection, whose reload would repeat the POST.
+func TestPostRenderedPageSkipsDetection(t *testing.T) {
+	e := newEnv(t)
+	if _, body := e.get(t, e.op, "/account"); strings.Contains(body, "data-tz-skip") {
+		t.Error("a GET page should detect")
+	}
+	resp, body := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Nope/Nope"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "data-tz-skip") {
+		t.Errorf("a POST-rendered page should skip detection: %d", resp.StatusCode)
+	}
+}
+
+func TestMaintenanceStartInDSTGapAndZoneChange(t *testing.T) {
+	e := newEnv(t)
+	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/New_York"}})
+	form := func(starts, zone string) url.Values {
+		return url.Values{"title": {"x"}, "starts": {starts}, "duration": {"1h"}, "zone": {zone}}
+	}
+	e.setClock(time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
+	resp, body := e.post(t, e.op, "/maintenance", form("2026-03-08T02:30", "America/New_York")) // clocks jump 02:00 to 03:00
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "That time doesn&#39;t exist on this date in America/New_York.") {
+		t.Fatalf("gap: %d", resp.StatusCode)
+	}
+	// A time just after the gap is read in the zone: 03:30 EDT.
+	if resp, _ := e.post(t, e.op, "/maintenance", form("2026-03-08T03:30", "America/New_York")); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("valid: %d", resp.StatusCode)
+	}
+	list, _ := e.opWS.ListMaintenance(context.Background(), e.now(), 0)
+	if len(list) != 1 || !list[0].StartsAt.Equal(time.Date(2026, 3, 8, 7, 30, 0, 0, time.UTC)) {
+		t.Fatalf("03:30 EDT should be 07:30 UTC: %+v", list)
+	}
+	// The form was shown in another zone: nothing is saved, and the page says so.
+	resp, body = e.post(t, e.op, "/maintenance", form("2026-03-09T10:00", "Asia/Kolkata"))
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Your time zone changed to America/New_York") || !strings.Contains(body, `name="zone" value="America/New_York"`) {
+		t.Fatalf("zone changed: %d", resp.StatusCode)
+	}
+	if list, _ := e.opWS.ListMaintenance(context.Background(), e.now(), 0); len(list) != 1 {
+		t.Fatalf("a window was saved: %+v", list)
+	}
+}
+
+// Hourly cells are UTC hours labelled in the viewer's zone: half-hour offsets and DST show honestly.
+func TestHourlyCellLabelsInZone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	tg, err := e.opWS.CreateTarget(ctx, store.Target{Name: "api", URL: "http://x.example", Interval: time.Hour, Timeout: time.Second}, e.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mon.Reload(ctx, tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := "/targets/" + strconv.FormatInt(tg.ID, 10)
+	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
+	if _, body := e.get(t, e.op, path); !strings.Contains(body, `title="Nov 7 17:30 · `) {
+		t.Error("12:00 UTC hour should read 17:30 in Asia/Kolkata")
+	}
+	e.setClock(time.Date(2026, 3, 8, 15, 0, 0, 0, time.UTC)) // New York springs forward at 07:00 UTC
+	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/New_York"}})
+	_, body := e.get(t, e.op, path)
+	if !strings.Contains(body, `title="Mar 8 01:00 · `) || !strings.Contains(body, `title="Mar 8 03:00 · `) || strings.Contains(body, `title="Mar 8 02:00 · `) {
+		t.Error("cells should skip 02:00 across the DST change")
 	}
 }

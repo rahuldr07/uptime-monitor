@@ -58,7 +58,7 @@
   <form method="post" action="/maintenance">
     <div class="field" style="margin-bottom:12px"><label>Title</label><input name="title" value="{{.Form.Title}}" maxlength="80" placeholder="Database upgrade" required autocomplete="off"></div>
     <div class="frow" style="margin-bottom:12px">
-      <div class="field wide"><label>Starts</label><input type="datetime-local" name="starts" value="{{.Form.Starts}}"><div class="help">In {{.TZNote}}. Leave empty to start right now.</div></div>
+      <div class="field wide"><label for="maint-starts">Starts</label><input id="maint-starts" type="datetime-local" name="starts" value="{{.Form.Starts}}" aria-describedby="maint-starts-help"><input type="hidden" name="zone" value="{{.Form.Zone}}"><div class="help" id="maint-starts-help">Time zone: {{.TZNote}}. Leave empty to start now.</div></div>
       <div class="field" style="flex:0 1 110px"><label>Duration</label><input name="duration" value="{{.Form.Duration}}" placeholder="1h"><div class="help">30m, 2h, 1h30m</div></div>
     </div>
     <div class="field" style="margin-bottom:14px"><label for="maint-group">Applies to</label>

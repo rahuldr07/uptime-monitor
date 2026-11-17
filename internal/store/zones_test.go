@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	_ "time/tzdata" // the tests must not depend on the host's tz database
 )
 
 func TestZoneNamesLoad(t *testing.T) {
@@ -21,11 +22,34 @@ func TestLoadZoneValidation(t *testing.T) {
 		}
 	}
 	// "" and "Local" load in time.LoadLocation but are not zones to store.
-	for _, bad := range []string{"", "Local", "Not/AZone", "../etc/passwd", "/etc/localtime", "Asia/Kolkata\x00", "asia/kolkata ", string(make([]byte, 65))} {
+	for _, bad := range []string{"", "Local", "Not/AZone", "../etc/passwd", "/etc/localtime", "Asia/Kolkata\x00", "asia/kolkata ", "localtime", "posixrules", "Factory", "Asia/./Kolkata", "Asia//Kolkata", "./UTC", string(make([]byte, 65))} {
 		if LoadZone(bad) != nil {
 			t.Errorf("LoadZone(%q) loaded, want nil", bad)
 		}
 	}
+}
+
+func TestZoneAliases(t *testing.T) {
+	for alias, target := range zoneAliases {
+		if LoadZone(alias) == nil || !containsStr(zoneNames, target) {
+			t.Errorf("alias %q -> %q: loads=%v listed=%v", alias, target, LoadZone(alias) != nil, containsStr(zoneNames, target))
+		}
+	}
+	for alias, want := range map[string]string{"Asia/Calcutta": "Asia/Kolkata", "Asia/Saigon": "Asia/Ho_Chi_Minh", "Asia/Katmandu": "Asia/Kathmandu",
+		"Asia/Rangoon": "Asia/Yangon", "Europe/Kiev": "Europe/Kyiv", "America/Buenos_Aires": "America/Argentina/Buenos_Aires", "UTC": "UTC"} {
+		if got := CanonicalZone(alias); got != want || LoadZone(alias) == nil {
+			t.Errorf("CanonicalZone(%q) = %q, want %q", alias, got, want)
+		}
+	}
+}
+
+func containsStr(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEffectiveZonePrecedence(t *testing.T) {
@@ -74,5 +98,18 @@ func TestSetZones(t *testing.T) {
 	}
 	if loc := ws.OwnerLocation(ctx); loc.String() != "Asia/Calcutta" {
 		t.Fatalf("owner zone = %s, want automatic (detected) again", loc)
+	}
+}
+
+func TestOwnedWorkspaceIDs(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, ws, err := s.CreateAccount(ctx, AccountInput{Email: "a@x.co", PasswordHash: "h", WorkspaceName: "A", Slug: "a", Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.OwnedWorkspaceIDs(ctx, u.ID)
+	if err != nil || len(ids) != 1 || ids[0] != ws.ID() {
+		t.Fatalf("ids = %v, %v", ids, err)
 	}
 }

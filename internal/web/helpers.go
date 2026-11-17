@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
@@ -294,19 +296,28 @@ func formatTS(loc *time.Location, v any) string {
 	return t.In(loc).Format("Jan 2 15:04:05")
 }
 
-// formatTSZone is formatTS followed by the zone abbreviation, for pages seen by
-// people who did not choose the zone (the public status page).
-func formatTSZone(loc *time.Location, v any) string {
-	s := formatTS(loc, v)
-	if s == "—" {
-		return s
+// formatTSZone renders an instant for the public status page, whose visitors
+// did not choose the zone: a <time> element reading "Jan 2 15:04 IST", without
+// seconds.
+func formatTSZone(loc *time.Location, v any) template.HTML {
+	var t time.Time
+	switch x := v.(type) {
+	case time.Time:
+		t = x
+	case *time.Time:
+		if x != nil {
+			t = *x
+		}
 	}
-	if t, ok := v.(time.Time); ok {
-		s += " " + zoneAbbr(loc, t)
-	} else if p, ok := v.(*time.Time); ok && p != nil {
-		s += " " + zoneAbbr(loc, *p)
+	if t.IsZero() {
+		return "—"
 	}
-	return s
+	if loc == nil {
+		loc = time.UTC
+	}
+	t = t.In(loc)
+	return template.HTML(`<time datetime="` + t.UTC().Format(time.RFC3339) + `">` +
+		template.HTMLEscapeString(t.Format("Jan 2 15:04 MST")) + `</time>`)
 }
 
 // zoneAbbr is the abbreviation of loc at t: "IST", "UTC", or "+03" where the
@@ -319,20 +330,19 @@ func zoneAbbr(loc *time.Location, t time.Time) string {
 }
 
 // zoneNote names a zone for the footer and Account page: "IST (Asia/Kolkata)",
-// or just "UTC".
+// or just "UTC". An alias such as Asia/Calcutta is shown as its listed name.
 func zoneNote(loc *time.Location, at time.Time) string {
 	if loc == nil || loc.String() == "UTC" {
 		return "UTC"
 	}
-	return zoneAbbr(loc, at) + " (" + loc.String() + ")"
+	return zoneAbbr(loc, at) + " (" + store.CanonicalZone(loc.String()) + ")"
 }
 
-// zoneOffset renders loc's offset from UTC at t as "UTC+05:30".
+// zoneOffset renders loc's offset from UTC at t as "UTC+05:30" (a real minus
+// sign when negative); UTC if loc is nil.
 func zoneOffset(loc *time.Location, t time.Time) string {
-	_, off := t.In(loc).Zone()
-	sign := "+"
-	if off < 0 {
-		sign, off = "−", -off
+	if loc == nil {
+		loc = time.UTC
 	}
-	return fmt.Sprintf("UTC%s%02d:%02d", sign, off/3600, off%3600/60)
+	return strings.Replace(notify.UTCOffset(t.In(loc)), "-", "−", 1)
 }

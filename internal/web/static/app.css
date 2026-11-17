@@ -421,3 +421,4 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 .field{min-width:0}
 .dt-pages{flex-wrap:wrap}
 @media(max-width:480px){.days{gap:1px}}
+footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}

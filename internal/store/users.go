@@ -40,13 +40,27 @@ type User struct {
 // ErrInvalidZone is returned for a name that is not an IANA time zone.
 var ErrInvalidZone = errors.New("Choose a time zone from the list.")
 
-var zoneCache sync.Map // name -> *time.Location
+var zoneCache sync.Map // accepted name -> *time.Location; bounded by zoneNames and zoneAliases
 
-// LoadZone returns the named IANA time zone, or nil if name is not one.
-// LoadLocation also accepts "" and "Local", which are not zones to store, and
-// zone names are short, so anything longer is junk.
+// knownZones is every accepted zone name: the listed zones and their aliases.
+var knownZones = func() map[string]bool {
+	m := make(map[string]bool, len(zoneNames)+len(zoneAliases))
+	for _, n := range zoneNames {
+		m[n] = true
+	}
+	for n := range zoneAliases {
+		m[n] = true
+	}
+	return m
+}()
+
+// LoadZone returns the named IANA time zone, or nil if name is not one we
+// accept: a listed zone or a known alias. time.LoadLocation alone would also
+// take "" and "Local", and read files such as "localtime" (the server's own
+// zone), "posixrules" and "Factory" from the tz directory, or odd spellings of
+// real names ("Asia/./Kolkata"); none of those may be stored or cached.
 func LoadZone(name string) *time.Location {
-	if name == "" || name == "Local" || len(name) > 64 {
+	if !knownZones[name] {
 		return nil
 	}
 	if loc, ok := zoneCache.Load(name); ok {
@@ -58,6 +72,15 @@ func LoadZone(name string) *time.Location {
 	}
 	zoneCache.Store(name, loc)
 	return loc
+}
+
+// CanonicalZone is the listed name of a zone: an alias such as Asia/Calcutta
+// becomes Asia/Kolkata. Other names are returned unchanged.
+func CanonicalZone(name string) string {
+	if c, ok := zoneAliases[name]; ok {
+		return c
+	}
+	return name
 }
 
 // ZoneNames lists the time zones offered for selection, UTC first.
@@ -499,6 +522,25 @@ func (w *WS) OwnerLocation(ctx context.Context) *time.Location {
 		return time.UTC
 	}
 	return EffectiveZone(explicit, detected)
+}
+
+// OwnedWorkspaceIDs lists the workspaces userID owns, oldest membership first.
+func (s *Store) OwnedWorkspaceIDs(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT workspace_id FROM memberships WHERE user_id = ? AND role = 'owner' ORDER BY created_at, workspace_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // MemberEmails returns the sign-in addresses of the workspace's members whose

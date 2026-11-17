@@ -38,6 +38,7 @@ var sysAllowed = map[string][]string{
 	"account.go|(*Server).accountSignOutAll":      {"DeleteUserSessions"},
 	"timezone.go|(*Server).accountTimeZone":       {"SetTimeZone"},
 	"timezone.go|(*Server).accountDetectedZone":   {"SetDetectedZone"},
+	"timezone.go|(*Server).resetOwnedStatus":      {"OwnedWorkspaceIDs"},
 	"account.go|(*Server).accountDelete":          {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
 	"account.go|(*Server).checkCurrent":           {"PasswordHash"},
 	"account.go|(*Server).accountIdentityConnect": {"MarkReauth"},
