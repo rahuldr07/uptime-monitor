@@ -337,3 +337,16 @@ dialog[open]{animation:dlg-in .14s ease-out}dialog[open]::backdrop{animation:dlg
 .dt td.acts button.sm{padding-left:6px;padding-right:6px}
 .oauth{display:grid;gap:8px}.oauth .btn{width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px}.oauth-logo{width:18px;height:18px;flex:none}.or{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--muted);font-size:12px}.or::before,.or::after{content:"";flex:1;border-top:1px solid var(--border)}
 code{background:var(--gray-bg);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+/* loading skeletons: .skel blocks are cloned from the <template>s in layout.html while a slow navigation or a pending action waits */
+.skel{display:block;height:12px;border-radius:var(--radius);background:var(--border)}
+.skel.title{width:160px;height:22px}.skel.button{width:120px;height:32px}.skel.tiny{width:60%;height:10px;margin-bottom:8px}.skel.value{width:40%;height:19px}
+.skel.chart{height:180px}.skel.line{flex:1;height:12px}.skel.short{width:60%;flex:none;margin-top:10px}.card .skel.line+.skel.line{margin-top:10px}
+.skel.dot{width:9px;height:9px;border-radius:50%;flex:none}.skel.name{width:140px;flex:none}.skel.val{width:70px;flex:none}
+.skel-rows{border-top:1px solid var(--border)}.skel-row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--border)}
+.alert .skel.line{min-width:120px;max-width:260px}
+@media(prefers-reduced-motion:no-preference){
+  .skel{background:linear-gradient(90deg,var(--border) 0,var(--card2) 50%,var(--border) 100%) 100% 0/200% 100%;animation:shimmer 1.4s ease-in-out infinite}
+  html.paused .skel{animation-play-state:paused}
+}
+@keyframes shimmer{to{background-position:-100% 0}}
+@media(max-width:480px){.skel.name{width:100px}.skel-row .skel.val{display:none}}

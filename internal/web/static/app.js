@@ -203,6 +203,13 @@
     r.appendChild(icon(kindIcon(kind))); r.appendChild(d);
     r.hidden = false;
   }
+  // Pending state of an action: a skeleton line (cloned from #skel-line) with the label kept for screen readers.
+  function showPending(r, label) {
+    r.className = 'alert info'; r.textContent = '';
+    var t = $('#skel-line'), sr = mk('span', 'sr'); sr.textContent = label;
+    if (t) r.appendChild(t.content.cloneNode(true));
+    r.appendChild(sr); r.hidden = false;
+  }
   function wirePanel() {
     var f = $('#panel form'); if (!f || f._wired) return; f._wired = true;
     var url = f.querySelector('input[name=url]'), name = f.querySelector('input[name=name]');
@@ -215,7 +222,7 @@
       } catch (e) { }
     });
     var tb = f.querySelector('#test-btn'); if (tb) tb.addEventListener('click', function () {
-      var r = res(); showResult(r, 'info', 'Testing…');
+      var r = res(); showPending(r, 'Testing…');
       fetch('/targets/test', { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
         .then(function (x) { if (x.status === 401) { sessionExpired(); throw 0; } return x.json(); })
         .then(function (j) {
@@ -913,7 +920,7 @@
       var h = tr.getAttribute('data-href');
       if (!h || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
       if (window.getSelection && String(getSelection())) return; // the user was selecting text
-      if (sameHref(h)) location.href = h;
+      if (sameHref(h)) { skelStart(h); location.href = h; }
     });
     // keyboard: the focused region moves a row cursor
     function move(to, extend) {
@@ -1178,6 +1185,7 @@
     if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.form && !a.hasAttribute('data-search')) return true;
     if ($('#content[data-no-refresh]')) return true;
     if ($('#content [aria-invalid=true]')) return true;            // client-side field errors are showing
+    if (skel.saved) return true;                                   // a skeleton is showing; a swap would drop the saved page
     if (pressing) return true;                                     // a press is in flight; the click must land on the control it started on
     if (dtDragging) return true;                                   // a column is being resized
     if ($('.dd-menu')) return true;                                // a dropdown is open; replacing it would drop the menu
@@ -1286,6 +1294,53 @@
   document.addEventListener('change', function (e) {
     if (e.target.hasAttribute && e.target.hasAttribute('data-autosubmit') && e.target.form) e.target.form.submit();
   });
+
+  // ---- loading skeletons ----
+  // Pages are server-rendered, so a navigation shows nothing new until the response arrives. If it takes
+  // longer than 250ms, #content is swapped for a skeleton shaped like the destination (the <template>s in
+  // layout.html). The real nodes are kept, not copied, and put back if the page is restored from the
+  // back/forward cache or the navigation never unloads this page (Stop, a download). Live refresh never shows one.
+  var skel = { timer: null, safety: null, saved: null, focus: null };
+  var SKEL_SKIP = /^\/(static|api|auth|events|healthz|logout)(\/|$)/;
+  function skelKind(path) {
+    return path === '/' ? 'overview' : path === '/targets' ? 'table' : /^\/targets\/\d+$/.test(path) ? 'detail' : path === '/incidents' ? 'list' : 'generic';
+  }
+  function skelStart(href) {
+    var u; try { u = new URL(href, location.href); } catch (e) { return; }
+    clearTimeout(skel.timer);
+    if (u.origin !== location.origin || SKEL_SKIP.test(u.pathname)) return;
+    skel.timer = setTimeout(function () { skelShow(skelKind(u.pathname)); }, 250);
+  }
+  function skelShow(kind) {
+    var c = $('#content'), t = $('#skel-' + kind);
+    if (!c || !t || skel.saved) return;
+    var f = document.createDocumentFragment(), a = document.activeElement;
+    skel.focus = a && c.contains(a) ? a : null;
+    while (c.firstChild) f.appendChild(c.firstChild);
+    skel.saved = f;
+    c.appendChild(t.content.cloneNode(true));
+    c.setAttribute('aria-busy', 'true'); c.setAttribute('aria-label', 'Loading'); c.setAttribute('role', 'status');
+    skel.safety = setTimeout(skelHide, 10000);
+  }
+  function skelHide() {
+    clearTimeout(skel.timer); clearTimeout(skel.safety);
+    var c = $('#content'), f = skel.saved; skel.saved = null;
+    if (!f || !c) return;
+    while (c.firstChild) c.removeChild(c.firstChild);
+    c.appendChild(f);
+    c.removeAttribute('aria-busy'); c.removeAttribute('aria-label'); c.removeAttribute('role');
+    if (skel.focus) { skel.focus.focus({ preventScroll: true }); skel.focus = null; }
+    if (pending && !refreshing) { pending = false; schedule(); }
+  }
+  document.addEventListener('click', function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download') || a.hasAttribute('data-no-skel')) return;
+    var h = a.getAttribute('href');
+    if (h.charAt(0) === '#' || (a.origin === location.origin && a.pathname === location.pathname && a.search === location.search && a.hash)) return;
+    skelStart(a.href);
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) skelHide(); });
 
   // ---- "updated" footer ----
   function markUpdated() { var u = $('[data-updated]'); if (u) { u._t = Date.now(); u.textContent = 'Updated just now'; } }
