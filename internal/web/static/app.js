@@ -1351,7 +1351,7 @@
     c.appendChild(t.content.cloneNode(true));
     window.scrollTo(0, 0);
     // the destination's sidebar item takes the highlight until the page arrives
-    var cur = $('.side a.nav.active'), dest = $('.side a.nav[href="' + (/^\/targets\//.test(u.pathname) ? '/targets' : u.pathname) + '"]');
+    var cur = $('.side a.nav.active'), dest = $('.side a.nav[href="' + (/^\/targets\//.test(u.pathname) ? '/targets' : /^\/settings\//.test(u.pathname) ? '/settings/profile' : u.pathname) + '"]');
     if (dest && dest !== cur) {
       skel.nav = { cur: cur, dest: dest };
       if (cur) { cur.classList.remove('active'); cur.removeAttribute('aria-current'); }

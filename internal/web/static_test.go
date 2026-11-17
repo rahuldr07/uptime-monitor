@@ -46,7 +46,7 @@ var sysAllowed = map[string][]string{
 	"account.go|(*Server).myIdentities":           {"Identities"},
 	"account.go|(*Server).accountIdentityDelete":  {"UnlinkIdentity"},
 	"admin.go|(*Server).adminUsersView":           {"ListUsers", "IdentityProviders"},
-	"reset.go|(*Server).resetPage":                {"PeekToken", "HasPassword"},
+	"reset.go|(*Server).resetPage":                {"PeekToken"},
 	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword", "CreateSession"},
 	"reset.go|(*Server).chooseWording":            {"PeekToken", "HasPassword"},
 	"targets.go|(*Server).hostRateErr":            {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces

@@ -29,6 +29,7 @@ type settingsData struct {
 	CanDelete   bool // operators cannot delete their account here
 	HasPassword bool
 	MailOn      bool // the server can email links: a first password is set through one
+	LinkSent    bool // a link was just emailed (?sent=1): the Password card says to check the inbox
 	Providers   []accountProvider
 	SignInLabel string      // the connected providers, for "You sign in with …"
 	SoleMethod  bool        // the only way to sign in is one provider: it cannot be disconnected
@@ -41,7 +42,25 @@ type settingsData struct {
 
 // settingsBase is the part of the view model every section needs.
 func (s *Server) settingsBase(r *http.Request, a *authCtx, section string) settingsData {
-	return settingsData{base: s.base(r, a, "settings", "Settings"), Section: section, CanDelete: !a.User.IsOperator}
+	return settingsData{base: s.base(r, a, "settings", sectionTitle[section]+" · Settings"), Section: section, CanDelete: !a.User.IsOperator}
+}
+
+var sectionTitle = map[string]string{secProfile: "Profile", secSecurity: "Security", secNotifications: "Notifications", secDanger: "Danger zone"}
+
+// signInLabel names the connected providers for "You sign in with …".
+func signInLabel(ids []store.Identity) string {
+	out := ""
+	for _, name := range []string{"google", "github"} {
+		for _, i := range ids {
+			if i.Provider == name {
+				if out != "" {
+					out += " or "
+				}
+				out += providerLabel(name)
+			}
+		}
+	}
+	return out
 }
 
 // settingsView builds the view model of the Profile, Security and Danger zone
@@ -53,22 +72,18 @@ func (s *Server) settingsView(r *http.Request, a *authCtx, section string) (sett
 	}
 	d := s.settingsBase(r, a, section)
 	d.HasPassword, d.MailOn = a.HasPassword, s.mail != nil
+	d.LinkSent = d.MailOn && !d.HasPassword && r.URL.Query().Get("sent") == "1"
 	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(store.CanonicalZone(a.User.Location().String()), d.Now)
 	d.Recent = s.recentAuth(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/settings/"+section)
 	d.SoleMethod = !a.HasPassword && len(ids) == 1
+	d.SignInLabel = signInLabel(ids)
 	for _, name := range []string{"google", "github"} {
 		p := accountProvider{Name: name, Label: providerLabel(name), Enabled: s.oauth[name] != nil}
 		for _, i := range ids {
 			if i.Provider == name {
 				p.Connected, p.Email = true, i.Email
 			}
-		}
-		if p.Connected {
-			if d.SignInLabel != "" {
-				d.SignInLabel += " or "
-			}
-			d.SignInLabel += p.Label
 		}
 		if p.Enabled || p.Connected {
 			d.Providers = append(d.Providers, p)
@@ -80,6 +95,11 @@ func (s *Server) settingsView(r *http.Request, a *authCtx, section string) (sett
 // settingsPage serves one of the sections that need no data of their own.
 func (s *Server) settingsPage(section string) func(http.ResponseWriter, *http.Request, *authCtx) {
 	return func(w http.ResponseWriter, r *http.Request, a *authCtx) {
+		// Operators cannot delete their account here: no dead-end page.
+		if section == secDanger && a.User.IsOperator {
+			http.Redirect(w, r, "/settings/profile", http.StatusFound)
+			return
+		}
 		d, err := s.settingsView(r, a, section)
 		if err != nil {
 			s.fail(w, err)

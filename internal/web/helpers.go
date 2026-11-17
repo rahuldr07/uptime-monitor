@@ -329,7 +329,7 @@ func zoneAbbr(loc *time.Location, t time.Time) string {
 	return t.In(loc).Format("MST")
 }
 
-// zoneNote names a zone for the footer and Account page: "IST (Asia/Kolkata)",
+// zoneNote names a zone for the footer and Profile page: "IST (Asia/Kolkata)",
 // or just "UTC". An alias such as Asia/Calcutta is shown as its listed name.
 func zoneNote(loc *time.Location, at time.Time) string {
 	if loc == nil || loc.String() == "UTC" {

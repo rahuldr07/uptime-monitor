@@ -222,7 +222,7 @@ type oauthReq struct {
 }
 
 // fail logs the reason and shows msg. Link and reauth flows of a signed-in
-// user stay on the account page.
+// user stay on the Security page.
 func (q *oauthReq) fail(code int, reason, msg string) {
 	q.s.logger.Warn("oauth failed", "event", "oauth_failed", "provider", q.p.Name(), "reason", reason, "ip", q.ip)
 	if q.a != nil && (q.st.Intent == "link" || q.st.Intent == "reauth") {
