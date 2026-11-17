@@ -559,3 +559,16 @@ Full design:
   - Upgrade effect: existing workspaces with no SMTP start receiving alert emails after upgrading to a server with `mail`; this is announced in the changelog.
   - Judgement call: "members" means every member with a verified account, not only owners; today accounts own their workspace, so this is the owner.
 
+### D-132: Per-user time zones (2026-11-17)
+- **Status:** Accepted
+- **Decision:**
+  - The zone belongs to the user, not the server or the workspace: two people on one instance are rarely in the same place, and the server's zone (UTC in Docker) says nothing about anyone. Schema v4 adds `users.time_zone` (explicit, empty means automatic) and `users.detected_tz` (what the browser last reported, stored as reported, so an alias like `Asia/Calcutta` still matches the page's `data-tz` and is not re-sent on every load).
+  - Precedence: explicit choice, else the detected zone, else UTC. A stored name that no longer loads is skipped. Every name is checked with `time.LoadLocation`; `""` and `Local` are refused, since `LoadLocation` accepts both, and names over 64 bytes are junk.
+  - Detection is one small signed-in `POST /account/tz-detected` (same-origin, 10 per minute per user). It only ever writes `detected_tz`, never the explicit choice, and answers whether the effective zone changed; the page reloads only then. A rejected report is not repeated in that tab. Without JavaScript the stored value or UTC applies.
+  - The public status page uses the workspace owner's zone (the oldest owner membership, so the pick is deterministic), because visitors have no account and a page that changed with each visitor's guess could not be cached; its times carry the abbreviation. Any change to an effective zone drops the owner's cached status pages.
+  - Alert email uses the owner's zone, read when the alert is sent and carried on the event, because notifiers are cached per workspace and would keep a stale zone. Telegram and Slack texts have no absolute time. System mail uses the recipient's zone.
+  - The 90-day bars stay UTC days: rollups are stored per UTC day, and shifting them into another zone would mean redoing them, or showing a partial day. Their titles and the status page caption say UTC. Hourly cells are UTC hours labelled in the viewer's zone, so in a half-hour zone they start at :30.
+  - The API and logs stay UTC (a machine format must not depend on who asks). The `tz_offset` field of the maintenance form is gone: the server reads the start time in the user's zone, which also settles what an ambiguous time during a DST change means (Go's rule).
+  - The zone list is committed (`internal/store/zones.go`, generated from `zone.tab`) because Go cannot list zones; a test loads every name. The binary embeds `time/tzdata` (about 450 KB) so scratch images work.
+  - Judgement call: server-side `ts` takes the location from the page data (`$.Loc`) rather than a per-request template clone, since templates are parsed once; fragments rendered through `dict` pass it in.
+

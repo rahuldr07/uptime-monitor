@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-11-17
+
+### Added
+
+- Time zones. Each user has a Time zone setting on the Account page: Automatic (the zone the browser last reported, UTC until it has) or any IANA zone, shown with its current offset and searchable. Schema v4 adds `users.time_zone` and `users.detected_tz`; a database with data is backed up to `<db>.pre-v4-<timestamp>.bak` first. The browser reports its zone with `POST /account/tz-detected` and the page reloads only if the shown zone changed. The footer says which zone times are in.
+- Zones are built into the binary (`time/tzdata`), so they work without a system tz database.
+
+### Changed
+
+- Times on signed-in pages, chart axes and the maintenance form use the viewer's zone instead of the server's. The maintenance start time is read in that zone, and the browser offset field is gone.
+- The public status page shows times in the workspace owner's zone with its abbreviation. The 90-day daily bars keep UTC days and say so.
+- System email (sign-in method notices) uses the recipient's zone, and alert emails the workspace owner's, written as "2026-11-17 16:30 IST" instead of RFC 3339 UTC.
+- The hourly availability cells are labelled with their start time in the viewer's zone (a UTC hour starts at :30 in some zones).
+- The JSON API, webhook payloads and logs stay in UTC.
+- Upgrading: until a user's browser has reported its zone, times show in UTC, which is what a Docker install already showed.
+
 ## [1.4.0] - 2026-11-17
 
 ### Added

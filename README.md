@@ -369,6 +369,25 @@ In every workspace, a saved secret is dropped when its destination changes
 (the Telegram chat ID, or the SMTP host, port or username), so you must enter
 it again.
 
+### Time zones
+
+Each user has a time zone on the Account page. **Automatic** (the default)
+follows the zone the browser last reported, and shows UTC until it has
+reported one; or pick a zone from the list. Which zone shows where:
+
+| Where | Zone |
+| --- | --- |
+| Signed-in pages (times, chart axes, maintenance form) | the viewer's zone; the footer says which |
+| Public status page | the workspace owner's zone, with its abbreviation (for example "IST") |
+| System email (sign-in method notices) | the recipient's zone, with its abbreviation |
+| Alert email, own SMTP or the server's fallback | the workspace owner's zone, with its abbreviation |
+| 90-day daily uptime bars | UTC days (that is how rollups are stored), labelled as such |
+| JSON API, webhook payloads, logs | UTC (RFC 3339), always |
+
+The maintenance form reads its start time in the viewer's zone. Telegram and
+Slack messages carry no absolute time. Zones are built in, so no system tz
+database is needed (for example in a `scratch` image).
+
 ### Deleting an account
 
 `/account` lets a user delete their account after confirming their password.
@@ -456,6 +475,15 @@ account, including one created from an invite issued earlier under `closed`,
 could then reach your internal network.
 
 ## Upgrading
+
+From 1.4.0 (schema v4, time zones):
+
+- **Schema v4.** The first start with this version adds `users.time_zone` and
+  `users.detected_tz`. When the database already has data, it first writes
+  `<db>.pre-v4-<timestamp>.bak` (mode `0600`); keep it until you have checked the
+  upgrade, then delete it. Times used to show in the server's zone and now show in
+  each user's zone, UTC until their browser has reported one (the first page they
+  open does it).
 
 From 1.1.0 (schema v3, sign-in with Google or GitHub):
 
