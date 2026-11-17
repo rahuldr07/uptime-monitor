@@ -532,3 +532,13 @@ Full design:
     - The state cookie lasts 10 minutes and is single-use. Starts and callbacks share a limit of 20 per minute per client address. OAuth sign-in skips the per-email login throttle.
     - Social-only accounts have no password until they set one or use Forgot password.
     - Account "Sign-in methods" (connect, disconnect, set password) and the operator panel provider badges follow design §6 and §7. Disconnecting the last sign-in method is refused inside the store transaction (`ErrLastSignInMethod`).
+
+### D-130: 404 page, skeleton loading states and motion (2026-11-17)
+- **Status:** Accepted
+- **Decision:**
+  - Skeletons appear only on navigations slower than 250 ms and on pending actions (Test URL). Pages are server-rendered, so there is nothing to show until the response arrives, and a skeleton on every click would flash on fast loads. The real `#content` nodes are kept and put back on a back/forward cache restore (`pageshow` with `persisted`) or after 10 s without an unload (Stop, a download). Live refresh never shows a skeleton and holds off while one is up. Check now keeps its button spinner as the busy state rather than adding a second one.
+  - Skeleton markup lives in `<template>` elements in `layout.html` (the `skeletons` partial), so JavaScript only clones them. Public pages have no sidebar and carry none.
+  - No staggered entrances and no count-up numbers. Motion is limited to a 160 ms page fade, an 800 ms highlight on a row whose `data-k` state changed between refreshes, 200 ms colour easing and button press feedback, and every rule sits under `prefers-reduced-motion: no-preference`. Live refresh replaces elements, so colour easing shows on hover and theme changes, not across a refresh; the row highlight covers that case.
+  - The 404 page rules: status 404 and `Cache-Control: no-store` always. A GET that wants HTML gets the page (in the layout when signed in, a card when not). Partial (`X-Partial: 1`), `/api/`, JSON callers and non-GET requests get the plain-text 404. Every existing 404 stays where it was, so cross-workspace access is still 404 (D-127 and the isolation tests). The `/admin` gate and `requireOperator` call the same `notFound`, so an operator-only path answers exactly what an unknown path answers for the same visitor.
+  - Routing: `GET /` is the catch-all in the public class (`GET /{$}` is the overview). A `GET /` pattern would make any other method on an unknown path a 405, so non-GET and non-HEAD requests go to a mux built without it: unknown paths stay a plain 404 and known paths keep their 405. A GET on a POST-only path now gets the 404 page instead of 405.
+

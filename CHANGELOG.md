@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-11-17
+
+### Added
+
+- A 404 page for unknown addresses and missing records. Signed in, it appears inside the normal layout with links to Overview and Monitors; signed out, it is a small card linking to Sign in and the status page. Partial refreshes, the JSON API, JSON callers and non-GET requests still get the plain-text 404.
+- Skeleton loading states: a navigation that takes longer than 250 ms shows a placeholder shaped like the destination (overview, monitors, monitor detail, incidents, other pages), and Test URL shows a placeholder line while the test runs. The page comes back unchanged on back/forward or if the navigation is stopped.
+
+### Changed
+
+- Subtle motion: pages fade in on load, a row whose status changed flashes for a moment on live refresh, status colours and buttons ease, and buttons give press feedback. All of it is off under `prefers-reduced-motion`.
+
 ## [1.2.1] - 2026-11-13
 
 ### Changed
