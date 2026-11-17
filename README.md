@@ -75,7 +75,7 @@ it; the config's `targets` and `notify` are seeded into it afterwards.
 - **Passwords** are at least 10 characters and at most 256 bytes, hashed with argon2id.
 - **Sessions** are stored in the database. They expire 30 days after sign-in
   or after 7 days idle, and a user has at most 20. "Sign out everywhere" on
-  `/account` revokes them all. Changing the password keeps only the current
+  Settings → Security revokes them all. Changing the password keeps only the current
   session. A password reset signs the user out everywhere, then signs in only a browser with no session or the same user's session.
 - **Cookies.** The session cookie is `uptime_session`, or `__Host-uptime_session`
   (Secure) when the request is HTTPS or `base_url` is https. A device cookie,
@@ -110,6 +110,24 @@ A restart invalidates device cookies, so during an attack the per-email
 slowdown can then delay the owner's own sign-in. Recover with
 `uptime-monitor -reset-password <email>`: its link signs you in without going
 through the sign-in limits.
+
+### Settings
+
+The gear item at the bottom of the sidebar opens Settings, with four pages
+and a sub-navigation (a list beside the content on wide screens, tabs above it
+on narrow ones):
+
+| Page | Path | Contents |
+| --- | --- | --- |
+| Profile | `/settings/profile` | email, time zone |
+| Security | `/settings/security` | password, sign-in methods (Google, GitHub), sign out everywhere |
+| Notifications | `/settings/notifications` | alert channels (Telegram, Slack, email), as the Alert channels page was |
+| Danger zone | `/settings/danger` | delete account (not shown to operators) |
+
+`/settings` goes to Profile. The old `GET /account` and `GET /alerts` answer
+302 to Security and Notifications. Their POST paths (`/account/...`,
+`/alerts`, `/alerts/test`) still work for this release, so a form left open
+during an upgrade is not lost, and are removed in 1.7.0.
 
 ### Sign-up and invites
 
@@ -207,9 +225,9 @@ controlling an address at a provider is not enough to take over an account.
 If the provider's email already belongs to an account that is not linked, the
 server creates nothing and answers 409, telling the person to sign in with
 their password (or use Forgot password) and then connect the provider from
-Account. This does tell a visitor that the address has an account (see
+Settings. This does tell a visitor that the address has an account (see
 D-129). A signed-in user connects or disconnects Google and GitHub in
-Account, under "Sign-in methods". Each provider can be connected once per
+Settings → Security, under "Sign-in methods". Each provider can be connected once per
 account, and each provider account to one user only. The provider's email may
 differ from the account's. Connecting needs a sign-in within the last 10
 minutes (an account with a password confirms it instead), and the account's
@@ -217,12 +235,23 @@ email gets a notice when a provider is connected or disconnected.
 Disconnecting the last way to sign in is refused.
 
 **Accounts without a password.** An account created through a provider has no
-password. It cannot sign in with one until the owner sets one under "Sign-in
-methods" or uses Forgot password. For these accounts, deleting the account,
-setting a password, connecting and disconnecting a provider ask for a sign-in
-within the last 10 minutes instead of the password, by signing in again with a connected
+password. It cannot sign in with one until the owner sets one under
+Settings → Security or uses Forgot password. For these accounts, deleting the
+account, connecting and disconnecting a provider ask for a sign-in within the
+last 10 minutes instead of the password, by signing in again with a connected
 provider. That proves only that the browser holds a live session with that
 provider, not that the user just typed a password.
+
+**First password.** When `mail` is set, **Set a password** on Settings →
+Security emails a one-hour link to the account's address, and the password is
+chosen on the `/reset` page (worded "Choose a password" while the account has
+none). The inbox, not a recent provider sign-in, is the proof, so the in-place
+form is gone and its POST is refused. The button is limited to 3 links per
+hour per user and shares the per-address reset-mail budget. Without `mail` no
+link can be sent, so the earlier rule stays: a provider sign-in within the
+last 10 minutes, then the password form on the Security page. The link always
+goes to the address the account signed up with; the account email cannot be
+changed.
 
 Starting and finishing a provider sign-in are limited to 20 per minute per
 client address. The sign-in state lives in a cookie for 10 minutes. The
@@ -257,7 +286,7 @@ What it sends:
 
 - **Verification** (`signup: "open"`): a link valid for 24 hours. `/verify/resend` sends a new one. Accounts still unverified 48 hours after sign-up are deleted by the hourly prune (so a verify link resent late may expire together with the account), operators and disabled accounts excepted (D-127). Re-enabling an unverified account older than 48 hours means the next hourly prune deletes it, so send a reset link instead (resetting verifies the address).
 - **Forgot password**: `/forgot` sends a reset link valid for 1 hour. It answers the same for every address. Completing a reset also verifies the address. `/reset` and `/verify` links open even while you are signed in; a reset signs in only a browser with no session or the same user's session.
-- **Password-change notice**: sent after a reset or a change on `/account`.
+- **Password-change notice**: sent after a reset or a change in Settings → Security.
 - **Duplicate sign-up notice**: sent to the existing owner when someone signs up with their address.
 
 Mail budgets (in memory, reset on restart). A message over a budget is dropped
@@ -281,7 +310,7 @@ resend form. Use `uptime-monitor -reset-password <email>` to recover an account.
 
 With `mail` set, a workspace that has no email alert channel (no SMTP host)
 gets its alert emails from the server instead, so alerts work without anyone
-having an SMTP account. This is on by default. The Alert channels page shows
+having an SMTP account. This is on by default. The Settings → Notifications page shows
 "Alerts are emailed from this server to <your email>" and the Email box in the
 card header is the switch that turns it off for that workspace
 (stored as `"server_email_off": true` in the workspace's `notify` settings;
@@ -320,7 +349,7 @@ same fallback.
   log, because they can name the operator's mail account.
 
 When the SMTP server of a workspace's own email channel refuses the login (reply
-535, or 530, 534, 538), the Alert channels page reads "Login rejected — check the username and password"; the
+535, or 530, 534, 538), the Notifications page reads "Login rejected — check the username and password"; the
 full error is in the log. The SMTP username is saved without leading or
 trailing spaces, and so is the password (spaces inside it are kept).
 
@@ -371,7 +400,7 @@ it again.
 
 ### Time zones
 
-Each user has a time zone on the Account page. **Automatic** (the default)
+Each user has a time zone under Settings → Profile. **Automatic** (the default)
 follows the zone the browser last reported, and shows UTC until it has
 reported one; or pick a zone from the list. Which zone shows where:
 
@@ -390,7 +419,7 @@ database is needed (for example in a `scratch` image).
 
 ### Deleting an account
 
-`/account` lets a user delete their account after confirming their password.
+Settings → Danger zone lets a user delete their account after confirming their password.
 Operators don't see the form; the server itself refuses the last operator.
 The user, their sessions and the workspace they alone belong to (monitors,
 checks, incidents, alert settings and status page) are removed, and its
@@ -414,7 +443,7 @@ email, or by monitored host (which matches anywhere in the URL). Actions:
   kept, and the user cannot sign in.
 - **Enable** lifts the suspension and restarts those monitors at once.
 - **Delete** asks for your current password, then disables the user, stops
-  their monitors and deletes the account as `/account` does. If the delete
+  their monitors and deletes the account as Settings → Danger zone does. If the delete
   fails, the user is left disabled and the page says so.
 - **Resend verification** sends a new verification link to an unverified,
   enabled user. It needs `mail`, and the link uses `base_url`.

@@ -574,3 +574,13 @@ Full design:
   - The zone list is committed (`internal/store/zones.go`, generated from `zone.tab`) because Go cannot list zones; a test loads every name. The binary embeds `time/tzdata` (about 450 KB) so scratch images work.
   - Judgement call: server-side `ts` takes the location from the page data (`$.Loc`) rather than a per-request template clone, since templates are parsed once; fragments rendered through `dict` pass it in.
 
+### D-133: Settings page and verified first password (2026-11-17)
+- **Status:** Accepted
+- **Decision:**
+  - One Settings area replaces the Account page and the Alert channels nav item: Profile, Security, Notifications and Danger zone, each its own page under `/settings/` with a shared sub-navigation, reached from a gear item in the sidebar foot. Separate pages (not one long page with anchors) keep each URL linkable, keep the skeleton and live-refresh behaviour per page, and let Notifications keep its own form.
+  - Old GET paths answer 302, not 301: a browser keeps a 301 forever and these are temporary aliases. The old POST paths stay registered as aliases of the same handlers for one release, because a form open in a tab during an upgrade would otherwise fail; they are removed in 1.7.0. Success redirects, emails and the OAuth return path use the new URLs.
+  - A first password for a Google or GitHub account is chosen through an emailed link: the existing reset token and `/reset` page, with a "Set a password" email and "Choose a password" wording. No new token kind, route or schema, and the inbox, not a recent provider sign-in, is the proof. The wording follows the account's state when the page is opened. The in-place form is removed when `mail` is set, and its POST is refused, otherwise it would remain a weaker route to the same result.
+  - Budgets: 3 links per hour per user from the button, plus the existing per-address reset-mail budget and the instance mail budget. Over budget the user is told a link was sent recently.
+  - Without `mail` there is no inbox step, so the earlier rule stays (a provider sign-in within 10 minutes, then the in-place form), and the card says so. The link goes to `users.email`; the account email cannot be changed, so a user who lost that inbox needs the operator.
+  - Judgement call: the Danger zone sub-nav link is hidden for operators (they cannot delete their account here); the page still answers and says so.
+
