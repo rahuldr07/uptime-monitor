@@ -90,6 +90,9 @@ type Notify struct {
 	Telegram *Telegram `json:"telegram,omitempty"`
 	Slack    *Slack    `json:"slack,omitempty"`
 	Email    *Email    `json:"email,omitempty"`
+	// ServerEmailOff turns off the fallback alert email sent through the
+	// server's system mail when no email channel is set up. Absent means on.
+	ServerEmailOff bool `json:"server_email_off,omitempty"`
 }
 
 // Config is the full application configuration.
@@ -146,6 +149,7 @@ type Limits struct {
 	SignupsPerHour        *int     `json:"signups_per_hour"`         // across the instance (default 100)
 	HostRequestsPerSecond *float64 `json:"host_requests_per_second"` // per target host (default 1)
 	MailPerHour           *int     `json:"mail_per_hour"`            // across the instance, all system email (default 500, at least 1)
+	MailPerDay            *int     `json:"mail_per_day"`             // across the instance, all system email; 0 is unlimited (default)
 }
 
 // Load reads a JSON config file. Environment variables in the form $VAR or
@@ -537,6 +541,9 @@ func (l *Limits) applyDefaults() error {
 		l.MailPerHour = &perHour
 	} else if *l.MailPerHour < 1 {
 		return errors.New("config: limits.mail_per_hour must be at least 1")
+	}
+	if err := defInt("mail_per_day", &l.MailPerDay, 0); err != nil {
+		return err
 	}
 	return nil
 }

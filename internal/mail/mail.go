@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/textproto"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type Sender interface {
 type Options struct {
 	Sender    Sender
 	PerHour   int              // instance budget (limits.mail_per_hour)
+	PerDay    int              // instance daily budget (limits.mail_per_day); 0 = unlimited
 	Logger    *slog.Logger     // nil = slog.Default()
 	Now       func() time.Time // nil = time.Now; set as the limiters' Now
 	QueueSize int              // 0 = 100
@@ -43,7 +45,15 @@ type Queue struct {
 
 	mu             sync.Mutex // serialises Send and Notice: check, compose, charge, push
 	hour, day, all *ratelimit.Limiter
+	allDay         *ratelimit.Limiter // nil = no daily cap
+	wsHour, wsDay  *ratelimit.Limiter // fallback alerts, per workspace
 }
+
+// Fallback alert budgets per workspace.
+const (
+	alertsPerHour = 10
+	alertsPerDay  = 30
+)
 
 const instanceKey = "instance"
 
@@ -61,8 +71,14 @@ func New(o Options) *Queue {
 		day:  ratelimit.New(24*time.Hour, 10, 0),
 		all:  ratelimit.New(time.Hour, o.PerHour, 1),
 	}
-	for _, l := range []*ratelimit.Limiter{q.hour, q.day, q.all} {
-		l.Now = o.Now
+	q.wsHour, q.wsDay = ratelimit.New(time.Hour, alertsPerHour, 0), ratelimit.New(24*time.Hour, alertsPerDay, 0)
+	if o.PerDay > 0 {
+		q.allDay = ratelimit.New(24*time.Hour, o.PerDay, 1)
+	}
+	for _, l := range []*ratelimit.Limiter{q.hour, q.day, q.all, q.allDay, q.wsHour, q.wsDay} {
+		if l != nil {
+			l.Now = o.Now
+		}
 	}
 	return q
 }
@@ -119,16 +135,70 @@ func (q *Queue) refuse(to string, perRecipient bool) string {
 			return "recipient_day"
 		}
 	}
+	return q.refuseInstance()
+}
+
+// refuseInstance checks the instance budgets; the caller holds mu.
+func (q *Queue) refuseInstance() string {
 	if ok, _ := q.all.Allow(instanceKey); !ok {
 		return "instance"
+	}
+	if q.allDay != nil {
+		if ok, _ := q.allDay.Allow(instanceKey); !ok {
+			return "instance_day"
+		}
 	}
 	return ""
 }
 
 // push charges the instance budget and queues; the caller holds mu.
 func (q *Queue) push(to, subject, body string) {
-	q.all.Hit(instanceKey)
+	q.hitInstance()
 	q.ch <- message{to, subject, body}
+}
+
+func (q *Queue) hitInstance() {
+	q.all.Hit(instanceKey)
+	if q.allDay != nil {
+		q.allDay.Hit(instanceKey)
+	}
+}
+
+// Admit charges one fallback alert email to the workspace budgets (10/hour,
+// 30/day) and the instance budgets, or returns why it was refused (and logs
+// event=alert_mail_dropped). It is called once per alert, before delivery, so
+// retries of the same alert are not charged again.
+func (q *Queue) Admit(workspace int64) (reason string) {
+	key := strconv.FormatInt(workspace, 10)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	switch {
+	case !allowed(q.wsHour, key):
+		reason = "workspace_hour"
+	case !allowed(q.wsDay, key):
+		reason = "workspace_day"
+	default:
+		reason = q.refuseInstance()
+	}
+	if reason != "" {
+		q.log.Warn("alert mail dropped", "event", "alert_mail_dropped", "workspace", workspace, "reason", reason)
+		return reason
+	}
+	q.wsHour.Hit(key)
+	q.wsDay.Hit(key)
+	q.hitInstance()
+	return ""
+}
+
+func allowed(l *ratelimit.Limiter, key string) bool {
+	ok, _ := l.Allow(key)
+	return ok
+}
+
+// Deliver sends one message now, through the same sender as queued mail, and
+// returns its error. Admit must have allowed it.
+func (q *Queue) Deliver(ctx context.Context, to []string, subject, body string) error {
+	return q.sender.Send(ctx, to, subject, body)
 }
 
 func (q *Queue) drop(to, reason string) {

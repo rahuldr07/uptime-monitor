@@ -249,6 +249,19 @@ func TestMailPerHour(t *testing.T) {
 	}
 }
 
+func TestMailPerDay(t *testing.T) {
+	c, err := Parse([]byte(`{}`))
+	if err != nil || c.Limits.MailPerDay == nil || *c.Limits.MailPerDay != 0 {
+		t.Fatalf("default mail_per_day: %v %v", err, c.Limits.MailPerDay)
+	}
+	if c, err = Parse([]byte(`{"limits":{"mail_per_day":200}}`)); err != nil || *c.Limits.MailPerDay != 200 {
+		t.Fatalf("mail_per_day 200: %v", err)
+	}
+	if _, err := Parse([]byte(`{"limits":{"mail_per_day":-1}}`)); err == nil || !strings.Contains(err.Error(), "limits.mail_per_day must not be negative") {
+		t.Fatalf("negative mail_per_day: %v", err)
+	}
+}
+
 func TestLimitsDefaults(t *testing.T) {
 	c, err := Parse([]byte(`{}`))
 	if err != nil {

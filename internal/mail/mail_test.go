@@ -241,3 +241,88 @@ func TestRunStopsOnCancel(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 }
+
+func (h *harness) admit(ws int64) string { return h.q.Admit(ws) }
+
+func TestAdmitWorkspaceBudgets(t *testing.T) {
+	h := newHarness(1000, 0)
+	for i := 0; i < 10; i++ {
+		if r := h.admit(7); r != "" {
+			t.Fatalf("admit %d: %q", i+1, r)
+		}
+	}
+	if r := h.admit(7); r != "workspace_hour" {
+		t.Fatalf("11th in an hour = %q", r)
+	}
+	if r := h.admit(8); r != "" {
+		t.Fatalf("another workspace shares the budget: %q", r)
+	}
+	if !strings.Contains(h.logs.String(), `"event":"alert_mail_dropped"`) || !strings.Contains(h.logs.String(), `"workspace":7`) ||
+		!strings.Contains(h.logs.String(), `"reason":"workspace_hour"`) {
+		t.Fatalf("no WARN: %s", h.logs)
+	}
+	// 30 a day: three hours of 10.
+	for hr := 0; hr < 2; hr++ {
+		h.now = h.now.Add(61 * time.Minute)
+		for i := 0; i < 10; i++ {
+			if r := h.admit(7); r != "" {
+				t.Fatalf("hour %d admit %d: %q", hr+2, i+1, r)
+			}
+		}
+	}
+	h.now = h.now.Add(61 * time.Minute)
+	if r := h.admit(7); r != "workspace_day" {
+		t.Fatalf("31st in a day = %q", r)
+	}
+	h.now = h.now.Add(24 * time.Hour)
+	if r := h.admit(7); r != "" {
+		t.Fatalf("a day later = %q", r)
+	}
+}
+
+func TestAdmitCountsAgainstInstanceBudgets(t *testing.T) {
+	h := newHarness(2, 0)
+	if h.admit(1) != "" || h.admit(2) != "" {
+		t.Fatal("two alerts fit the instance hour")
+	}
+	if r := h.admit(3); r != "instance" {
+		t.Fatalf("3rd = %q", r)
+	}
+	if h.send("a@example.com") {
+		t.Fatal("system mail got through a spent instance budget")
+	}
+}
+
+func TestMailPerDayCapsAllSystemMail(t *testing.T) {
+	f := newFake()
+	now := time.Unix(1_700_000_000, 0)
+	q := New(Options{Sender: f, PerHour: 100, PerDay: 3, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+		Now: func() time.Time { return now }})
+	compose := func() (string, string, error) { return "s", "b", nil }
+	_ = q.Send("a@example.com", compose) // 1
+	q.Notice("b@example.com", "s", "b")  // 2
+	if q.Admit(1) != "" {                // 3
+		t.Fatal("third message should fit")
+	}
+	if r := q.Admit(1); r != "instance_day" {
+		t.Fatalf("4th = %q", r)
+	}
+	ran := false
+	_ = q.Send("c@example.com", func() (string, string, error) { ran = true; return "s", "b", nil })
+	if ran {
+		t.Fatal("queued mail got through the daily cap")
+	}
+	now = now.Add(25 * time.Hour)
+	if q.Admit(1) != "" {
+		t.Fatal("cap should lapse after a day")
+	}
+}
+
+func TestPerDayZeroIsUnlimited(t *testing.T) {
+	h := newHarness(1000, 0)
+	for ws := int64(1); ws <= 200; ws++ {
+		if r := h.admit(ws); r != "" {
+			t.Fatalf("ws %d: %q", ws, r)
+		}
+	}
+}
