@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	_ "time/tzdata" // the tests must not depend on the host tz database
 
 	"github.com/rahuldr07/uptime-monitor/internal/config"
 	"github.com/rahuldr07/uptime-monitor/internal/netguard"
@@ -489,17 +490,23 @@ func TestServerEmailErrorsAreGenericForTenants(t *testing.T) {
 
 func TestEmailMessageTimeZone(t *testing.T) {
 	at := time.Date(2026, 11, 17, 11, 0, 5, 0, time.UTC)
-	kolkata, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		t.Fatal(err)
+	load := func(n string) *time.Location {
+		l, err := time.LoadLocation(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
 	}
+	kolkata, istanbul, newYork := load("Asia/Kolkata"), load("Europe/Istanbul"), load("America/New_York")
 	for _, c := range []struct {
 		loc  *time.Location
 		want string
 	}{
 		{nil, "At: 2026-11-17 11:00 UTC\r\n"},
 		{time.UTC, "At: 2026-11-17 11:00 UTC\r\n"},
-		{kolkata, "At: 2026-11-17 16:30 IST\r\n"},
+		{kolkata, "At: 2026-11-17 16:30 IST (UTC+05:30)\r\n"},
+		{istanbul, "At: 2026-11-17 14:00 UTC+03:00\r\n"},
+		{newYork, "At: 2026-11-17 06:00 EST (UTC-05:00)\r\n"},
 	} {
 		_, body := emailMessage(Event{Target: "api", URL: "https://a", Up: true, At: at, Loc: c.loc})
 		if !strings.HasSuffix(body, c.want) {

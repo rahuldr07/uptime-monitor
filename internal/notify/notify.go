@@ -39,13 +39,35 @@ type Event struct {
 	Loc *time.Location
 }
 
-// FormatTime renders t in loc (nil means UTC) for people to read in email, as
-// "2026-11-17 16:30 IST".
+// FormatTime renders t in loc (nil means UTC) for people to read outside the
+// app, with the offset so it cannot be misread: "2026-11-17 16:30 IST
+// (UTC+05:30)", "2026-11-17 11:00 UTC", or "2026-11-17 14:00 UTC+03:00" where
+// the zone's abbreviation is only a number.
 func FormatTime(t time.Time, loc *time.Location) string {
 	if loc == nil {
 		loc = time.UTC
 	}
-	return t.In(loc).Format("2006-01-02 15:04 MST")
+	t = t.In(loc)
+	abbr := t.Format("MST")
+	date := t.Format("2006-01-02 15:04")
+	switch {
+	case abbr == "UTC":
+		return date + " UTC"
+	case abbr[0] == '+' || abbr[0] == '-':
+		return date + " " + UTCOffset(t)
+	}
+	return date + " " + abbr + " (" + UTCOffset(t) + ")"
+}
+
+// UTCOffset renders the offset of t's zone from UTC as "UTC+05:30", with an
+// ASCII hyphen when negative.
+func UTCOffset(t time.Time) string {
+	_, off := t.Zone()
+	sign := "+"
+	if off < 0 {
+		sign, off = "-", -off
+	}
+	return fmt.Sprintf("UTC%s%02d:%02d", sign, off/3600, off%3600/60)
 }
 
 // Message renders a one-line human-readable alert.
