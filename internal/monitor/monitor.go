@@ -874,6 +874,7 @@ func (m *Monitor) alert(incidentID, targetID, ws int64, ev notify.Event) {
 	if ev.Up {
 		event = "up"
 	}
+	ev.Loc = m.store.Workspace(ws).OwnerLocation(ctx)
 	var wg sync.WaitGroup
 	for _, n := range m.Notifiers(ctx, ws) {
 		wg.Add(1)
@@ -935,7 +936,8 @@ func (m *Monitor) SendTest(ctx context.Context, ws int64, channel string) error 
 					return err
 				}
 			}
-			return n.Notify(ctx, notify.Event{Target: "test", URL: "https://example.com", Up: true, At: m.now()})
+			return n.Notify(ctx, notify.Event{Target: "test", URL: "https://example.com", Up: true, At: m.now(),
+				Loc: m.store.Workspace(ws).OwnerLocation(ctx)})
 		}
 	}
 	return fmt.Errorf("no channel named %q", channel)

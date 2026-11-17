@@ -486,3 +486,28 @@ func TestServerEmailErrorsAreGenericForTenants(t *testing.T) {
 		t.Fatal("own channel lost the login message")
 	}
 }
+
+func TestEmailMessageTimeZone(t *testing.T) {
+	at := time.Date(2026, 11, 17, 11, 0, 5, 0, time.UTC)
+	kolkata, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		loc  *time.Location
+		want string
+	}{
+		{nil, "At: 2026-11-17 11:00 UTC\r\n"},
+		{time.UTC, "At: 2026-11-17 11:00 UTC\r\n"},
+		{kolkata, "At: 2026-11-17 16:30 IST\r\n"},
+	} {
+		_, body := emailMessage(Event{Target: "api", URL: "https://a", Up: true, At: at, Loc: c.loc})
+		if !strings.HasSuffix(body, c.want) {
+			t.Errorf("loc %v: body %q does not end with %q", c.loc, body, c.want)
+		}
+	}
+	// Telegram and Slack text carries no absolute time, so it does not depend on the zone.
+	if m := (Event{Target: "api", URL: "https://a", Up: true, At: at, Loc: kolkata}).Message(); strings.Contains(m, "16:30") || strings.Contains(m, "11:00") {
+		t.Errorf("Message has an absolute time: %q", m)
+	}
+}

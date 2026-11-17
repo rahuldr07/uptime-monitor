@@ -1420,3 +1420,22 @@ func TestServerEmailOverBudgetRecordsLimitReached(t *testing.T) {
 		t.Fatalf("status = %+v, want a failed alert reading Limit reached", a)
 	}
 }
+
+// An alert carries the workspace owner's zone, so email shows times in it.
+func TestAlertEventCarriesOwnerZone(t *testing.T) {
+	f := setup(t, 1)
+	ctx := context.Background()
+	u, ows, err := f.st.CreateAccount(ctx, store.AccountInput{Email: "o@example.com", PasswordHash: "h", WorkspaceName: "O", Slug: "o", Verified: true, Now: f.now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.SetDetectedZone(ctx, u.ID, "Asia/Kolkata"); err != nil {
+		t.Fatal(err)
+	}
+	f.mon.alertWG.Add(1)
+	f.mon.alert(0, 0, ows.ID(), notify.Event{Target: "api", At: f.now()})
+	evs := f.rec.list()
+	if len(evs) != 1 || evs[0].Loc == nil || evs[0].Loc.String() != "Asia/Kolkata" {
+		t.Fatalf("event zone = %+v", evs)
+	}
+}

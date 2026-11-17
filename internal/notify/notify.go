@@ -35,6 +35,17 @@ type Event struct {
 	StatusCode int
 	Error      string
 	DownFor    time.Duration // set on recovery
+	// Loc is the zone email shows the time in (the workspace owner's); nil means UTC.
+	Loc *time.Location
+}
+
+// FormatTime renders t in loc (nil means UTC) for people to read in email, as
+// "2026-11-17 16:30 IST".
+func FormatTime(t time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04 MST")
 }
 
 // Message renders a one-line human-readable alert.
@@ -153,7 +164,7 @@ func emailMessage(ev Event) (subject, body string) {
 	} else {
 		subject += "DOWN"
 	}
-	return subject, ev.Message() + "\r\nAt: " + ev.At.UTC().Format(time.RFC3339) + "\r\n"
+	return subject, ev.Message() + "\r\nAt: " + FormatTime(ev.At, ev.Loc) + "\r\n"
 }
 
 // ErrLimit means an alert email was dropped because a budget is spent.
