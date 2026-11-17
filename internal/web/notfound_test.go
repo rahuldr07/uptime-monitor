@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,10 @@ func TestNotFoundSignedOut(t *testing.T) {
 	if resp.Header.Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control %q, want no-store", resp.Header.Get("Cache-Control"))
 	}
-	for _, want := range []string{"Page not found", "/does-not-exist", `href="/login"`, `href="/status"`} {
+	if strings.Contains(body, "/does-not-exist") {
+		t.Error("signed-out page must not echo the path")
+	}
+	for _, want := range []string{"Page not found", `href="/login"`, `href="/status"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in %s", want, body)
 		}
@@ -34,7 +38,10 @@ func TestNotFoundSignedIn(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", resp.StatusCode)
 	}
-	for _, want := range []string{"Page not found", `class="side"`, "/nothing/here", `href="/targets"`} {
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Errorf("404 page must refuse framing: %q", csp)
+	}
+	for _, want := range []string{"Page not found", `class="side"`, "/nothing/here", `href="/"`, "Go to overview"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -105,7 +112,7 @@ func TestNotFoundFromHandlers(t *testing.T) {
 	}
 	// Anonymous visitors get the same page for an unknown status slug.
 	resp, body = e.get(t, e.client(t), "/s/nope")
-	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "Page not found") {
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "Status page not found") {
 		t.Errorf("unknown slug: %d", resp.StatusCode)
 	}
 }
@@ -130,7 +137,7 @@ func TestAdminGateMatchesUnknownPath(t *testing.T) {
 	e := newEnv(t)
 	bob, _ := e.account(t, "bob@example.com")
 	for name, c := range map[string]*http.Client{"anonymous": e.client(t), "non-operator": bob} {
-		for _, m := range []string{"GET", "POST", "PUT"} {
+		for _, m := range []string{"GET", "HEAD", "POST", "PUT"} {
 			var got [2]string
 			for i, path := range []string{"/admin/users/1/disable", "/zzz/users/1/disable"} {
 				req, _ := http.NewRequest(m, e.ts.URL+path, nil)
@@ -146,5 +153,66 @@ func TestAdminGateMatchesUnknownPath(t *testing.T) {
 				t.Errorf("%s %s: /admin differs from an unknown path:\n%s\n%s", name, m, got[0], got[1])
 			}
 		}
+	}
+}
+
+func TestStatusNotFoundIsPublicCardAndNotFrameable(t *testing.T) {
+	e := newEnv(t)
+	for name, c := range map[string]*http.Client{"signed in": e.op, "signed out": e.client(t)} {
+		resp, body := e.get(t, c, "/s/nope")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s: status %d", name, resp.StatusCode)
+		}
+		if !strings.Contains(body, "Status page not found") || strings.Contains(body, `class="side"`) || strings.Contains(body, "Sign in") {
+			t.Errorf("%s: want the bare public card, got %s", name, body)
+		}
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || strings.Contains(csp, "frame-ancestors *") {
+			t.Errorf("%s: CSP %q", name, csp)
+		}
+		if resp.Header.Get("X-Frame-Options") != "DENY" {
+			t.Errorf("%s: X-Frame-Options %q", name, resp.Header.Get("X-Frame-Options"))
+		}
+	}
+}
+
+func TestNotFoundMethods(t *testing.T) {
+	e := newEnv(t)
+	req, _ := http.NewRequest("HEAD", e.ts.URL+"/nope", nil)
+	resp, err := e.op.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := readBody(resp); resp.StatusCode != http.StatusNotFound || b != "" {
+		t.Errorf("HEAD: %d %q", resp.StatusCode, b)
+	}
+	// A GET on a POST-only path is the 404 page, not a 405.
+	resp, body := e.get(t, e.op, "/logout")
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "Page not found") {
+		t.Errorf("GET /logout: %d", resp.StatusCode)
+	}
+	// Other methods on a known GET-only path keep their 405.
+	req, _ = http.NewRequest("PUT", e.ts.URL+"/events", nil)
+	if resp, err = e.op.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("PUT /events: %d, want 405", resp.StatusCode)
+	}
+}
+
+// Another workspace's record is indistinguishable from a missing one.
+func TestNotFoundSameForOtherWorkspaceRecord(t *testing.T) {
+	e := newEnv(t)
+	a := seedA(t, e)
+	bob, _ := e.account(t, "bob@example.com")
+	r1, b1 := e.get(t, bob, "/targets/"+strconv.FormatInt(a.target, 10))
+	r2, b2 := e.get(t, bob, "/targets/999999")
+	if r1.StatusCode != http.StatusNotFound || r2.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d / %d", r1.StatusCode, r2.StatusCode)
+	}
+	norm := func(b, id string) string { return strings.ReplaceAll(b, "/targets/"+id, "/targets/ID") }
+	if norm(b1, strconv.FormatInt(a.target, 10)) != norm(b2, "999999") {
+		t.Error("other workspace's target answers differently from a missing one")
 	}
 }

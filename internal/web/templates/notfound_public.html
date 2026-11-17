@@ -1,9 +1,14 @@
 {{define "content"}}
 <div class="login">
   <div class="card">
+    {{if .Status}}
+    <h1>Status page not found</h1>
+    <p class="muted small lead">There is no status page at this address. Check the link you were given.</p>
+    {{else}}
     <h1>Page not found</h1>
-    <p class="muted small" style="margin:4px 0 16px">There's nothing at <code>{{.Path}}</code>. It may have been moved or deleted.</p>
-    <div class="btns"><a class="btn primary" href="/login">Sign in</a><a class="btn" href="/status">Status page</a></div>
+    <p class="muted small lead">There's nothing at this address. Check the address, or it may have been deleted.</p>
+    <div class="btns"><a class="btn primary" href="/login">Sign in</a>{{if .StatusLink}}<a class="btn" href="/status">Status page</a>{{end}}</div>
+    {{end}}
   </div>
 </div>
 {{end}}

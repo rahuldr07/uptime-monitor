@@ -86,7 +86,9 @@ func writeHTML(w http.ResponseWriter, code int, b []byte) {
 
 type notFoundData struct {
 	base
-	Path string
+	Path       string // echoed to signed-in users only
+	Status     bool   // under /s/: a missing status page
+	StatusLink bool   // the general status page exists, so link to it
 }
 
 // notFound answers 404. Browsers navigating by GET get a page that says so
@@ -98,20 +100,31 @@ func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r) // bare, so it matches the mux's own 404 for unknown paths (the /admin gate relies on that)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	p := []rune(r.URL.Path)
-	if len(p) > 80 {
-		p = append(p[:80], '…')
-	}
-	d := notFoundData{Path: string(p)}
-	page := "notfound_public"
-	if a, ok := s.currentAuth(r); ok {
-		page, d.base = "notfound", s.base(r, a, "", "Page not found")
+	h := w.Header()
+	h.Set("Cache-Control", "no-store")
+	// /s/ may be framed by other sites, but this page must not be: it can render the signed-in layout.
+	h.Set("Content-Security-Policy", cspBase+"frame-ancestors 'none'")
+	h.Set("X-Frame-Options", "DENY")
+	d := notFoundData{Status: strings.HasPrefix(r.URL.Path, "/s/")}
+	a, signedIn := s.currentAuth(r)
+	if signedIn && !d.Status {
+		p := []rune(r.URL.Path)
+		if len(p) > 80 {
+			p = append(p[:80], '…')
+		}
+		d.Path = string(p)
+		d.base = s.base(r, a, "", "Page not found")
 		d.NoRefresh = true
-	} else {
-		d.base = s.page(r, "Page not found")
+		s.renderStatus(w, r, http.StatusNotFound, "notfound", d)
+		return
 	}
-	s.renderStatus(w, r, http.StatusNotFound, page, d)
+	d.base = s.page(r, "Page not found")
+	if d.Status {
+		d.Title = "Status page not found"
+	} else if _, err := s.sys.Workspace(store.OperatorWorkspaceID).Info(r.Context()); err == nil {
+		d.StatusLink = true
+	}
+	s.renderStatus(w, r, http.StatusNotFound, "notfound_public", d)
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
