@@ -1207,6 +1207,19 @@
     var da = el.getAttribute('data-action'); if (da) return 'act:' + da + '|' + el.textContent.trim();
     return '';
   }
+  // Row keys (table + data-id) with their data-k state, so a refresh can flash only the rows whose state changed.
+  function rowStates(root) {
+    var m = {};
+    $$('.dt[data-table] tr[data-id][data-k]', root).forEach(function (r) { m[r.closest('.dt').getAttribute('data-table') + ':' + r.getAttribute('data-id')] = r.getAttribute('data-k'); });
+    return m;
+  }
+  function flashChanged(root, before) {
+    if (reduced()) return;
+    $$('.dt[data-table] tr[data-id][data-k]', root).forEach(function (r) {
+      var k = before[r.closest('.dt').getAttribute('data-table') + ':' + r.getAttribute('data-id')];
+      if (k !== undefined && k !== r.getAttribute('data-k')) r.classList.add('flash');
+    });
+  }
   window.refresh = function () {
     if (document.body.classList.contains('panel-open') || editing()) { pending = true; return; }
     if (refreshing) { pending = true; return; }
@@ -1224,8 +1237,9 @@
         var FOC = 'button,a[href],input,select,textarea,summary,.dt-wrap,.dt-grip', act = document.activeElement;
         var fk = act && main.contains(act) ? focusKey(act) : '', ftag = fk ? act.tagName : '';
         var dq = act && act.classList && act.classList.contains('dt-q') ? { id: act.closest('.dt').getAttribute('data-table'), a: act.selectionStart, b: act.selectionEnd } : null;
+        var before = rowStates(main);
         main.innerHTML = html;
-        wire(main); dropBulk();
+        wire(main); dropBulk(); flashChanged(main, before);
         if (fk && document.activeElement !== act) { // keep the keyboard position across a refresh, but only on the same element
           var m = $$(FOC, main).filter(function (x) { return x.tagName === ftag && focusKey(x) === fk; });
           if (m.length === 1) m[0].focus({ preventScroll: true }); // an ambiguous key restores nothing
