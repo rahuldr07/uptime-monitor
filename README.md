@@ -134,6 +134,15 @@ address already has an account: an existing owner gets a notice email instead
 (at most one per 24 hours). At `limits.max_workspaces`, open sign-up answers
 403 for every address.
 
+An invitation bound to an address (`-invite person@example.com`) proves that
+address, so the account is verified at once. An unbound invitation (`-invite`
+with no email, or the operator panel's "any address") does not: when `mail` is
+set, the new account verifies its address by email exactly as in open sign-up,
+and until it does it cannot sign in and receives no alert emails from the
+server. Without `mail` there is no way to verify, so such accounts are verified
+at sign-up as before. Unverified accounts are deleted 48 hours after sign-up by
+the hourly prune (operators excepted; D-127).
+
 Create an invitation after setup with `uptime-monitor -invite` (any holder of
 the link may sign up) or `uptime-monitor -invite person@example.com` (the
 sign-up must use that address). It prints a link that works once and expires
@@ -271,8 +280,8 @@ resend form. Use `uptime-monitor -reset-password <email>` to recover an account.
 With `mail` set, a workspace that has no email alert channel (no SMTP host)
 gets its alert emails from the server instead, so alerts work without anyone
 having an SMTP account. This is on by default. The Alert channels page shows
-"No SMTP set up — alerts are sent from the server to <your email>" with a
-"Send alerts to my account email" box that turns it off for that workspace
+"Alerts are emailed from this server to <your email>" and the Email box in the
+card header is the switch that turns it off for that workspace
 (stored as `"server_email_off": true` in the workspace's `notify` settings;
 saving other channels leaves it as it was). The operator's workspace gets the
 same fallback.
@@ -289,21 +298,29 @@ same fallback.
   same TLS and address checks as other system email. Delivery is retried three
   times like any channel.
 - **Budgets** (in memory, reset on restart): 10 alerts per hour and 30 per day
-  per workspace, charged once per alert (not per retry), plus the instance
-  budgets below. An alert over a budget is dropped with a WARN
-  `event=alert_mail_dropped` (`workspace`, `reason`), and the Email card shows
-  "Limit reached" until the next delivery. "Save and send test" tests the
-  fallback and counts against the budgets.
+  per workspace, charged once per alert (not per retry). Each alert also counts
+  against the instance budgets, one unit per recipient. An alert over a budget
+  is dropped with a WARN `event=alert_mail_dropped` (`workspace`, `reason`), and
+  the Email card reads "Limit reached" until the next delivery. "Save and send
+  test" tests the fallback and counts against the budgets.
 - **Instance budgets**: `limits.mail_per_hour` (default 500) and
-  `limits.mail_per_day` (default `0`, unlimited) cap all system email together,
-  fallback alerts included. A free plan with a daily send cap (Brevo's is 300 a
-  day) needs `mail_per_day` set a little below it, so alerts and sign-in emails
-  stop before the provider does.
+  `limits.mail_per_day` (default `0`, unlimited) cap all system email together.
+  Fallback alerts from workspaces other than the operator's may use only half
+  of each (`mail_per_hour / 2`, and `mail_per_day / 2` when set), so alerts can
+  never use up the mail that sign-up and password reset need; the operator's
+  workspace is not held to that share but still counts against the full
+  budgets. **Set `mail_per_day` on a free plan**: Brevo's free plan allows 300
+  emails a day, so use a value a little below it, or the provider will start
+  refusing everything, sign-up emails included. The server logs a WARN at
+  startup when `signup` is `open`, `mail` is set and `mail_per_day` is `0`.
+- **Errors**: a failure of the server's own mail (SMTP down, login refused) shows
+  as "Server mail failed" on the workspace's page, with the details only in the
+  log, because they can name the operator's mail account.
 
-When an SMTP server refuses the login (reply 535, or 530, 534, 538), the Alert
-channels page reads "Login rejected — check the username and password"; the
+When the SMTP server of a workspace's own email channel refuses the login (reply
+535, or 530, 534, 538), the Alert channels page reads "Login rejected — check the username and password"; the
 full error is in the log. The SMTP username is saved without leading or
-trailing spaces; the password is saved exactly as typed.
+trailing spaces, and so is the password (spaces inside it are kept).
 
 ### Limits
 

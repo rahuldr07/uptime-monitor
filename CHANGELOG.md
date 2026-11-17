@@ -7,13 +7,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- Fallback alert email through the server's system mail. A workspace with no email channel (no SMTP host) now gets alert emails sent from the server to the verified sign-in addresses of its members, never to an address typed into a form. On by default when `mail` is set; the Alert channels page has a "Send alerts to my account email" box to turn it off per workspace, and "Save and send test" tests it. Budgets: 10 per hour and 30 per day per workspace, charged once per alert, also counted against the instance budget. Over a budget the alert is dropped with a WARN `event=alert_mail_dropped` and the Email card reads "Limit reached".
+- Fallback alert email through the server's system mail. A workspace with no email channel (no SMTP host) now gets alert emails sent from the server to the verified sign-in addresses of its members, never to an address typed into a form. On by default when `mail` is set; the Alert channels page has a Email box to turn it off per workspace, and "Save and send test" tests it. Budgets: 10 per hour and 30 per day per workspace, charged once per alert, also counted against the instance budget. Over a budget the alert is dropped with a WARN `event=alert_mail_dropped` and the Email card reads "Limit reached".
 - `limits.mail_per_day`: a daily cap on all system email across the instance. Default `0` (unlimited); a negative value is refused at startup.
 
 ### Changed
 
 - A refused SMTP login (reply 535, 530, 534 or 538) now shows "Login rejected — check the username and password" on the Alert channels page instead of the raw reply; the raw error stays in the log.
-- The SMTP password is saved exactly as typed. It was trimmed of leading and trailing spaces. The username is still trimmed.
+- An invitation not bound to an address no longer proves the address: when `mail` is set, an account created from it verifies its email like an open sign-up (and gets no alert emails until it does). Bound invitations, and instances without `mail`, are unchanged.
+- Upgrading: workspaces with no SMTP host start receiving alert emails from the server (to their members' verified addresses) after the upgrade if the server has `mail` set. Untick Email on the Alert channels page to stop them.
+- Fallback alerts from tenant workspaces may use only half of the instance mail budgets; a failure of the server's mail shows as "Server mail failed". A startup WARN appears when `signup` is `open`, `mail` is set and `limits.mail_per_day` is 0.
 
 ## [1.3.0] - 2026-11-17
 
