@@ -291,7 +291,7 @@ input[aria-invalid=true]:focus,select[aria-invalid=true]:focus,textarea[aria-inv
 @media(prefers-reduced-motion:reduce){.toast,.toast.leaving,.toast.pulse,.toast>.ic{animation:none}.toast-bar{opacity:0}}
 /* slide-over */
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40;opacity:0;pointer-events:none;transition:opacity .18s}
-.panel{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);background:var(--card);border-left:1px solid var(--border);z-index:50;padding:22px 24px;overflow:auto;transform:translateX(100%);transition:transform .2s ease-out;box-shadow:none}
+.panel{position:fixed;top:0;right:0;bottom:0;width:min(440px,100%);background:var(--card);border-left:1px solid var(--border);z-index:50;padding:22px 24px;overflow:auto;transform:translateX(100%);transition:transform .2s ease-out;box-shadow:none}
 body.panel-open .scrim{opacity:1;pointer-events:auto}body.panel-open .panel{transform:none;visibility:visible;transition:transform .2s ease-out}
 .panel{visibility:hidden;transition:transform .2s ease-out,visibility 0s linear .2s}.panel:focus{outline:none}
 @media(prefers-reduced-motion:reduce){.scrim,.panel,body.panel-open .panel{transition:none}}
@@ -380,3 +380,44 @@ code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3
   button:not(:disabled):active,.btn:active{transform:scale(.98)}
   .dt tbody td{transition:background-color .12s ease}
 }
+/* scroll bars: thin and themed everywhere, the page gutter reserved so locking the page does not shift the layout */
+html{scrollbar-gutter:stable}
+*{scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border:2px solid transparent;background-clip:content-box;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:content-box}
+/* nothing scrolls behind a slide-over or a dialog; scroll inside them does not chain to the page */
+html:has(body.panel-open),html:has(dialog[open]){overflow:hidden}
+.panel,dialog,.dd-list,.dd-menu{overscroll-behavior:contain}
+.dt-wrap,.scroll,.side{overscroll-behavior-x:contain}
+dialog{max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:auto}
+dialog p,dialog h2{overflow-wrap:anywhere}
+/* long unbroken values (names, URLs, errors) wrap in headings, banners and cards instead of widening the page */
+.shell{min-width:0}
+.topbar>*,.banner>*,.card .head>*,.dt-bar>*,.alert>*,.tile{min-width:0}
+.topbar>div:first-child{flex:1 1 260px}
+:is(.topbar h1,.topbar .sub,.topbar .small,.banner,.card h2,.card .head,.tile .v,.group-title,.status-head,.maint-card,.alert,.help,.field label){overflow-wrap:anywhere}
+.maint-grid{grid-template-columns:minmax(0,1fr) minmax(0,360px)}
+.maint-grid>*{min-width:0}
+@media(max-width:900px){.maint-grid{grid-template-columns:minmax(0,1fr)}}
+.days-legend{flex-wrap:wrap;gap:2px 12px}
+/* menus: long option labels truncate inside the menu instead of scrolling it sideways */
+.dd-list{overflow-x:hidden}
+.dd-opt>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* readable measure on very wide screens: the content column is centred beside the sidebar (tables may use all of it) */
+.main{margin-inline:auto;width:100%}
+/* narrow screens: the nav wraps instead of scrolling sideways, and nothing is a hard target to hit */
+@media(max-width:900px){.side{flex-wrap:wrap;overflow:visible}.side a.nav{min-width:40px;justify-content:center}}
+@media(max-width:639px){.side .foot{flex:1 1 100%;min-width:0;margin:0}.side .foot>a{flex:1;min-width:0}}
+.tabs{overflow-x:auto}
+@media(max-width:639px),(pointer:coarse){
+  button,button.sm,.btn,.btn.sm,.pm-item,.dt-view,.dt-edge-more,.dt-sort,.toast-x,.dt-pills .dd-btn,.dt-size .dd-btn,select,textarea,input:not([type=checkbox]):not([type=radio]),.dd-btn,.dt-pill,.dt-pg,.tabs a,.side a.nav,summary{min-height:40px}
+  .dt-pg{min-width:40px}
+  .dd-opt{min-height:40px}
+  .toast .toast-x{min-height:40px;min-width:40px;margin:-10px -12px -10px 0}
+  input,select,textarea,.dd-filter{font-size:16px}
+}
+.field{min-width:0}
+.dt-pages{flex-wrap:wrap}
+@media(max-width:480px){.days{gap:1px}}

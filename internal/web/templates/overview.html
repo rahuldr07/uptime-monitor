@@ -47,9 +47,9 @@
   <tr data-id="{{.State.Target.ID}}" data-k="{{.Class}}" data-href="/targets/{{.State.Target.ID}}" data-label="{{.State.Target.Name}}" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
     <td><span class="sdot {{.Class}}"></span></td>
     <td data-sort="{{.State.Target.Name}}"><a class="nm" href="/targets/{{.State.Target.ID}}">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge" title="Alerts muted">muted</span>{{end}}{{with .Maint}} <span class="badge maint" title="{{.Title}} · until {{ts $.Loc .EndsAt}}"><svg class="ic" aria-hidden="true"><use href="#i-wrench"/></svg>maintenance</span>{{end}}
-      {{if eq .Class "down"}}<span class="sub err">{{with .State.Last}}{{.Error}}{{end}} · down {{dur .DownFor}}</span>
+      {{if eq .Class "down"}}<span class="sub err" title="{{with .State.Last}}{{.Error}}{{end}}">{{with .State.Last}}{{.Error}}{{end}} · down {{dur .DownFor}}</span>
       {{else if eq .Class "paused"}}<span class="sub">paused</span>
-      {{else if eq .Class "maint"}}<span class="sub">{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts $.Loc .Maint.EndsAt}}</span>
+      {{else if eq .Class "maint"}}<span class="sub" title="{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts $.Loc .Maint.EndsAt}}">{{with .State.Last}}{{if .OK}}ok{{else}}{{.Error}}{{end}} · {{end}}in maintenance until {{ts $.Loc .Maint.EndsAt}}</span>
       {{else if .State.Last}}<span class="sub">{{if .State.Last.StatusCode}}HTTP {{.State.Last.StatusCode}}{{else}}ok{{end}} · checked {{ago .State.Last.CheckedAt}}</span>
       {{else}}<span class="sub">waiting for first check</span>{{end}}</td>
     <td class="spark">{{.Spark}}</td>

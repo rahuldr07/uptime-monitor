@@ -28,7 +28,7 @@
     <span class="badge {{.Class}}">{{.Label}}</span>
   </div>
   <div class="days" style="margin-top:10px">{{range .Days}}<i class="{{.Class}}" title="{{.Title}}"></i>{{end}}</div>
-  <div class="small faint" style="display:flex;justify-content:space-between;margin-top:6px"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today (days in UTC)</span></div>
+  <div class="small faint days-legend" style="display:flex;justify-content:space-between;margin-top:6px"><span>90 days ago</span><span>24h {{pct .Up24}} · 7d {{pct .Up7}} · 30d {{pct .Up30}}</span><span>today (days in UTC)</span></div>
 </div>
 {{end}}
 {{end}}

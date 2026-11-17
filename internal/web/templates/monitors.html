@@ -22,7 +22,7 @@
 <tbody>
 {{range .Rows}}<tr data-id="{{.State.Target.ID}}" data-k="{{.Class}}" data-href="/targets/{{.State.Target.ID}}" data-label="{{.State.Target.Name}}" data-row="{{.State.Target.Name}} {{.State.Target.URL}} {{.State.Target.Group}}">
   <td data-sort="{{.State.Target.Name}}"><a href="/targets/{{.State.Target.ID}}" style="font-weight:500">{{.State.Target.Name}}</a>{{if .State.Target.Muted}} <span class="badge">muted</span>{{end}}</td>
-  <td class="muted dt-clip">{{.State.Target.URL}}</td>
+  <td class="muted dt-clip" title="{{.State.Target.URL}}">{{.State.Target.URL}}</td>
   <td class="muted" data-sort="{{.State.Target.Group}}">{{or .State.Target.Group "—"}}</td>
   <td data-sort="{{dms .State.Target.Interval}}">{{durstr .State.Target.Interval}}</td><td data-sort="{{dms .State.Target.Timeout}}">{{durstr .State.Target.Timeout}}</td>
   <td>{{if .State.Target.ExpectStatus}}{{.State.Target.ExpectStatus}}{{else}}2xx/3xx{{end}}{{if .State.Target.Keyword}} + "{{.State.Target.Keyword}}"{{end}}</td>
