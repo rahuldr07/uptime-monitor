@@ -260,7 +260,7 @@
   function mk(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
   function syncDD(d) {
     var o = d.s.options[d.s.selectedIndex];
-    d.val.textContent = o ? o.text : '';
+    d.val.textContent = o ? o.text : ''; d.val.title = o ? o.text : ''; // the button truncates a long value
     d.btn.disabled = d.s.disabled;
   }
   function normQ(t) { return t.trim().toLowerCase().replace(/_/g, ' ').replace(/\u2212/g, '-'); } // zone names read with spaces and a minus sign
