@@ -367,14 +367,14 @@ func (s *Server) targetData(r *http.Request, a *authCtx, t store.Target, st moni
 		if err != nil {
 			return d, err
 		}
-		d.Chart = latencySVG(checks, d.Incidents, now.Add(-span), now)
+		d.Chart = latencySVG(checks, d.Incidents, now.Add(-span), now, d.Loc)
 		hours, err := ws.HourlyUptime(ctx, t.ID, now, 24)
 		if err != nil {
 			return d, err
 		}
 		start := now.UTC().Truncate(time.Hour).Add(-23 * time.Hour)
 		for i, h := range hours {
-			d.Hours = append(d.Hours, uptimeCell(h, start.Add(time.Duration(i)*time.Hour).Local().Format("Jan 2 15:00")))
+			d.Hours = append(d.Hours, uptimeCell(h, start.Add(time.Duration(i)*time.Hour).In(d.Loc).Format("Jan 2 15:04")))
 		}
 		lat, err := ws.Latencies(ctx, t.ID, now.Add(-24*time.Hour))
 		if err != nil {

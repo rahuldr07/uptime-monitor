@@ -76,6 +76,7 @@ type Server struct {
 	checkWS       *ratelimit.Limiter // Check now, per workspace
 	testURL       *ratelimit.Limiter // Test URL, per workspace
 	alertTest     *ratelimit.Limiter // alert test sends, per workspace
+	tzDetect      *ratelimit.Limiter // browser time zone reports, per user
 	pages         map[string]*template.Template
 	mux           http.Handler
 
@@ -170,7 +171,8 @@ func New(o Options) (*Server, error) {
 	s.checkWS = ratelimit.New(time.Minute, 30, 0)
 	s.testURL = ratelimit.New(time.Minute, 10, 0)
 	s.alertTest = ratelimit.New(time.Minute, 5, 0)
-	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest} {
+	s.tzDetect = ratelimit.New(time.Minute, 10, 0)
+	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest, s.tzDetect} {
 		l.Now = now
 	}
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
@@ -194,6 +196,7 @@ func New(o Options) (*Server, error) {
 		"dur":    humanDur,
 		"durstr": func(d time.Duration) string { return shortDur(d) },
 		"ts":     formatTS,
+		"tsz":    formatTSZone,
 		"pct": func(st store.Stats) string {
 			if st.Total == 0 {
 				return "—"
@@ -346,6 +349,9 @@ type base struct {
 	StatusURL  string              // /s/<slug> of this workspace
 	IsOperator bool                // show the Admin sidebar link
 	NoRefresh  bool                // live refresh must not replace #content
+	Loc        *time.Location      // zone of every time on the page; nil means UTC
+	TZNote     string              // Loc as shown in the footer, e.g. "IST (Asia/Kolkata)"
+	DetectedTZ string              // the zone last reported by this user's browser, for the page to compare
 }
 
 // base builds the view model of a signed-in workspace page.
@@ -353,6 +359,8 @@ func (s *Server) base(r *http.Request, a *authCtx, page, title string) base {
 	b := s.baseFor(r.Context(), a.WS, page, title, themeFrom(r), true)
 	b.UserEmail = a.User.Email
 	b.IsOperator = a.User.IsOperator
+	b.Loc, b.DetectedTZ = a.User.Location(), a.User.DetectedTZ
+	b.TZNote = zoneNote(b.Loc, b.Now)
 	// Only signed-in flows redirect with a flash; never echo ?msg= to anonymous
 	// visitors, and only show messages the server itself signed.
 	b.Flash = flashFrom(r)
@@ -470,7 +478,7 @@ func (s *Server) view(ctx context.Context, ws *store.WS, st monitor.State, o vie
 		}
 		start := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -89)
 		for i, d := range days {
-			v.Days = append(v.Days, uptimeCell(d, start.AddDate(0, 0, i).Format("Jan 2")))
+			v.Days = append(v.Days, uptimeCell(d, start.AddDate(0, 0, i).Format("Jan 2")+" UTC"))
 		}
 	}
 	return v, nil

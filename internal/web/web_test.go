@@ -551,7 +551,7 @@ func TestHelpers(t *testing.T) {
 	if safeNext("https://evil") != "/" || safeNext("/targets/1") != "/targets/1" || safeNext("/login?x") != "/" {
 		t.Error("safeNext")
 	}
-	svg := string(latencySVG(nil, nil, time.Now().Add(-time.Hour), time.Now()))
+	svg := string(latencySVG(nil, nil, time.Now().Add(-time.Hour), time.Now(), time.UTC))
 	if !strings.Contains(svg, "No checks") {
 		t.Error("empty chart")
 	}
@@ -782,7 +782,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {"x"}, "duration": {"10s"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "duration") {
 		t.Fatalf("short duration: %d", resp.StatusCode)
 	}
-	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {"x"}, "starts": {"2026-11-07T09:00"}, "duration": {"1h"}, "tz_offset": {"0"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "already over") {
+	if resp, body := e.post(t, c, "/maintenance", url.Values{"title": {"x"}, "starts": {"2026-11-07T09:00"}, "duration": {"1h"}}); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "already over") {
 		t.Fatalf("past window: %d", resp.StatusCode)
 	}
 
@@ -808,8 +808,11 @@ func TestMaintenanceWindows(t *testing.T) {
 		t.Fatalf("api/maintenance: %s", body)
 	}
 
-	// Schedule one for tomorrow 09:00 in a UTC+5:30 browser (offset -330).
-	resp, _ = e.post(t, c, "/maintenance", url.Values{"title": {"Disk swap"}, "starts": {"2026-11-08T09:00"}, "duration": {"30m"}, "tz_offset": {"-330"}})
+	// Schedule one for tomorrow 09:00 in the user's zone, UTC+5:30.
+	if resp, _ := e.post(t, c, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("set time zone: %d", resp.StatusCode)
+	}
+	resp, _ = e.post(t, c, "/maintenance", url.Values{"title": {"Disk swap"}, "starts": {"2026-11-08T09:00"}, "duration": {"30m"}})
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "scheduled") {
 		t.Fatalf("schedule: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}

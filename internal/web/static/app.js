@@ -1412,13 +1412,29 @@
       f.addEventListener('input', function (e) { if (!e.target.hasAttribute('data-search')) f._dirty = true; });
     });
   }
-  function wireTZ(root) {
-    $$('input[name=tz_offset]', root).forEach(function (i) { i.value = String(new Date().getTimezoneOffset()); });
+  // Tells the server the browser's time zone when it differs from the one the server has (body[data-tz]; empty
+  // means none yet). The server says whether the user's effective zone changed; only then is the page reloaded.
+  // A rejected report is not repeated for the rest of the tab session.
+  function detectTZ() {
+    var b = document.body, tz = '';
+    if (!b.hasAttribute('data-tz')) return;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { }
+    if (!tz || tz === b.getAttribute('data-tz')) return;
+    try { if (sessionStorage.getItem('tz-rejected') === tz) return; } catch (e) { }
+    var fd = new FormData(); fd.append('tz', tz);
+    fetch('/account/tz-detected', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.ok) return r.json();
+        try { sessionStorage.setItem('tz-rejected', tz); } catch (e) { }
+        return null;
+      })
+      .then(function (j) { if (j && j.changed) location.replace(location.href); })
+      .catch(function () { });
   }
-  function wire(root) { wireValidation(root); wireTables(root); wireDropdowns(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
+  function wire(root) { wireValidation(root); wireTables(root); wireDropdowns(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); }
   document.addEventListener('DOMContentLoaded', function () {
     try { if (sessionStorage.getItem('skel-shown')) { sessionStorage.removeItem('skel-shown'); var ec = $('#content'); if (ec) ec.classList.add('no-enter'); } } catch (e) { }
-    toastRegions(); liftFlash(); wire(document); wirePanel(); connect();
+    toastRegions(); liftFlash(); wire(document); wirePanel(); connect(); detectTZ();
     markUpdated();
     setInterval(tickUpdated, 5000);
   });

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // IANA zones without a system tz database (scratch images); about 450 KB
 
 	"github.com/rahuldr07/uptime-monitor/internal/config"
 	"github.com/rahuldr07/uptime-monitor/internal/mail"

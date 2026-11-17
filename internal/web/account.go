@@ -45,6 +45,8 @@ type accountData struct {
 	Recent      bool        // auth_at is within the window
 	NeedReauth  bool        // no password and no recent sign-in: sensitive forms are replaced by reauth links
 	Reauth      []oauthLink // one per connected, enabled provider
+	Zones       []zoneOption
+	ZoneNow     string // the zone in use, e.g. "Asia/Kolkata (UTC+05:30)"
 }
 
 // recentAuth reports whether the session authenticated for real within the window.
@@ -91,6 +93,7 @@ func (s *Server) accountView(r *http.Request, a *authCtx) (accountData, error) {
 		return accountData{}, err
 	}
 	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator, HasPassword: a.HasPassword}
+	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(a.User.Location().String(), d.Now)
 	d.Recent = s.recentAuth(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/account")
 	d.SoleMethod = !a.HasPassword && len(ids) == 1
@@ -339,7 +342,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	s.logger.Info("oauth unlinked", "event", "oauth_unlink", "provider", name, "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
-	s.noticeMethodChanged(a.User.Email, providerLabel(name), false)
+	s.noticeMethodChanged(a.User, providerLabel(name), false)
 	redirect(w, r, "/account", providerLabel(name)+" disconnected.")
 }
 

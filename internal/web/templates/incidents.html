@@ -7,6 +7,6 @@
   </form>
 </div>
 {{if .Incidents}}
-{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" true)}}
+{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "Loc" $.Loc "ShowTarget" true)}}
 {{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents{{if .Filter.OngoingOnly}} ongoing{{end}}</strong><p>Good news.</p></div>{{end}}
 {{end}}

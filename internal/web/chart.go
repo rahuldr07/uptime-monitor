@@ -11,7 +11,10 @@ import (
 
 // latencySVG renders a latency line chart for checks between from and to,
 // shading incidents in red. Checks must be oldest first.
-func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.Time) template.HTML {
+func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.Time, loc *time.Location) template.HTML {
+	if loc == nil {
+		loc = time.UTC
+	}
 	const w, h, padL, padB, padT = 800.0, 200.0, 58.0, 22.0, 8.0
 	if len(checks) == 0 {
 		return template.HTML(`<svg viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg"><text class="c-axis" x="400" y="100" text-anchor="middle" font-size="14">No checks in this range</text></svg>`)
@@ -73,9 +76,9 @@ func latencySVG(checks []store.Check, incidents []store.Incident, from, to time.
 		} else if i == 4 {
 			anchor = "end"
 		}
-		label := t.Local().Format("15:04")
+		label := t.In(loc).Format("15:04")
 		if to.Sub(from) > 36*time.Hour {
-			label = t.Local().Format("Jan 2")
+			label = t.In(loc).Format("Jan 2")
 		}
 		fmt.Fprintf(&b, `<text class="c-axis" x="%.1f" y="%.0f" text-anchor="%s" font-size="11">%s</text>`, x(t), h-6, anchor, label)
 	}

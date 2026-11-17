@@ -12,7 +12,7 @@
     <span style="display:flex;align-items:center;gap:8px;font-weight:500"><span class="sdot maint"></span>{{.Title}}<span class="badge maint">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</span></span>
     <form method="post" action="/maintenance/{{.ID}}/end" data-confirm-title="End maintenance?" data-confirm="End {{.Title}} now? Alerts resume immediately."><button type="submit" class="sm">End now</button></form>
   </div>
-  <div class="small muted" style="margin-top:6px">Started {{ts .StartsAt}} · ends {{ts .EndsAt}} ({{dur (.EndsAt.Sub $.Now)}} left)</div>
+  <div class="small muted" style="margin-top:6px">Started {{ts $.Loc .StartsAt}} · ends {{ts $.Loc .EndsAt}} ({{dur (.EndsAt.Sub $.Now)}} left)</div>
 </div>
 {{end}}
 {{end}}
@@ -25,7 +25,7 @@
 {{range .Upcoming}}<tr data-id="{{.ID}}">
   <td style="font-weight:500" data-sort="{{.Title}}">{{.Title}}</td>
   <td class="muted" data-sort="{{.Group}}">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
-  <td style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts .StartsAt}}<div class="small faint">in {{dur (.StartsAt.Sub $.Now)}}</div></td>
+  <td style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts $.Loc .StartsAt}}<div class="small faint">in {{dur (.StartsAt.Sub $.Now)}}</div></td>
   <td style="white-space:nowrap" data-sort="{{dms (.EndsAt.Sub .StartsAt)}}">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
   <td class="btns"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Remove</button></form></td>
 </tr>{{end}}
@@ -42,7 +42,7 @@
 {{range .Past}}<tr data-id="{{.ID}}">
   <td data-sort="{{.Title}}">{{.Title}}</td>
   <td class="muted" data-sort="{{.Group}}">{{if .Group}}{{.Group}}{{else}}all monitors{{end}}</td>
-  <td class="muted" style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts .StartsAt}}</td>
+  <td class="muted" style="white-space:nowrap" data-sort="{{ums .StartsAt}}">{{ts $.Loc .StartsAt}}</td>
   <td class="muted" style="white-space:nowrap" data-sort="{{dms (.EndsAt.Sub .StartsAt)}}">{{durstr (.EndsAt.Sub .StartsAt)}}</td>
   <td class="btns"><form method="post" action="/maintenance/{{.ID}}/delete"><button type="submit" class="sm ghost"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Remove</button></form></td>
 </tr>{{end}}
@@ -56,10 +56,9 @@
   <h2>Schedule a window</h2>
   <p class="small muted" style="margin:6px 0 14px">While a window is open, failed checks on covered monitors are expected: no incident opens, no alert is sent, and those checks are left out of uptime. Checks keep running so the history and latency chart stay complete.</p>
   <form method="post" action="/maintenance">
-    <input type="hidden" name="tz_offset" value="">
     <div class="field" style="margin-bottom:12px"><label>Title</label><input name="title" value="{{.Form.Title}}" maxlength="80" placeholder="Database upgrade" required autocomplete="off"></div>
     <div class="frow" style="margin-bottom:12px">
-      <div class="field wide"><label>Starts</label><input type="datetime-local" name="starts" value="{{.Form.Starts}}"><div class="help">Leave empty to start right now.</div></div>
+      <div class="field wide"><label>Starts</label><input type="datetime-local" name="starts" value="{{.Form.Starts}}"><div class="help">In {{.TZNote}}. Leave empty to start right now.</div></div>
       <div class="field" style="flex:0 1 110px"><label>Duration</label><input name="duration" value="{{.Form.Duration}}" placeholder="1h"><div class="help">30m, 2h, 1h30m</div></div>
     </div>
     <div class="field" style="margin-bottom:14px"><label for="maint-group">Applies to</label>

@@ -501,7 +501,7 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 		return
 	}
 	s.logger.Info("oauth linked", "event", "oauth_link", "provider", q.p.Name(), "user_id", q.a.User.ID, "ip", q.ip)
-	s.noticeMethodChanged(q.a.User.Email, q.p.Label(), true)
+	s.noticeMethodChanged(q.a.User, q.p.Label(), true)
 	redirect(q.w, q.r, "/account", q.p.Label()+" connected.")
 }
 

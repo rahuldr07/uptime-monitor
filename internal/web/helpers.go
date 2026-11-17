@@ -271,7 +271,8 @@ func humanDur(d time.Duration) string {
 	}
 }
 
-func formatTS(v any) string {
+// formatTS renders an instant in loc (nil means UTC) as "Jan 2 15:04:05".
+func formatTS(loc *time.Location, v any) string {
 	var t time.Time
 	switch x := v.(type) {
 	case time.Time:
@@ -287,5 +288,51 @@ func formatTS(v any) string {
 	if t.IsZero() {
 		return "—"
 	}
-	return t.Local().Format("Jan 2 15:04:05")
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("Jan 2 15:04:05")
+}
+
+// formatTSZone is formatTS followed by the zone abbreviation, for pages seen by
+// people who did not choose the zone (the public status page).
+func formatTSZone(loc *time.Location, v any) string {
+	s := formatTS(loc, v)
+	if s == "—" {
+		return s
+	}
+	if t, ok := v.(time.Time); ok {
+		s += " " + zoneAbbr(loc, t)
+	} else if p, ok := v.(*time.Time); ok && p != nil {
+		s += " " + zoneAbbr(loc, *p)
+	}
+	return s
+}
+
+// zoneAbbr is the abbreviation of loc at t: "IST", "UTC", or "+03" where the
+// zone has no letters.
+func zoneAbbr(loc *time.Location, t time.Time) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("MST")
+}
+
+// zoneNote names a zone for the footer and Account page: "IST (Asia/Kolkata)",
+// or just "UTC".
+func zoneNote(loc *time.Location, at time.Time) string {
+	if loc == nil || loc.String() == "UTC" {
+		return "UTC"
+	}
+	return zoneAbbr(loc, at) + " (" + loc.String() + ")"
+}
+
+// zoneOffset renders loc's offset from UTC at t as "UTC+05:30".
+func zoneOffset(loc *time.Location, t time.Time) string {
+	_, off := t.In(loc).Zone()
+	sign := "+"
+	if off < 0 {
+		sign, off = "−", -off
+	}
+	return fmt.Sprintf("UTC%s%02d:%02d", sign, off/3600, off%3600/60)
 }

@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"time"
+
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
 )
 
 // Email copy lives here and nowhere else. No message carries user-supplied
@@ -28,12 +30,12 @@ func passwordChangedMail(base string) (subject, body string) {
 		fmt.Sprintf("The password for your account was just changed. If this was not you, reset it now:\n\n%s/forgot\n", base)
 }
 
-func signInMethodMail(base, provider string, added bool, at time.Time) (subject, body string) {
+func signInMethodMail(base, provider string, added bool, at time.Time, loc *time.Location) (subject, body string) {
 	verb, subject := "removed from", "A sign-in method was removed from your account"
 	if added {
 		verb, subject = "added to", "A sign-in method was added to your account"
 	}
 	return subject,
 		fmt.Sprintf("The %s sign-in method was %s your account on %s.\n\nIf this was not you, disconnect it under Sign-in methods on your Account page, then reset your password and sign out everywhere:\n\n%s/forgot\n%s/account\n",
-			provider, verb, at.UTC().Format("2006-01-02 15:04 UTC"), base, base)
+			provider, verb, notify.FormatTime(at, loc), base, base)
 }

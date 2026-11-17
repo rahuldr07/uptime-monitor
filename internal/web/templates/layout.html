@@ -8,7 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='{{if gt .DownCount 0}}%23e06c75{{else}}%237fd88f{{end}}'/%3E%3C/svg%3E">
 <script defer src="{{asset "app.js"}}"></script>
 </head>
-<body data-live>
+<body data-live data-tz="{{.DetectedTZ}}">
 {{template "sprite"}}
 <div class="shell">
 <aside class="side">
@@ -30,7 +30,7 @@
 {{with .Flash}}<div data-flash>{{.}}</div>{{end}}
 {{with .Error}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.}}</div></div>{{end}}
 <div id="content"{{if or .Error .NoRefresh}} data-no-refresh{{end}}>{{template "content" .}}</div>
-<footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
+<footer>uptime-monitor · <span data-updated>Updated {{ago .Now}}</span> · <a href="/account#timezone" title="Change time zone">Times in {{.TZNote}}</a> · <kbd>n</kbd> new monitor · <kbd>/</kbd> search · <kbd>t</kbd> theme</footer>
 </main>
 </div>
 <div class="scrim" data-action="close-panel" aria-hidden="true"></div>

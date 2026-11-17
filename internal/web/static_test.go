@@ -36,6 +36,8 @@ var sysAllowed = map[string][]string{
 	"oauth.go|(*oauthReq).reauth":                 {"MarkReauth"},
 	"account.go|(*Server).accountPassword":        {"SetPassword", "SetFirstPassword"},
 	"account.go|(*Server).accountSignOutAll":      {"DeleteUserSessions"},
+	"timezone.go|(*Server).accountTimeZone":       {"SetTimeZone"},
+	"timezone.go|(*Server).accountDetectedZone":   {"SetDetectedZone"},
 	"account.go|(*Server).accountDelete":          {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
 	"account.go|(*Server).checkCurrent":           {"PasswordHash"},
 	"account.go|(*Server).accountIdentityConnect": {"MarkReauth"},
@@ -141,7 +143,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 64
+	const want = 66
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

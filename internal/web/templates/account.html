@@ -2,6 +2,14 @@
 <div class="topbar">
   <div><h1>Account</h1><div class="sub">{{.UserEmail}}</div></div>
 </div>
+<div class="card block" id="timezone">
+  <h2>Time zone</h2>
+  <p class="muted small" style="margin:6px 0 12px">Times on your pages and in the emails sent to you use this zone: now {{.ZoneNow}}. Automatic follows the zone your browser reports. Your public status page and alert emails use the same zone, and the API and logs stay in UTC.</p>
+  <form method="post" action="/account/timezone" style="max-width:360px">
+    <div class="field"><label for="acc-tz">Time zone</label><select id="acc-tz" name="time_zone">{{range .Zones}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+    <div style="margin-top:14px"><button type="submit" class="primary">Save time zone</button></div>
+  </form>
+</div>
 <div class="card block" id="methods">
   <h2>Sign-in methods</h2>
   {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "set a password, connect another account or delete your account"}}{{end}}

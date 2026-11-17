@@ -22,8 +22,8 @@
 {{range .Invites}}
 <tr data-id="{{.ID}}">
   <td data-sort="{{.Email}}">{{if .Email}}{{.Email}}{{else}}<span class="faint">anyone</span>{{end}}</td>
-  <td data-sort="{{ums .CreatedAt}}">{{ts .CreatedAt}}</td>
-  <td data-sort="{{ums .ExpiresAt}}">{{ts .ExpiresAt}}</td>
+  <td data-sort="{{ums .CreatedAt}}">{{ts $.Loc .CreatedAt}}</td>
+  <td data-sort="{{ums .ExpiresAt}}">{{ts $.Loc .ExpiresAt}}</td>
   <td class="btns">
     <form method="post" action="/admin/invites/revoke" data-confirm-title="Revoke invite?" data-confirm-danger data-confirm="Revoke this invite? Its link stops working."><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>Revoke</button></form>
   </td>

@@ -71,6 +71,8 @@ func (s *Server) routeTable() []route {
 		{"POST", "/forgot", classGuest, s.forgotPost, nil},
 		{"POST", "/logout", classUser, nil, s.logout},
 		{"GET", "/account", classUser, nil, s.accountPage},
+		{"POST", "/account/timezone", classUser, nil, s.accountTimeZone},
+		{"POST", "/account/tz-detected", classUser, nil, s.accountDetectedZone},
 		{"POST", "/account/password", classUser, nil, s.accountPassword},
 		{"POST", "/account/signout-all", classUser, nil, s.accountSignOutAll},
 		{"POST", "/account/delete", classUser, nil, s.accountDelete},

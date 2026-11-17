@@ -3,7 +3,7 @@
 <div class="topbar">
   <div>
     <h1 style="display:flex;align-items:center;gap:10px"><span class="sdot {{.View.Class}}"></span>{{$t.Name}} <span class="badge {{.View.Class}}">{{template "st-ic" .View.Class}}{{.View.Label}}</span>{{if $t.Muted}}<span class="badge">muted</span>{{end}}</h1>
-    {{with .View.Maint}}<div class="small" style="color:var(--accent-text);margin-top:2px">{{.Title}} · maintenance until {{ts .EndsAt}} · <a href="/maintenance">manage</a></div>{{end}}
+    {{with .View.Maint}}<div class="small" style="color:var(--accent-text);margin-top:2px">{{.Title}} · maintenance until {{ts $.Loc .EndsAt}} · <a href="/maintenance">manage</a></div>{{end}}
     <div class="sub"><a href="{{$t.URL}}" rel="noopener" target="_blank" class="mono">{{$t.URL}}</a>{{if $t.Group}} · {{$t.Group}}{{end}}</div>
   </div>
   <div class="btns">
@@ -27,7 +27,7 @@
   <div class="tile"><div class="l">Uptime 30d</div><div class="v">{{pct .View.Up30}}</div></div>
   <div class="tile"><div class="l">p50 latency</div><div class="v">{{msn .P50}}</div></div>
   <div class="tile"><div class="l">p95 latency</div><div class="v">{{msn .P95}}</div></div>
-  <div class="tile"><div class="l">{{if eq .View.Class "down"}}Down since{{else if eq .View.Class "paused"}}Paused since{{else}}Up since{{end}}</div><div class="v" style="font-size:14px">{{if .View.State.Since.IsZero}}—{{else}}{{ts .View.State.Since}}{{end}}</div></div>
+  <div class="tile"><div class="l">{{if eq .View.Class "down"}}Down since{{else if eq .View.Class "paused"}}Paused since{{else}}Up since{{end}}</div><div class="v" style="font-size:14px">{{if .View.State.Since.IsZero}}—{{else}}{{ts $.Loc .View.State.Since}}{{end}}</div></div>
 </div>
 <div class="card block">
   <div class="head"><h2>Latency</h2><span class="seg">{{range .Ranges}}<a href="?tab=overview&range={{.}}" {{if eq . $.Range}}class="active"{{end}}>{{.}}</a>{{end}}</span></div>
@@ -40,16 +40,16 @@
 </div>
 <div class="card block">
   <h2>Recent checks</h2>
-  {{template "checks-table" (dict "Rows" (slice .Checks 0 (min 10 (len .Checks))) "ID" "checks-recent" "Paged" "off" "Search" false)}}
+  {{template "checks-table" (dict "Loc" $.Loc "Rows" (slice .Checks 0 (min 10 (len .Checks))) "ID" "checks-recent" "Paged" "off" "Search" false)}}
   {{if gt (len .Checks) 10}}<div style="margin-top:8px"><a class="btn sm" href="?tab=checks">All checks</a></div>{{end}}
 </div>
 
 {{else if eq .Tab "checks"}}
-<div class="card block"><h2>Last {{len .Checks}} checks</h2>{{template "checks-table" (dict "Rows" .Checks "ID" "checks" "Paged" "client" "Search" true)}}</div>
+<div class="card block"><h2>Last {{len .Checks}} checks</h2>{{template "checks-table" (dict "Loc" $.Loc "Rows" .Checks "ID" "checks" "Paged" "client" "Search" true)}}</div>
 
 {{else if eq .Tab "incidents"}}
 <div class="card block">
-  {{if .Incidents}}{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "ShowTarget" false)}}
+  {{if .Incidents}}{{template "incident-table" (dict "Incidents" .Incidents "Now" .Now "Loc" $.Loc "ShowTarget" false)}}
   {{else}}<div class="empty"><svg class="ic lg" aria-hidden="true"><use href="#i-inbox"/></svg><strong>No incidents</strong><p>Nothing has gone wrong for this monitor.</p></div>{{end}}
 </div>
 

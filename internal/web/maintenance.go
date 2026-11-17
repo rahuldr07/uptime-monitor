@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -69,10 +68,9 @@ func (s *Server) maintenancePage(w http.ResponseWriter, r *http.Request, a *auth
 	s.render(w, r, "maintenance", d)
 }
 
-// parseMaintForm validates the schedule form. The browser sends its UTC
-// offset in minutes so a local wall-clock time can be pinned to an instant;
-// without it the server's zone is used.
-func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenance, error) {
+// parseMaintForm validates the schedule form. The start is a wall-clock time
+// in loc, the user's zone.
+func parseMaintForm(r *http.Request, now time.Time, loc *time.Location) (maintForm, store.Maintenance, error) {
 	f := maintForm{Title: strings.TrimSpace(r.FormValue("title")), Starts: strings.TrimSpace(r.FormValue("starts")),
 		Duration: strings.TrimSpace(r.FormValue("duration")), Group: strings.TrimSpace(r.FormValue("group"))}
 	m := store.Maintenance{Title: f.Title, Group: f.Group}
@@ -88,12 +86,7 @@ func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenanc
 	m.StartsAt = now
 	if f.Starts != "" {
 		var err error
-		if off, perr := strconv.Atoi(r.FormValue("tz_offset")); perr == nil && off > -14*60 && off < 14*60 {
-			m.StartsAt, err = time.Parse("2006-01-02T15:04", f.Starts)
-			m.StartsAt = m.StartsAt.Add(time.Duration(off) * time.Minute)
-		} else {
-			m.StartsAt, err = time.ParseInLocation("2006-01-02T15:04", f.Starts, time.Local)
-		}
+		m.StartsAt, err = time.ParseInLocation("2006-01-02T15:04", f.Starts, loc)
 		if err != nil {
 			return f, m, fmt.Errorf("start time: pick a date and time")
 		}
@@ -114,7 +107,7 @@ func parseMaintForm(r *http.Request, now time.Time) (maintForm, store.Maintenanc
 
 func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
-	f, m, err := parseMaintForm(r, s.now())
+	f, m, err := parseMaintForm(r, s.now(), a.User.Location())
 	if err == nil {
 		m, err = ws.CreateMaintenance(r.Context(), m, s.now())
 	}
@@ -130,9 +123,9 @@ func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request, a *au
 	}
 	s.mon.Events.Publish(monitor.Event{WorkspaceID: ws.ID(), Kind: "maintenance"})
 	s.resetStatus(ws)
-	msg := "Maintenance started: alerts are paused until " + formatTS(m.EndsAt) + "."
+	msg := "Maintenance started: alerts are paused until " + formatTS(a.User.Location(), m.EndsAt) + "."
 	if m.Upcoming(s.now()) {
-		msg = "Maintenance scheduled for " + formatTS(m.StartsAt) + "."
+		msg = "Maintenance scheduled for " + formatTS(a.User.Location(), m.StartsAt) + "."
 	}
 	redirect(w, r, "/maintenance", msg)
 }
