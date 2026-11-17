@@ -341,7 +341,7 @@ code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3
 .skel{display:block;height:12px;border-radius:var(--radius);background:var(--border)}
 .skel-titles{width:200px;height:47px;padding-top:5px;display:flex;flex-direction:column;gap:8px}.skel.title{width:160px;height:20px}.skel.sub{width:110px;height:10px}
 .skel.find{width:240px;height:36px}.skel.sel{width:160px;height:36px}.skel.button{width:120px;height:32px}.skel.pill{width:56px;height:28px}.skel.pill.wide{width:96px}.skel.view{width:76px;height:26px;margin-left:auto}
-.skel.banner{height:40px;margin-bottom:14px}
+.skel.strip{height:40px;margin-bottom:14px}
 .skel-page .tile{height:69px}.skel.tiny{width:60%;height:10px;margin-bottom:8px}.skel.value{width:40%;height:19px}
 .skel-sum{height:18px;margin-bottom:8px}.skel-sum.tall{height:26px}.skel-sum .skel{width:160px}
 .skel-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
@@ -357,7 +357,7 @@ code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3
 .alert .skel.line{min-width:120px;max-width:260px}.alert.pending{min-height:61px;align-items:center}.pending-row{display:flex;align-items:center;gap:12px}
 @media(max-width:639px){
   .skel-page .topbar .btns{width:100%}.skel.find{flex:1 1 100%}
-  .skel.banner{height:70px}
+  .skel.strip{height:70px}
   .skel-box:not(.chk){border:0;background:none;overflow:visible}.skel-box:not(.chk) .skel-head{display:none}
   .skel-box:not(.chk) .skel-row{flex-direction:column;align-items:flex-start;justify-content:center;gap:8px;padding:12px;margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card)}
   .skel-box:not(.chk) .skel-row .skel.line{flex:none;width:70%}.skel-box:not(.chk) .skel-row .skel.val{display:none}

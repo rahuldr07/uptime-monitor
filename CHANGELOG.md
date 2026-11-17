@@ -7,8 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- A 404 page for unknown addresses and missing records. Signed in, it appears inside the normal layout with links to Overview and Monitors; signed out, it is a small card linking to Sign in and the status page. Partial refreshes, the JSON API, JSON callers and non-GET requests still get the plain-text 404.
-- Skeleton loading states: a navigation that takes longer than 250 ms shows a placeholder shaped like the destination (overview, monitors, monitor detail, incidents, other pages), and Test URL shows a placeholder line while the test runs. The page comes back unchanged on back/forward or if the navigation is stopped.
+- A 404 page for unknown addresses and missing records. Signed in, it appears inside the normal layout, shows the address and links to the overview; signed out, it is a small card linking to Sign in and the status page. A missing status page (`/s/...`) shows a plain card and is never framed. Partial refreshes, the JSON API, JSON callers and non-GET requests still get the plain-text 404.
+- Skeleton loading states: a navigation that takes longer than 250 ms shows a placeholder shaped like the destination (overview, monitors, monitor detail, incidents, other pages), and Test URL shows a placeholder line while the test runs. The placeholders match the real page's layout, the sidebar highlights the destination, and the page comes back unchanged (scroll position included) on back/forward or if the navigation is stopped.
 
 ### Changed
 

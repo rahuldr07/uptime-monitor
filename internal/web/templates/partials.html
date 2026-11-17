@@ -43,7 +43,7 @@
 {{/* Cloned by app.js into #content while a slow navigation is pending; one shape per kind of destination, sized like the real page. */}}
 <template id="skel-overview"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
   <div class="topbar">{{template "skel-titles"}}<div class="btns"><span class="skel find"></span><span class="skel button"></span></div></div>
-  <span class="skel banner"></span>
+  <span class="skel strip"></span>
   {{template "skel-tiles"}}
   <div class="skel-sum tall"><span class="skel"></span></div>
   {{template "skel-table" (dict "Cls" "ov" "N" 6)}}
