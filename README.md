@@ -141,7 +141,9 @@ set, the new account verifies its address by email exactly as in open sign-up,
 and until it does it cannot sign in and receives no alert emails from the
 server. Without `mail` there is no way to verify, so such accounts are verified
 at sign-up as before. Unverified accounts are deleted 48 hours after sign-up by
-the hourly prune (operators excepted; D-127).
+the hourly prune (operators excepted; D-127). The invitation is used up when the
+account is created, so if the invitee mistypes their address or never verifies,
+issue a new invitation after the account is deleted.
 
 Create an invitation after setup with `uptime-monitor -invite` (any holder of
 the link may sign up) or `uptime-monitor -invite person@example.com` (the
