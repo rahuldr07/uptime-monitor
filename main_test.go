@@ -185,8 +185,8 @@ func TestUserAgentString(t *testing.T) {
 func TestNewMailer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	perHour := 500
-	cfg := &config.Config{Limits: config.Limits{MailPerHour: &perHour}}
+	perHour, perDay := 500, 0
+	cfg := &config.Config{Limits: config.Limits{MailPerHour: &perHour, MailPerDay: &perDay}}
 	var m web.Mailer = newMailer(ctx, cfg, slog.Default())
 	if m != nil {
 		t.Fatalf("without mail, newMailer must return a nil interface, got %#v", m)

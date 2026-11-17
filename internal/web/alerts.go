@@ -28,6 +28,9 @@ type alertsData struct {
 	Saved map[string]bool
 	// Stored marks channels that have saved settings and can be removed.
 	Stored map[string]bool
+	// Fallback is set when the server has mail and no SMTP host is set, so
+	// alerts go to the account email through the server.
+	Fallback bool
 }
 
 // notifyConfig returns the workspace's stored alert channels; nothing stored means none.
@@ -77,7 +80,8 @@ func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, a *authCtx
 		d.Stored["email"], d.Saved["smtp_pass"] = true, e.Password != ""
 	}
 	tg.BotToken, sl.WebhookURL, em.Password = "", "", ""
-	d.N = config.Notify{Telegram: &tg, Slack: &sl, Email: &em}
+	d.N = config.Notify{Telegram: &tg, Slack: &sl, Email: &em, ServerEmailOff: n.ServerEmailOff}
+	d.Fallback = s.alertMail != nil && em.SMTPHost == ""
 	d.To = strings.Join(em.To, ", ")
 	for _, nn := range s.mon.Notifiers(r.Context(), ws.ID()) {
 		d.Has[nn.Name] = true
@@ -98,6 +102,12 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 		return old
 	}
 	var n config.Notify
+	// The fallback switch is only on the form while its line is shown; keep
+	// the saved choice when the form did not carry it.
+	n.ServerEmailOff = prev.ServerEmailOff
+	if v("server_email_form") == "1" {
+		n.ServerEmailOff = v("server_email") != "1"
+	}
 	// Clearing the visible chat ID (with no new token) removes Telegram, the
 	// same way clearing the email fields removes email.
 	if v("tg_clear") != "1" && (v("tg_chat") != "" || v("tg_token") != "") {
@@ -130,8 +140,13 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 		if pe := prev.Email; pe != nil && pe.SMTPHost == v("smtp_host") && smtpPort(pe.SMTPPort) == smtpPort(port) && pe.Username == v("smtp_user") {
 			old = pe.Password
 		}
+		// The username is trimmed (v); the password is not, as it may contain spaces.
+		pass := r.FormValue("smtp_pass")
+		if pass == "" {
+			pass = old
+		}
 		n.Email = &config.Email{SMTPHost: v("smtp_host"), SMTPPort: port, Username: v("smtp_user"),
-			Password: keep("smtp_pass", old), From: v("smtp_from"), To: to, Disabled: v("email_enabled") != "1"}
+			Password: pass, From: v("smtp_from"), To: to, Disabled: v("email_enabled") != "1"}
 	}
 	return n
 }
@@ -178,7 +193,8 @@ func (s *Server) saveNotify(w http.ResponseWriter, r *http.Request, a *authCtx) 
 		s.fail(w, err)
 		return n, false
 	}
-	s.mon.SetNotifiers(ws.ID(), notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(a.IsOperator), !a.IsOperator))
+	m := notify.FromConfig(n, s.logger, s.cfg.AllowPrivate(a.IsOperator), !a.IsOperator)
+	s.mon.SetNotifiers(ws.ID(), notify.WithServerEmail(m, n, s.alertMail, ws.ID(), ws.MemberEmails))
 	return n, true
 }
 
@@ -209,7 +225,7 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request, a *authCtx) 
 	defer cancel()
 	if err := s.mon.SendTest(ctx, ws.ID(), ch); err != nil {
 		s.logger.Warn("test alert failed", "channel", ch, "err", err)
-		s.renderAlerts(w, r, a, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+err.Error())
+		s.renderAlerts(w, r, a, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+notify.StatusText(err))
 		return
 	}
 	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")

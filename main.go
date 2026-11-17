@@ -209,6 +209,8 @@ func run(cfgPath string, logger *slog.Logger) error {
 		}
 	}
 
+	mailer := newMailer(ctx, cfg, logger)
+	sysMail, _ := mailer.(notify.SystemMail) // nil without system mail
 	mon := monitor.New(monitor.Options{Store: st, Logger: logger, FailureThreshold: cfg.FailureThreshold,
 		Notifiers: func(ctx context.Context, ws int64) (notify.Multi, error) {
 			n, err := st.Workspace(ws).Notify(ctx)
@@ -216,7 +218,8 @@ func run(cfgPath string, logger *slog.Logger) error {
 				return nil, err
 			}
 			restricted := ws != store.OperatorWorkspaceID
-			return notify.FromConfig(n, logger, cfg.AllowPrivate(!restricted), restricted), nil
+			m := notify.FromConfig(n, logger, cfg.AllowPrivate(!restricted), restricted)
+			return notify.WithServerEmail(m, n, sysMail, ws, st.Workspace(ws).MemberEmails), nil
 		},
 		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == store.OperatorWorkspaceID) },
 		UserAgent:      userAgent(version, cfg.BaseURL)})
@@ -224,7 +227,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 		return err
 	}
 	srv, err := web.New(web.Options{Config: cfg, Store: st, Monitor: mon, Logger: logger,
-		Mail:      newMailer(ctx, cfg, logger),
+		Mail: mailer, AlertMail: sysMail,
 		OAuth:     newOAuth(cfg),
 		SetupMode: setup, Upgraded: upgraded,
 		AfterSetup: func(ctx context.Context) error {
@@ -474,7 +477,7 @@ func newMailer(ctx context.Context, cfg *config.Config, logger *slog.Logger) web
 	m := cfg.Mail
 	sender := notify.Email{Host: m.SMTPHost, Port: m.SMTPPort, Username: m.Username, Password: m.Password,
 		From: m.From, RequireTLS: *m.RequireTLS, Dial: netguard.Dialer(true, 30*time.Second).DialContext}
-	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, Logger: logger})
+	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, PerDay: *cfg.Limits.MailPerDay, Logger: logger})
 	go q.Run(ctx)
 	return q
 }

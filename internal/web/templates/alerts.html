@@ -17,7 +17,9 @@
     {{template "chan-actions" (dict "Has" .Has.slack "Stored" .Stored.slack "Channel" "slack" "Clear" "slack_clear")}}
   </div>
   <div class="card">
-    <div class="head"><h2 style="display:flex;gap:10px;align-items:center"><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" name="email_enabled" value="1" {{if not .N.Email.Disabled}}checked{{end}}>Email</label></h2>{{template "chan-status" (index .Last "email")}}</div>
+    <div class="head"><h2 style="display:flex;gap:10px;align-items:center"><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text);font-size:16px"><input type="checkbox" name="email_enabled" value="1" {{if not .N.Email.Disabled}}checked{{end}}>Email</label></h2>{{if .Fallback}}{{template "chan-status" (index .Last "server-email")}}{{else}}{{template "chan-status" (index .Last "email")}}{{end}}</div>
+    {{if .Fallback}}{{template "chan-note" (index .Last "server-email")}}{{else}}{{template "chan-note" (index .Last "email")}}{{end}}
+    {{if .Fallback}}<div class="fallback">No SMTP set up — alerts are sent from the server to {{.UserEmail}}.<label><input type="hidden" name="server_email_form" value="1"><input type="checkbox" name="server_email" value="1" {{if not .N.ServerEmailOff}}checked{{end}}>Send alerts to my account email</label></div>{{end}}
     <div class="frow" style="margin-top:12px">
       <div class="field wide"><label>SMTP host</label><input name="smtp_host" value="{{.N.Email.SMTPHost}}" placeholder="smtp.gmail.com"></div>
       <div class="field" style="flex:0 1 90px"><label>Port</label><input name="smtp_port" value="{{if .N.Email.SMTPPort}}{{.N.Email.SMTPPort}}{{end}}" placeholder="587" inputmode="numeric"></div>
@@ -29,7 +31,7 @@
     <div class="help" style="margin-top:4px">Port 465 uses TLS directly; other ports upgrade with STARTTLS. Passwords are only sent over an encrypted connection.</div>
     <div class="field" style="margin-top:10px"><label>From</label><input name="smtp_from" value="{{.N.Email.From}}" placeholder="uptime@example.com"></div>
     <div class="field" style="margin-top:10px"><label>To (comma separated)</label><input name="smtp_to" value="{{.To}}" placeholder="you@example.com, ops@example.com"></div>
-    {{template "chan-actions" (dict "Has" .Has.email "Stored" .Stored.email "Channel" "email" "Clear" "email_clear")}}
+    {{if index .Has "server-email"}}{{template "chan-actions" (dict "Has" true "Stored" .Stored.email "Channel" "server-email" "Clear" "email_clear")}}{{else}}{{template "chan-actions" (dict "Has" .Has.email "Stored" .Stored.email "Channel" "email" "Clear" "email_clear")}}{{end}}
   </div>
 </div>
 <div class="btns" style="margin-top:16px"><button type="submit" class="primary">Save channels</button><span class="small muted">Unticked channels keep their settings but send nothing. Mute a single monitor from its page.</span></div>
@@ -41,4 +43,6 @@
   {{if .Stored}}<label style="display:flex;gap:6px;align-items:center;margin:0;font-size:12px"><input type="checkbox" name="{{.Clear}}" value="1">Remove these settings</label>{{end}}
 </div>{{end}}{{end}}
 
-{{define "chan-status"}}{{if .Channel}}<span class="badge {{if .OK}}up{{else}}down{{end}}" title="{{.Error}}">last {{.Event}} {{if .OK}}delivered{{else}}failed{{end}} {{ago .SentAt}}</span>{{else}}<span class="badge">no deliveries yet</span>{{end}}{{end}}
+{{define "chan-note"}}{{if and .Channel (not .OK) (eq .Error "Login rejected — check the username and password")}}<div class="help">{{.Error}}</div>{{end}}{{end}}
+
+{{define "chan-status"}}{{if .Channel}}<span class="badge {{if .OK}}up{{else}}down{{end}}" title="{{.Error}}">{{if and (not .OK) (eq .Error "Limit reached")}}Limit reached{{else}}last {{.Event}} {{if .OK}}delivered{{else}}failed{{end}} {{ago .SentAt}}{{end}}</span>{{else}}<span class="badge">no deliveries yet</span>{{end}}{{end}}

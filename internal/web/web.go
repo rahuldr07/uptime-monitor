@@ -23,6 +23,7 @@ import (
 
 	"github.com/rahuldr07/uptime-monitor/internal/config"
 	"github.com/rahuldr07/uptime-monitor/internal/monitor"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
 	"github.com/rahuldr07/uptime-monitor/internal/oauth"
 	"github.com/rahuldr07/uptime-monitor/internal/password"
 	"github.com/rahuldr07/uptime-monitor/internal/ratelimit"
@@ -66,6 +67,7 @@ type Server struct {
 	signupByAddr  *ratelimit.Limiter // sign-ups per client address
 	signupGlobal  *ratelimit.Limiter // sign-ups across the instance, key "all"
 	mail          Mailer
+	alertMail     notify.SystemMail  // fallback alert email; nil means none
 	mailByAddr    *ratelimit.Limiter // forgot and resend, per client address
 	dupNotice     *ratelimit.Limiter // duplicate sign-up notices, per user ID
 	passwordCheck *ratelimit.Limiter // current-password checks, per user
@@ -97,10 +99,11 @@ type Options struct {
 	Logger  *slog.Logger     // nil means slog.Default(), as in monitor.New
 	Now     func() time.Time // nil means time.Now
 
-	Mail       Mailer           // nil means no system mail
-	Hasher     *password.Hasher // nil means password.Default()
-	SetupMode  bool             // no account exists yet; only the setup flow is served
-	Upgraded   bool             // the database predates accounts
+	Mail       Mailer            // nil means no system mail
+	AlertMail  notify.SystemMail // the same mail path for fallback alerts; nil means none
+	Hasher     *password.Hasher  // nil means password.Default()
+	SetupMode  bool              // no account exists yet; only the setup flow is served
+	Upgraded   bool              // the database predates accounts
 	AfterSetup func(ctx context.Context) error
 	OAuth      []*oauth.Provider // enabled sign-in providers; none means no OAuth routes answer
 }
@@ -120,7 +123,7 @@ func New(o Options) (*Server, error) {
 	if cfg.Signup == "open" && o.Mail == nil {
 		return nil, errors.New(`web: signup "open" needs Options.Mail`)
 	}
-	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now, mail: o.Mail,
+	s := &Server{cfg: cfg, sys: st, mon: mon, logger: logger, now: now, mail: o.Mail, alertMail: o.AlertMail,
 		hasher: o.Hasher, upgraded: o.Upgraded, afterSetup: o.AfterSetup,
 		pages: map[string]*template.Template{}}
 	if s.hasher == nil {
