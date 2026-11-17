@@ -281,11 +281,12 @@
     for (;;) { i += dir; if (i < 0 || i >= n) return; if (selectable(d, i)) { setHi(d, i, true); return; } }
   }
   function placeDD(d) {
-    var r = d.btn.getBoundingClientRect(), m = d.menu, vw = window.innerWidth, vh = window.innerHeight;
+    var r = d.btn.getBoundingClientRect(), m = d.menu, vw = window.innerWidth, ih = window.innerHeight, vv = window.visualViewport,
+      vh = vv ? Math.min(ih, vv.offsetTop + vv.height) : ih; // bottom of what is visible: the on-screen keyboard shrinks the visual viewport
     m.style.maxHeight = '280px'; m.style.top = '0'; m.style.bottom = 'auto'; m.style.left = '0'; m.style.minWidth = r.width + 'px';
     var h = m.offsetHeight, w = m.offsetWidth, below = vh - r.bottom - 8, above = r.top - 8;
     if (h > below && above > below) { // flip upward, anchored at the button so filtering can shrink it in place
-      m.style.top = 'auto'; m.style.bottom = (vh - r.top + 4) + 'px'; m.style.maxHeight = Math.min(280, above - 4) + 'px';
+      m.style.top = 'auto'; m.style.bottom = (ih - r.top + 4) + 'px'; m.style.maxHeight = Math.min(280, above - 4) + 'px';
     } else { m.style.top = (r.bottom + 4) + 'px'; m.style.maxHeight = Math.min(280, Math.max(below - 4, 80)) + 'px'; }
     m.style.left = Math.max(8, Math.min(d.alignEnd ? r.right - w : r.left, vw - 8 - w)) + 'px';
   }
@@ -348,6 +349,7 @@
     menu.addEventListener('keydown', function (e) { ddKey(d, e); });
     menu.addEventListener('focusout', function (e) { if (d.open && e.relatedTarget !== d.btn && !menu.contains(e.relatedTarget)) closeMenu(d, false); });
     placeDD(d);
+    d.items.forEach(function (li) { var t = li.lastChild; if (t.scrollWidth > t.clientWidth) t.title = t.textContent; }); // a label cut by the menu's width keeps its full text as a tooltip
     var sel = s.selectedIndex >= 0 && selectable(d, s.selectedIndex) ? s.selectedIndex : -1;
     if (sel >= 0) setHi(d, sel, true); else moveHi(d, 1, true);
     if (d.filter) {
@@ -408,6 +410,7 @@
     closeMenu(d, false);
   }, true);
   window.addEventListener('resize', function () { if (openDD) closeMenu(openDD, false); });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { if (openDD && openDD.menu && openDD.filter) placeDD(openDD); }); // the keyboard opened or closed: keep the menu in view
 
   // ---- data tables ----
   // Progressive enhancement over a server-rendered <table> inside .dt.
