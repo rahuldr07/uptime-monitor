@@ -84,7 +84,7 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 	var wsCreated, lastSeen int64
 	var authAt sql.NullInt64
 	u, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at,
+		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz,
 			w.id, w.name, w.slug, w.created_at, s.last_seen_at, s.auth_at, u.password_hash <> ''
 		 FROM sessions s
 		 JOIN users u ON u.id = s.user_id

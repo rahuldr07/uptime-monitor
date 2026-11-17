@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/mail"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -31,6 +32,69 @@ type User struct {
 	IsOperator             bool
 	VerifiedAt, DisabledAt *time.Time
 	CreatedAt              time.Time
+	// TimeZone is the zone the user chose, "" for automatic. DetectedTZ is the
+	// zone their browser last reported, "" if none. See Location.
+	TimeZone, DetectedTZ string
+}
+
+// ErrInvalidZone is returned for a name that is not an IANA time zone.
+var ErrInvalidZone = errors.New("Choose a time zone from the list.")
+
+var zoneCache sync.Map // name -> *time.Location
+
+// LoadZone returns the named IANA time zone, or nil if name is not one.
+// LoadLocation also accepts "" and "Local", which are not zones to store, and
+// zone names are short, so anything longer is junk.
+func LoadZone(name string) *time.Location {
+	if name == "" || name == "Local" || len(name) > 64 {
+		return nil
+	}
+	if loc, ok := zoneCache.Load(name); ok {
+		return loc.(*time.Location)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil
+	}
+	zoneCache.Store(name, loc)
+	return loc
+}
+
+// ZoneNames lists the time zones offered for selection, UTC first.
+func ZoneNames() []string { return zoneNames }
+
+// EffectiveZone is the zone to show times in: the explicit choice, else the
+// browser-detected zone, else UTC. A stored name that no longer loads is skipped.
+func EffectiveZone(explicit, detected string) *time.Location {
+	for _, name := range []string{explicit, detected} {
+		if loc := LoadZone(name); loc != nil {
+			return loc
+		}
+	}
+	return time.UTC
+}
+
+// Location is the zone the user's times are shown in.
+func (u User) Location() *time.Location { return EffectiveZone(u.TimeZone, u.DetectedTZ) }
+
+// SetTimeZone saves a user's explicit zone; "" returns them to automatic.
+func (s *Store) SetTimeZone(ctx context.Context, userID int64, name string) error {
+	if name != "" && LoadZone(name) == nil {
+		return ErrInvalidZone
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET time_zone = ? WHERE id = ?`, name, userID)
+	return err
+}
+
+// SetDetectedZone records the zone the user's browser reported. The name is
+// stored as reported (browsers may use an alias such as Asia/Calcutta), so the
+// page can tell it is already known.
+func (s *Store) SetDetectedZone(ctx context.Context, userID int64, name string) error {
+	if LoadZone(name) == nil {
+		return ErrInvalidZone
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET detected_tz = ? WHERE id = ?`, name, userID)
+	return err
 }
 
 // NormalizeEmail validates an address and returns it trimmed and lowercased.
@@ -62,7 +126,7 @@ func isEmailTaken(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: users.email")
 }
 
-const userCols = `id, email, is_operator, verified_at, disabled_at, created_at`
+const userCols = `id, email, is_operator, verified_at, disabled_at, created_at, time_zone, detected_tz`
 
 func msPtr(v sql.NullInt64) *time.Time {
 	if !v.Valid {
@@ -77,7 +141,7 @@ func scanUser(sc scanner, extra ...any) (User, error) {
 	var op int
 	var verified, disabled sql.NullInt64
 	var created int64
-	dest := append([]any{&u.ID, &u.Email, &op, &verified, &disabled, &created}, extra...)
+	dest := append([]any{&u.ID, &u.Email, &op, &verified, &disabled, &created, &u.TimeZone, &u.DetectedTZ}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return User{}, err
 	}
@@ -420,6 +484,21 @@ func (s *Store) VerifyEmail(ctx context.Context, raw string, now time.Time) (Use
 		return User{}, err
 	}
 	return u, nil
+}
+
+// OwnerLocation is the zone shown on the workspace's public status page and
+// in its alerts: that of the workspace's oldest-membership owner (a workspace
+// has one owner today; the order makes the choice deterministic if it ever
+// has several). UTC if there is none.
+func (w *WS) OwnerLocation(ctx context.Context) *time.Location {
+	var explicit, detected string
+	err := w.db.QueryRowContext(ctx,
+		`SELECT u.time_zone, u.detected_tz FROM memberships m JOIN users u ON u.id = m.user_id
+		 WHERE m.workspace_id = ? AND m.role = 'owner' ORDER BY m.created_at, u.id LIMIT 1`, w.id).Scan(&explicit, &detected)
+	if err != nil {
+		return time.UTC
+	}
+	return EffectiveZone(explicit, detected)
 }
 
 // MemberEmails returns the sign-in addresses of the workspace's members whose

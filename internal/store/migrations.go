@@ -95,7 +95,7 @@ type migration struct {
 
 // steps are the numbered schema migrations; step N brings PRAGMA user_version
 // to N. Append new steps, never edit existing ones.
-var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}, {run: v3}}
+var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}, {run: v3}, {run: v4}}
 
 // migrate runs every step above the database's user_version, each in its own
 // transaction together with the version bump. path is the database file; when
@@ -479,6 +479,18 @@ ALTER TABLE sessions ADD COLUMN auth_at INTEGER;
 func v3(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, identitiesSchema); err != nil {
 		return fmt.Errorf("create identities: %w", err)
+	}
+	return nil
+}
+
+// v4 adds the per-user time zone: time_zone is the explicit choice and
+// detected_tz the zone the user's browser last reported; both are empty when unset.
+func v4(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		ALTER TABLE users ADD COLUMN time_zone   TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN detected_tz TEXT NOT NULL DEFAULT '';`)
+	if err != nil {
+		return fmt.Errorf("add time zone columns: %w", err)
 	}
 	return nil
 }
