@@ -55,6 +55,7 @@ var sysAllowed = map[string][]string{
 	"admin.go|(*Server).adminInviteRevoke":        {"RevokeInvite"},
 	"web.go|(*Server).healthz":                    {"Ping"},
 	"status.go|(*Server).statusRedirect":          {"Workspace"},                    // operator's page for anonymous visitors
+	"helpers.go|(*Server).notFound":               {"Workspace"},                    // is there a general status page to link to
 	"status.go|(*Server).statusPage":              {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
 	"events.go|(*Server).events":                  {"SessionAuth"},                  // session re-check only
 }

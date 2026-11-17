@@ -40,31 +40,41 @@
 {{define "reauth-notice"}}{{$what := .What}}{{range .Links}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div><p style="margin:0 0 8px">To {{$what}}, sign in again with {{.Label}} first.</p><a class="btn" href="{{.Href}}">Sign in again with {{.Label}}</a></div></div>{{else}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div>To {{$what}}, sign in again first. Use Forgot password on the sign-in page if you need a way in.</div></div>{{end}}{{end}}
 
 {{define "skeletons"}}
-{{/* Cloned by app.js into #content while a slow navigation is pending; one shape per kind of destination. */}}
-<template id="skel-overview"><div class="skel-page" aria-hidden="true">
-  <div class="topbar"><span class="skel title"></span><span class="skel button"></span></div>
-  <div class="tiles">{{range 6}}<div class="tile"><span class="skel tiny"></span><span class="skel value"></span></div>{{end}}</div>
-  {{template "skel-rows" 6}}
-</div></template>
-<template id="skel-table"><div class="skel-page" aria-hidden="true">
-  <div class="topbar"><span class="skel title"></span><span class="skel button"></span></div>
-  {{template "skel-rows" 8}}
-</div></template>
-<template id="skel-detail"><div class="skel-page" aria-hidden="true">
-  <div class="topbar"><span class="skel title"></span><span class="skel button"></span></div>
-  <div class="tiles">{{range 6}}<div class="tile"><span class="skel tiny"></span><span class="skel value"></span></div>{{end}}</div>
-  <div class="card block"><span class="skel tiny"></span><span class="skel chart"></span></div>
-  {{template "skel-rows" 4}}
-</div></template>
-<template id="skel-list"><div class="skel-page" aria-hidden="true">
-  <div class="topbar"><span class="skel title"></span><span class="skel button"></span></div>
-  {{template "skel-rows" 6}}
-</div></template>
-<template id="skel-generic"><div class="skel-page" aria-hidden="true">
-  <div class="topbar"><span class="skel title"></span></div>
+{{/* Cloned by app.js into #content while a slow navigation is pending; one shape per kind of destination, sized like the real page. */}}
+<template id="skel-overview"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
+  <div class="topbar">{{template "skel-titles"}}<div class="btns"><span class="skel find"></span><span class="skel button"></span></div></div>
+  <span class="skel banner"></span>
+  {{template "skel-tiles"}}
+  <div class="skel-sum tall"><span class="skel"></span></div>
+  {{template "skel-table" (dict "Cls" "ov" "N" 6)}}
+</div></div></template>
+<template id="skel-table"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
+  <div class="topbar">{{template "skel-titles"}}<div class="btns"><span class="skel find"></span><span class="skel button"></span></div></div>
+  <div class="skel-bar"><span class="skel pill"></span><span class="skel pill"></span><span class="skel pill"></span><span class="skel pill"></span></div>
+  <div class="skel-sum"><span class="skel"></span></div>
+  {{template "skel-table" (dict "Cls" "mon" "N" 8)}}
+</div></div></template>
+<template id="skel-detail"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
+  <div class="topbar">{{template "skel-titles"}}<div class="btns"><span class="skel button"></span><span class="skel button"></span><span class="skel button"></span><span class="skel button"></span></div></div>
+  <div class="skel-tabs"><span class="skel tab"></span><span class="skel tab"></span><span class="skel tab"></span><span class="skel tab"></span></div>
+  {{template "skel-tiles"}}
+  <div class="card block"><div class="skel-hd"><span class="skel tiny"></span><span class="skel pill"></span></div><span class="skel chart"></span></div>
+  <div class="card block"><div class="skel-hd short"><span class="skel tiny"></span></div><span class="skel hours"></span><span class="skel lab"></span></div>
+  <div class="card block"><div class="skel-hd short"><span class="skel tiny"></span></div><div class="skel-sum tall"><span class="skel"></span></div>{{template "skel-table" (dict "Cls" "chk" "N" 4)}}</div>
+</div></div></template>
+<template id="skel-list"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
+  <div class="topbar">{{template "skel-titles"}}<div class="btns"><span class="skel sel"></span><span class="skel pill"></span></div></div>
+  <div class="skel-bar"><span class="skel pill wide"></span><span class="skel pill wide"></span><span class="skel pill wide"></span><span class="skel view"></span></div>
+  <div class="skel-sum"><span class="skel"></span></div>
+  {{template "skel-table" (dict "Cls" "inc" "N" 5)}}
+</div></div></template>
+<template id="skel-generic"><div class="skel-page"><span class="sr" role="status">Loading…</span><div aria-hidden="true">
+  <div class="topbar">{{template "skel-titles"}}</div>
   <div class="card block"><span class="skel line"></span><span class="skel line"></span><span class="skel line short"></span></div>
-</div></template>
+</div></div></template>
 <template id="skel-line"><span class="skel line" aria-hidden="true"></span></template>
 {{end}}
 
-{{define "skel-rows"}}<div class="skel-rows">{{range .}}<div class="skel-row"><span class="skel dot"></span><span class="skel name"></span><span class="skel line"></span><span class="skel val"></span></div>{{end}}</div>{{end}}
+{{define "skel-titles"}}<div class="skel-titles"><span class="skel title"></span><span class="skel sub"></span></div>{{end}}
+{{define "skel-tiles"}}<div class="tiles">{{range 6}}<div class="tile"><span class="skel tiny"></span><span class="skel value"></span></div>{{end}}</div>{{end}}
+{{define "skel-table"}}<div class="skel-box {{.Cls}}"><div class="skel-head"></div>{{range .N}}<div class="skel-row"><span class="skel dot"></span><span class="skel name"></span><span class="skel line"></span><span class="skel val"></span></div>{{end}}</div>{{end}}

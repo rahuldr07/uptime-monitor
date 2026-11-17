@@ -337,24 +337,43 @@ dialog[open]{animation:dlg-in .14s ease-out}dialog[open]::backdrop{animation:dlg
 .dt td.acts button.sm{padding-left:6px;padding-right:6px}
 .oauth{display:grid;gap:8px}.oauth .btn{width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px}.oauth-logo{width:18px;height:18px;flex:none}.or{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--muted);font-size:12px}.or::before,.or::after{content:"";flex:1;border-top:1px solid var(--border)}
 code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}.nf-lead{margin:0 0 14px}.login .lead{margin:4px 0 16px}
-/* loading skeletons: .skel blocks are cloned from the <template>s in layout.html while a slow navigation or a pending action waits */
+/* loading skeletons: .skel blocks are cloned from the <template>s in layout.html while a slow navigation or a pending action waits; sizes follow the real pages */
 .skel{display:block;height:12px;border-radius:var(--radius);background:var(--border)}
-.skel.title{width:160px;height:22px}.skel.button{width:120px;height:32px}.skel.tiny{width:60%;height:10px;margin-bottom:8px}.skel.value{width:40%;height:19px}
-.skel.chart{height:180px}.skel.line{flex:1;height:12px}.skel.short{width:60%;flex:none;margin-top:10px}.card .skel.line+.skel.line{margin-top:10px}
+.skel-titles{width:200px;height:47px;padding-top:5px;display:flex;flex-direction:column;gap:8px}.skel.title{width:160px;height:20px}.skel.sub{width:110px;height:10px}
+.skel.find{width:240px;height:36px}.skel.sel{width:160px;height:36px}.skel.button{width:120px;height:32px}.skel.pill{width:56px;height:28px}.skel.pill.wide{width:96px}.skel.view{width:76px;height:26px;margin-left:auto}
+.skel.banner{height:40px;margin-bottom:14px}
+.skel-page .tile{height:69px}.skel.tiny{width:60%;height:10px;margin-bottom:8px}.skel.value{width:40%;height:19px}
+.skel-sum{height:18px;margin-bottom:8px}.skel-sum.tall{height:26px}.skel-sum .skel{width:160px}
+.skel-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.skel-tabs{display:flex;align-items:center;gap:28px;height:38px;padding:0 14px;border-bottom:1px solid var(--border);margin-bottom:16px}.skel.tab{width:60px}
+.skel-hd{height:28px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.skel-hd .skel.tiny{margin:0}
+.skel-hd.short{height:21px}.skel.lab{width:100%;height:18px;margin-top:4px}.skel.chart{height:auto;aspect-ratio:4/1}.skel.hours{height:26px}
+.skel.line{flex:1}.skel.short{width:60%;flex:none;margin-top:10px}.card .skel.line+.skel.line{margin-top:10px}
 .skel.dot{width:9px;height:9px;border-radius:50%;flex:none}.skel.name{width:140px;flex:none}.skel.val{width:70px;flex:none}
-.skel-rows{border-top:1px solid var(--border)}.skel-row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--border)}
-.alert .skel.line{min-width:120px;max-width:260px}
+.skel-box{border:1px solid var(--border);border-radius:var(--radius);background:var(--card);overflow:hidden;margin-bottom:14px}.card .skel-box{margin-bottom:0}
+.skel-head{height:34px;background:var(--card2);border-bottom:1px solid var(--border)}
+.skel-row{display:flex;align-items:center;gap:14px;padding:0 12px;border-bottom:1px solid var(--border)}.skel-row:last-child{border-bottom:0}
+.skel-box.ov .skel-row{height:55px}.skel-box.mon .skel-row{height:45px}.skel-box.inc .skel-row{height:60px}.skel-box.chk .skel-row{height:37px}
+.alert .skel.line{min-width:120px;max-width:260px}.alert.pending{min-height:61px;align-items:center}.pending-row{display:flex;align-items:center;gap:12px}
+@media(max-width:639px){
+  .skel-page .topbar .btns{width:100%}.skel.find{flex:1 1 100%}
+  .skel.banner{height:70px}
+  .skel-box:not(.chk){border:0;background:none;overflow:visible}.skel-box:not(.chk) .skel-head{display:none}
+  .skel-box:not(.chk) .skel-row{flex-direction:column;align-items:flex-start;justify-content:center;gap:8px;padding:12px;margin-bottom:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card)}
+  .skel-box:not(.chk) .skel-row .skel.line{flex:none;width:70%}.skel-box:not(.chk) .skel-row .skel.val{display:none}
+  .skel-box.ov .skel-row{height:140px}.skel-box.mon .skel-row{height:122px}.skel-box.inc .skel-row{height:118px}
+}
 @media(prefers-reduced-motion:no-preference){
-  .skel{background:linear-gradient(90deg,var(--border) 0,var(--card2) 50%,var(--border) 100%) 100% 0/200% 100%;animation:shimmer 1.4s ease-in-out infinite}
+  .skel{background:linear-gradient(90deg,var(--border) 0,color-mix(in srgb,var(--border) 55%,var(--card2)) 50%,var(--border) 100%) 100% 0/200% 100%;animation:shimmer 1.4s ease-in-out infinite}
   html.paused .skel{animation-play-state:paused}
 }
 @keyframes shimmer{to{background-position:-100% 0}}
-@media(max-width:480px){.skel.name{width:100px}.skel-row .skel.val{display:none}}
 /* motion: short and purposeful; a page fades in once on load, a changed row flashes on live refresh, state colours ease, buttons press */
 @keyframes content-in{from{opacity:0;transform:translateY(4px)}}
 @keyframes row-flash{from{box-shadow:inset 0 0 0 100vmax color-mix(in srgb,var(--accent) 28%,transparent)}to{box-shadow:inset 0 0 0 100vmax transparent}}
 @media(prefers-reduced-motion:no-preference){
   #content{animation:content-in .16s ease-out}
+  #content.no-enter{animation:none}
   .dt tr.row-flash>td{animation:row-flash .8s ease-out}
   .sdot,.badge,.hb i,.days i,.hours i,.tile .v{transition:background-color .2s ease,color .2s ease,border-color .2s ease}
   button:not(:disabled):active,.btn:active{transform:scale(.98)}

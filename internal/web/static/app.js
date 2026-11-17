@@ -203,12 +203,13 @@
     r.appendChild(icon(kindIcon(kind))); r.appendChild(d);
     r.hidden = false;
   }
-  // Pending state of an action: a skeleton line (cloned from #skel-line) with the label kept for screen readers.
+  // Pending state of an action: a skeleton bar (cloned from #skel-line) beside the label.
   function showPending(r, label) {
-    r.className = 'alert info'; r.textContent = '';
-    var t = $('#skel-line'), sr = mk('span', 'sr'); sr.textContent = label;
-    if (t) r.appendChild(t.content.cloneNode(true));
-    r.appendChild(sr); r.hidden = false;
+    r.className = 'alert info pending'; r.textContent = '';
+    var t = $('#skel-line'), d = mk('div', 'pending-row'), l = mk('span');
+    l.textContent = label;
+    if (t) d.appendChild(t.content.cloneNode(true));
+    d.appendChild(l); r.appendChild(d); r.hidden = false;
   }
   function wirePanel() {
     var f = $('#panel form'); if (!f || f._wired) return; f._wired = true;
@@ -222,7 +223,9 @@
       } catch (e) { }
     });
     var tb = f.querySelector('#test-btn'); if (tb) tb.addEventListener('click', function () {
+      if (tb.disabled) return;
       var r = res(); showPending(r, 'Testing…');
+      tb.disabled = true; tb.setAttribute('aria-busy', 'true');
       fetch('/targets/test', { method: 'POST', body: new FormData(f), headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
         .then(function (x) { if (x.status === 401) { sessionExpired(); throw 0; } return x.json(); })
         .then(function (j) {
@@ -230,7 +233,8 @@
           showResult(r, j.ok ? 'ok' : 'error', j.ok ? 'Test passed' : 'Test failed',
             (j.status_code ? 'HTTP ' + j.status_code + ' ' : '') + 'in ' + j.latency_ms + ' ms' + (j.error ? ' · ' + j.error : ''));
         })
-        .catch(function () { showResult(r, 'error', 'Could not run the test'); });
+        .catch(function () { showResult(r, 'error', 'Could not run the test'); })
+        .then(function () { tb.disabled = false; tb.removeAttribute('aria-busy'); });
     });
     f.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -937,7 +941,7 @@
       else if (k === 'Home') move(0, e.shiftKey);
       else if (k === 'End') move(rows.length - 1, e.shiftKey);
       else if (k === ' ' && r && select) tick(r, false);
-      else if (k === 'Enter' && r && sameHref(r.tr.getAttribute('data-href'))) location.href = r.tr.getAttribute('data-href');
+      else if (k === 'Enter' && r && sameHref(r.tr.getAttribute('data-href'))) { skelStart(r.tr.getAttribute('data-href')); location.href = r.tr.getAttribute('data-href'); }
       else if (k === 'Escape' && Object.keys(S.sel).length) T.clearSel();
       else return;
       e.preventDefault();
@@ -1317,26 +1321,39 @@
   // longer than 250ms, #content is swapped for a skeleton shaped like the destination (the <template>s in
   // layout.html). The real nodes are kept, not copied, and put back if the page is restored from the
   // back/forward cache or the navigation never unloads this page (Stop, a download). Live refresh never shows one.
-  var skel = { timer: null, safety: null, saved: null, focus: null };
+  var skel = { timer: null, safety: null, saved: null, focus: null, y: 0, nav: null };
   var SKEL_SKIP = /^\/(static|api|auth|events|healthz|logout)(\/|$)/;
-  function skelKind(path) {
-    return path === '/' ? 'overview' : path === '/targets' ? 'table' : /^\/targets\/\d+$/.test(path) ? 'detail' : path === '/incidents' ? 'list' : 'generic';
+  function skelKind(u) {
+    var p = u.pathname;
+    if (p === '/') return 'overview';
+    if (p === '/targets') return 'table';
+    if (/^\/targets\/\d+$/.test(p)) { var t = new URLSearchParams(u.search).get('tab'); return !t || t === 'overview' ? 'detail' : 'generic'; }
+    return p === '/incidents' ? 'list' : 'generic';
   }
   function skelStart(href) {
     var u; try { u = new URL(href, location.href); } catch (e) { return; }
     clearTimeout(skel.timer);
     if (u.origin !== location.origin || SKEL_SKIP.test(u.pathname)) return;
-    skel.timer = setTimeout(function () { skelShow(skelKind(u.pathname)); }, 250);
+    skel.timer = setTimeout(function () { skelShow(u); }, 250);
   }
-  function skelShow(kind) {
-    var c = $('#content'), t = $('#skel-' + kind);
+  function skelShow(u) {
+    var c = $('#content'), t = $('#skel-' + skelKind(u));
     if (!c || !t || skel.saved) return;
     var f = document.createDocumentFragment(), a = document.activeElement;
     skel.focus = a && c.contains(a) ? a : null;
+    skel.y = window.pageYOffset;
     while (c.firstChild) f.appendChild(c.firstChild);
     skel.saved = f;
     c.appendChild(t.content.cloneNode(true));
-    c.setAttribute('aria-busy', 'true'); c.setAttribute('aria-label', 'Loading'); c.setAttribute('role', 'status');
+    window.scrollTo(0, 0);
+    // the destination's sidebar item takes the highlight until the page arrives
+    var cur = $('.side a.nav.active'), dest = $('.side a.nav[href="' + (/^\/targets\//.test(u.pathname) ? '/targets' : u.pathname) + '"]');
+    if (dest && dest !== cur) {
+      skel.nav = { cur: cur, dest: dest };
+      if (cur) { cur.classList.remove('active'); cur.removeAttribute('aria-current'); }
+      dest.classList.add('active'); dest.setAttribute('aria-current', 'page');
+    }
+    try { sessionStorage.setItem('skel-shown', '1'); } catch (e) { } // the next page skips its enter fade
     skel.safety = setTimeout(skelHide, 10000);
   }
   function skelHide() {
@@ -1345,7 +1362,13 @@
     if (!f || !c) return;
     while (c.firstChild) c.removeChild(c.firstChild);
     c.appendChild(f);
-    c.removeAttribute('aria-busy'); c.removeAttribute('aria-label'); c.removeAttribute('role');
+    if (skel.nav) {
+      skel.nav.dest.classList.remove('active'); skel.nav.dest.removeAttribute('aria-current');
+      if (skel.nav.cur) { skel.nav.cur.classList.add('active'); skel.nav.cur.setAttribute('aria-current', 'page'); }
+      skel.nav = null;
+    }
+    try { sessionStorage.removeItem('skel-shown'); } catch (e) { }
+    window.scrollTo(0, skel.y);
     if (skel.focus) { skel.focus.focus({ preventScroll: true }); skel.focus = null; }
     if (pending && !refreshing) { pending = false; schedule(); }
   }
@@ -1394,6 +1417,7 @@
   }
   function wire(root) { wireValidation(root); wireTables(root); wireDropdowns(root); wireConfirms(root); wireAsync(root); wireSearch(root); wireDirty(root); wireTZ(root); }
   document.addEventListener('DOMContentLoaded', function () {
+    try { if (sessionStorage.getItem('skel-shown')) { sessionStorage.removeItem('skel-shown'); var ec = $('#content'); if (ec) ec.classList.add('no-enter'); } } catch (e) { }
     toastRegions(); liftFlash(); wire(document); wirePanel(); connect();
     markUpdated();
     setInterval(tickUpdated, 5000);
