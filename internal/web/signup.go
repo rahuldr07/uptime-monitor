@@ -121,7 +121,11 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		d.Error = msgWorkspaceLen
 	}
 
-	// 3. Invite, peeked once.
+	// 3. Invite, peeked once. An invite bound to an address proves it; an
+	// unbound one proves nothing, so with mail the address is verified by
+	// email like an open sign-up (without mail there is no way to, and the
+	// account is verified as before).
+	verify := open
 	if !open {
 		tok, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now())
 		if errors.Is(err, store.ErrNotFound) {
@@ -133,6 +137,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.EmailLocked = tok.Email != ""
+		verify = tok.Email == "" && s.mail != nil
 	}
 	if d.Error != "" {
 		refundAddr = false
@@ -165,7 +170,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	// 6. Create the account; the workspace cap is checked in the transaction.
 	// A failure leaves the invite unused.
 	u, _, err := s.sys.CreateAccount(ctx, store.AccountInput{Email: email, PasswordHash: phc,
-		WorkspaceName: d.WorkspaceName, Verified: !open, InviteToken: raw,
+		WorkspaceName: d.WorkspaceName, Verified: !verify, InviteToken: raw,
 		MaxWorkspaces: *s.cfg.Limits.MaxWorkspaces, Now: s.now()})
 	switch {
 	case errors.Is(err, store.ErrWorkspaceCap):
@@ -200,7 +205,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	// 7. Success. The session must survive a client that disconnects now.
 	ctx = context.WithoutCancel(ctx)
 	s.logger.Info("sign-up", "event", "signup", "user_id", u.ID, "ip", ip)
-	if open {
+	if verify {
 		if err := s.sendVerify(ctx, u); err != nil {
 			s.logger.Error("sign-up: cannot send verification", "err", err, "user_id", u.ID)
 		}
