@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-11-17
+
+### Added
+
+- Fallback alert email through the server's system mail. A workspace with no email channel (no SMTP host) now gets alert emails sent from the server to the verified sign-in addresses of its members, never to an address typed into a form. On by default when `mail` is set; the Alert channels page has a "Send alerts to my account email" box to turn it off per workspace, and "Save and send test" tests it. Budgets: 10 per hour and 30 per day per workspace, charged once per alert, also counted against the instance budget. Over a budget the alert is dropped with a WARN `event=alert_mail_dropped` and the Email card reads "Limit reached".
+- `limits.mail_per_day`: a daily cap on all system email across the instance. Default `0` (unlimited); a negative value is refused at startup.
+
+### Changed
+
+- A refused SMTP login (reply 535, 530, 534 or 538) now shows "Login rejected — check the username and password" on the Alert channels page instead of the raw reply; the raw error stays in the log.
+- The SMTP password is saved exactly as typed. It was trimmed of leading and trailing spaces. The username is still trimmed.
+
 ## [1.3.0] - 2026-11-17
 
 ### Added

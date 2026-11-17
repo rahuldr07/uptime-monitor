@@ -258,12 +258,52 @@ already sent keeps working:
 | Per recipient, all system email | 3 per hour and 10 per day |
 | Duplicate sign-up notice | 1 per 24 hours per account |
 | `/forgot` and `/verify/resend` | 10 per hour per client address, shared |
-| Whole instance (`limits.mail_per_hour`) | `500` by default, at least `1` |
+| Whole instance per hour (`limits.mail_per_hour`) | `500` by default, at least `1` |
+| Whole instance per day (`limits.mail_per_day`) | unlimited (`0`) by default |
 
-The password-change notice counts only against the instance budget.
+The password-change notice counts only against the instance budgets.
 
 Without `mail`, `/forgot` and `/verify/resend` return 404 and sign-in offers no
 resend form. Use `uptime-monitor -reset-password <email>` to recover an account.
+
+#### Fallback alert email
+
+With `mail` set, a workspace that has no email alert channel (no SMTP host)
+gets its alert emails from the server instead, so alerts work without anyone
+having an SMTP account. This is on by default. The Alert channels page shows
+"No SMTP set up — alerts are sent from the server to <your email>" with a
+"Send alerts to my account email" box that turns it off for that workspace
+(stored as `"server_email_off": true` in the workspace's `notify` settings;
+saving other channels leaves it as it was). The operator's workspace gets the
+same fallback.
+
+- **Who gets it**: only the verified, enabled sign-in addresses of the
+  workspace's members, never the To list of an email channel. Typing an address
+  does not make the server mail it, so the server's SMTP account cannot be used
+  to email strangers.
+- **When it does not apply**: the server has no `mail`; the workspace has an
+  email channel with an SMTP host (even if its box is unticked, which means
+  email is off); or the box is unticked.
+- **Message**: the same subject and body as an email channel
+  (`[uptime] <name> is DOWN`), from the `mail` `from` address, sent through the
+  same TLS and address checks as other system email. Delivery is retried three
+  times like any channel.
+- **Budgets** (in memory, reset on restart): 10 alerts per hour and 30 per day
+  per workspace, charged once per alert (not per retry), plus the instance
+  budgets below. An alert over a budget is dropped with a WARN
+  `event=alert_mail_dropped` (`workspace`, `reason`), and the Email card shows
+  "Limit reached" until the next delivery. "Save and send test" tests the
+  fallback and counts against the budgets.
+- **Instance budgets**: `limits.mail_per_hour` (default 500) and
+  `limits.mail_per_day` (default `0`, unlimited) cap all system email together,
+  fallback alerts included. A free plan with a daily send cap (Brevo's is 300 a
+  day) needs `mail_per_day` set a little below it, so alerts and sign-in emails
+  stop before the provider does.
+
+When an SMTP server refuses the login (reply 535, or 530, 534, 538), the Alert
+channels page reads "Login rejected — check the username and password"; the
+full error is in the log. The SMTP username is saved without leading or
+trailing spaces; the password is saved exactly as typed.
 
 ### Limits
 
@@ -277,6 +317,7 @@ exempt from the monitor, interval, host-rate and rate limits below. The
 | `min_interval` | `30s` | shortest check interval a workspace may set (at least `1s`); `0s` or unset means the default |
 | `max_workspaces` | `0` | total workspaces on the instance, workspace 1 included, so `5` allows 4 invited accounts and `1` allows none; `0` is unlimited. At the cap, invited sign-ups get "This instance is not accepting new accounts." |
 | `mail_per_hour` | `500` | system emails across the instance per hour; at least `1`. See System email |
+| `mail_per_day` | `0` | system emails across the instance per day; `0` is unlimited. See System email |
 | `signups_per_hour` | `100` | sign-ups across the instance per hour; at least `1`. To stop new accounts, set `max_workspaces` to the current workspace count (`signup: "closed"` does not: outstanding invites keep working until they expire) |
 | `host_requests_per_second` | `1` | combined check rate to one host from all non-operator workspaces (must be positive). A monitor that would exceed it is refused with a hint to use a longer interval |
 
@@ -389,7 +430,7 @@ The server refuses to start when:
 - `signup` is not `closed` and `base_url` is http for a host other than localhost or a loopback address
 - `base_url` is not an absolute http(s) URL with no path, userinfo or query
 - `oauth` has only one of `client_id` and `client_secret` for a provider, a key other than `google` or `github`, or a provider while `base_url` is empty or not https (http is allowed only for localhost or a loopback address)
-- a limit is negative, `signups_per_hour` is under 1, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
+- a limit (`mail_per_day` included) is negative, `signups_per_hour` is under 1, `host_requests_per_second` is not positive, or `min_interval` is under `1s`
 
 It logs a WARN whenever `allow_private_targets` is `all`: any non-operator
 account, including one created from an invite issued earlier under `closed`,
@@ -482,7 +523,7 @@ From a release before the production hardening:
 | `signup` | `closed` | `closed`, `invite` or `open`; see Sign-up and invites. `open` needs `mail` |
 | `oauth` | none | `google` and `github`, each `{client_id, client_secret}`; enables sign-in with that provider. Needs an https `base_url`; see Sign in with Google or GitHub |
 | `mail` | none | system SMTP account for verification and reset emails; see System email |
-| `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `mail_per_hour`, `host_requests_per_second` |
+| `limits` | see Limits | `max_monitors`, `min_interval`, `max_workspaces`, `signups_per_hour`, `mail_per_hour`, `mail_per_day`, `host_requests_per_second` |
 | `trust_proxy` | `false` | behind a reverse proxy, trust `X-Forwarded-For` (sign-in and status page rate limiting) and `X-Forwarded-Proto` (secure cookies) |
 | `trusted_proxies` | `1` | how many proxies are in front (e.g. `2` for a CDN plus nginx); the client address is read that many entries from the right of `X-Forwarded-For`, because entries further left are supplied by the client |
 | `allow_private_targets` | `operator` | `none`, `operator` or `all`. Which workspaces may reach loopback, private, link-local (cloud metadata) and other internal addresses through monitors, Test URL and alert channels. `operator` means the operator's own workspace 1 (checks and alerts) and operator accounts (the web form checks); v1 has one operator, so the two agree; `all` is unsafe on an instance others can join. |
