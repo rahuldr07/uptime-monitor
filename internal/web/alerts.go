@@ -140,13 +140,13 @@ func parseNotifyForm(r *http.Request, prev config.Notify) config.Notify {
 		if pe := prev.Email; pe != nil && pe.SMTPHost == v("smtp_host") && smtpPort(pe.SMTPPort) == smtpPort(port) && pe.Username == v("smtp_user") {
 			old = pe.Password
 		}
-		// The username is trimmed (v); the password is not, as it may contain spaces.
-		pass := r.FormValue("smtp_pass")
-		if pass == "" {
-			pass = old
+		// In the fallback form the header box is the switch for both.
+		enabled := v("email_enabled") == "1"
+		if v("server_email_form") == "1" {
+			enabled = v("server_email") == "1"
 		}
 		n.Email = &config.Email{SMTPHost: v("smtp_host"), SMTPPort: port, Username: v("smtp_user"),
-			Password: pass, From: v("smtp_from"), To: to, Disabled: v("email_enabled") != "1"}
+			Password: keep("smtp_pass", old), From: v("smtp_from"), To: to, Disabled: !enabled}
 	}
 	return n
 }

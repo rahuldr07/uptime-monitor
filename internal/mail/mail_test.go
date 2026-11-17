@@ -242,7 +242,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	}
 }
 
-func (h *harness) admit(ws int64) string { return h.q.Admit(ws) }
+func (h *harness) admit(ws int64) string { return h.q.Admit(ws, 1) }
 
 func TestAdmitWorkspaceBudgets(t *testing.T) {
 	h := newHarness(1000, 0)
@@ -281,31 +281,78 @@ func TestAdmitWorkspaceBudgets(t *testing.T) {
 }
 
 func TestAdmitCountsAgainstInstanceBudgets(t *testing.T) {
-	h := newHarness(2, 0)
-	if h.admit(1) != "" || h.admit(2) != "" {
-		t.Fatal("two alerts fit the instance hour")
+	h := newHarness(4, 0) // alerts get half: 2 an hour
+	if h.admit(2) != "" || h.admit(3) != "" {
+		t.Fatal("two alerts fit the alert share")
 	}
-	if r := h.admit(3); r != "instance" {
-		t.Fatalf("3rd = %q", r)
+	if r := h.admit(4); r != "alerts_hour" {
+		t.Fatalf("3rd alert = %q", r)
 	}
-	if h.send("a@example.com") {
+	// The alerts used half the instance budget; system mail gets the rest.
+	if !h.send("a@example.com") || !h.send("b@example.com") {
+		t.Fatal("system mail starved by alerts")
+	}
+	if h.send("c@example.com") {
 		t.Fatal("system mail got through a spent instance budget")
+	}
+}
+
+func TestAlertShareLeavesRoomForVerificationMail(t *testing.T) {
+	h := newHarness(10, 0)
+	for ws := int64(2); ; ws++ { // many workspaces, each within its own budget
+		if h.admit(ws) != "" {
+			break
+		}
+		if ws > 50 {
+			t.Fatal("alerts were never limited")
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if !h.send(fmt.Sprintf("u%d@example.com", i)) {
+			t.Fatalf("verification %d starved by alerts", i+1)
+		}
+	}
+}
+
+func TestOperatorWorkspaceExemptFromAlertShare(t *testing.T) {
+	q := New(Options{Sender: newFake(), PerHour: 4, ExemptWorkspace: 1, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
+	if q.Admit(2, 1) != "" || q.Admit(3, 1) != "" || q.Admit(4, 1) != "alerts_hour" {
+		t.Fatal("tenants share half the budget")
+	}
+	if q.Admit(1, 1) != "" || q.Admit(1, 1) != "" {
+		t.Fatal("operator should not be held to the alert share")
+	}
+	if r := q.Admit(1, 1); r != "instance" {
+		t.Fatalf("operator still charges the shared budget: %q", r)
+	}
+}
+
+func TestAdmitChargesEachRecipient(t *testing.T) {
+	h := newHarness(8, 0) // alert share 4
+	if h.admit(2) != "" {
+		t.Fatal("first")
+	}
+	if r := h.q.Admit(3, 3); r != "" { // 1 + 3 = 4 of the share
+		t.Fatal(r)
+	}
+	if r := h.admit(4); r != "alerts_hour" {
+		t.Fatalf("recipients were not charged: %q", r)
 	}
 }
 
 func TestMailPerDayCapsAllSystemMail(t *testing.T) {
 	f := newFake()
 	now := time.Unix(1_700_000_000, 0)
-	q := New(Options{Sender: f, PerHour: 100, PerDay: 3, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+	q := New(Options{Sender: f, PerHour: 100, PerDay: 4, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
 		Now: func() time.Time { return now }})
 	compose := func() (string, string, error) { return "s", "b", nil }
-	_ = q.Send("a@example.com", compose) // 1
-	q.Notice("b@example.com", "s", "b")  // 2
-	if q.Admit(1) != "" {                // 3
-		t.Fatal("third message should fit")
+	_ = q.Send("a@example.com", compose)            // 1
+	q.Notice("b@example.com", "s", "b")             // 2
+	if q.Admit(2, 1) != "" || q.Admit(3, 1) != "" { // 3, 4: the alert share is 2 a day
+		t.Fatal("two alerts should fit")
 	}
-	if r := q.Admit(1); r != "instance_day" {
-		t.Fatalf("4th = %q", r)
+	if r := q.Admit(4, 1); r != "alerts_day" {
+		t.Fatalf("5th = %q", r)
 	}
 	ran := false
 	_ = q.Send("c@example.com", func() (string, string, error) { ran = true; return "s", "b", nil })
@@ -313,7 +360,7 @@ func TestMailPerDayCapsAllSystemMail(t *testing.T) {
 		t.Fatal("queued mail got through the daily cap")
 	}
 	now = now.Add(25 * time.Hour)
-	if q.Admit(1) != "" {
+	if q.Admit(2, 1) != "" {
 		t.Fatal("cap should lapse after a day")
 	}
 }

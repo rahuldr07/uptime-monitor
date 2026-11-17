@@ -157,7 +157,21 @@ func emailMessage(ev Event) (subject, body string) {
 }
 
 // ErrLimit means an alert email was dropped because a budget is spent.
-var ErrLimit = errors.New("Limit reached")
+var ErrLimit = errors.New(LimitReached)
+
+// ErrServerMail wraps any failure of the server's own mail path. Its text is
+// all a tenant sees; the wrapped error is for the log only, as it may name
+// the operator's SMTP host or account.
+var ErrServerMail = errors.New(ServerMailFailed)
+
+// ErrNoRecipient means no member has a verified address to mail.
+var ErrNoRecipient = errors.New("no verified account email")
+
+// Status texts shown on the Alert channels page.
+const (
+	LimitReached     = "Limit reached"
+	ServerMailFailed = "Server mail failed"
+)
 
 // LoginRejected is the status shown when an SMTP server refuses the login.
 const LoginRejected = "Login rejected — check the username and password"
@@ -169,7 +183,11 @@ func StatusText(err error) string {
 	var te *textproto.Error
 	switch {
 	case errors.Is(err, ErrLimit):
-		return ErrLimit.Error()
+		return LimitReached
+	case errors.Is(err, ErrServerMail):
+		return ServerMailFailed
+	case errors.Is(err, ErrNoRecipient):
+		return ErrNoRecipient.Error()
 	case errors.As(err, &te) && (te.Code == 530 || te.Code == 534 || te.Code == 535 || te.Code == 538):
 		return LoginRejected
 	}
@@ -184,9 +202,9 @@ type Admitter interface {
 
 // SystemMail is the server's own mail path (internal/mail.Queue).
 type SystemMail interface {
-	// Admit charges one alert email to the workspace and instance budgets and
-	// returns why it was refused, or "" when it may be sent.
-	Admit(workspace int64) (reason string)
+	// Admit charges one alert email (with its recipient count) to the
+	// workspace and instance budgets and returns why it was refused, or "" when it may be sent.
+	Admit(workspace int64, recipients int) (reason string)
 	Deliver(ctx context.Context, to []string, subject, body string) error
 }
 
@@ -203,29 +221,37 @@ type ServerEmail struct {
 
 // Admit refuses when nobody can receive the alert or a budget is spent.
 func (s ServerEmail) Admit(ctx context.Context) error {
-	to, err := s.Recipients(ctx)
+	to, err := s.recipients(ctx)
 	if err != nil {
 		return err
 	}
-	if len(to) == 0 {
-		return errors.New("no verified account email")
-	}
-	if reason := s.Mail.Admit(s.Workspace); reason != "" {
+	if reason := s.Mail.Admit(s.Workspace, len(to)); reason != "" {
 		return fmt.Errorf("%w (%s)", ErrLimit, reason)
 	}
 	return nil
 }
 
-func (s ServerEmail) Notify(ctx context.Context, ev Event) error {
+func (s ServerEmail) recipients(ctx context.Context) ([]string, error) {
 	to, err := s.Recipients(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrServerMail, err)
+	}
+	if len(to) == 0 {
+		return nil, ErrNoRecipient
+	}
+	return to, nil
+}
+
+func (s ServerEmail) Notify(ctx context.Context, ev Event) error {
+	to, err := s.recipients(ctx)
 	if err != nil {
 		return err
 	}
-	if len(to) == 0 {
-		return errors.New("no verified account email")
-	}
 	subject, body := emailMessage(ev)
-	return s.Mail.Deliver(ctx, to, subject, body)
+	if err := s.Mail.Deliver(ctx, to, subject, body); err != nil {
+		return fmt.Errorf("%w: %v", ErrServerMail, err)
+	}
+	return nil
 }
 
 // WithServerEmail adds the fallback alert email to m when the server has mail

@@ -25,12 +25,15 @@ type Sender interface {
 
 // Options configures a Queue.
 type Options struct {
-	Sender    Sender
-	PerHour   int              // instance budget (limits.mail_per_hour)
-	PerDay    int              // instance daily budget (limits.mail_per_day); 0 = unlimited
-	Logger    *slog.Logger     // nil = slog.Default()
-	Now       func() time.Time // nil = time.Now; set as the limiters' Now
-	QueueSize int              // 0 = 100
+	Sender  Sender
+	PerHour int // instance budget (limits.mail_per_hour)
+	PerDay  int // instance daily budget (limits.mail_per_day); 0 = unlimited
+	// ExemptWorkspace is not held to the alert-only share of the instance
+	// budgets (the operator's workspace); it still charges the shared ones.
+	ExemptWorkspace int64
+	Logger          *slog.Logger     // nil = slog.Default()
+	Now             func() time.Time // nil = time.Now; set as the limiters' Now
+	QueueSize       int              // 0 = 100
 }
 
 type message struct {
@@ -47,6 +50,10 @@ type Queue struct {
 	hour, day, all *ratelimit.Limiter
 	allDay         *ratelimit.Limiter // nil = no daily cap
 	wsHour, wsDay  *ratelimit.Limiter // fallback alerts, per workspace
+	// Alert-only instance budgets at half the shared ones, so fallback alerts
+	// cannot use up the mail that sign-up and password reset need.
+	alertHour, alertDay *ratelimit.Limiter // alertDay is nil without a daily cap
+	exempt              int64
 }
 
 // Fallback alert budgets per workspace.
@@ -71,11 +78,16 @@ func New(o Options) *Queue {
 		day:  ratelimit.New(24*time.Hour, 10, 0),
 		all:  ratelimit.New(time.Hour, o.PerHour, 1),
 	}
+	q.exempt = o.ExemptWorkspace
+	q.alertHour = ratelimit.New(time.Hour, max(1, o.PerHour/2), 1)
+	if o.PerDay > 0 {
+		q.alertDay = ratelimit.New(24*time.Hour, max(1, o.PerDay/2), 1)
+	}
 	q.wsHour, q.wsDay = ratelimit.New(time.Hour, alertsPerHour, 0), ratelimit.New(24*time.Hour, alertsPerDay, 0)
 	if o.PerDay > 0 {
 		q.allDay = ratelimit.New(24*time.Hour, o.PerDay, 1)
 	}
-	for _, l := range []*ratelimit.Limiter{q.hour, q.day, q.all, q.allDay, q.wsHour, q.wsDay} {
+	for _, l := range []*ratelimit.Limiter{q.hour, q.day, q.all, q.allDay, q.wsHour, q.wsDay, q.alertHour, q.alertDay} {
 		if l != nil {
 			l.Now = o.Now
 		}
@@ -165,11 +177,14 @@ func (q *Queue) hitInstance() {
 }
 
 // Admit charges one fallback alert email to the workspace budgets (10/hour,
-// 30/day) and the instance budgets, or returns why it was refused (and logs
-// event=alert_mail_dropped). It is called once per alert, before delivery, so
-// retries of the same alert are not charged again.
-func (q *Queue) Admit(workspace int64) (reason string) {
+// 30/day), the alert-only share of the instance budgets (half of each, the
+// operator's workspace excepted) and the shared instance budgets, or returns
+// why it was refused (and logs event=alert_mail_dropped). Each recipient is
+// charged to the instance budgets. It is called once per alert, before
+// delivery, so retries of the same alert are not charged again.
+func (q *Queue) Admit(workspace int64, recipients int) (reason string) {
 	key := strconv.FormatInt(workspace, 10)
+	shared := workspace != q.exempt
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	switch {
@@ -177,6 +192,10 @@ func (q *Queue) Admit(workspace int64) (reason string) {
 		reason = "workspace_hour"
 	case !allowed(q.wsDay, key):
 		reason = "workspace_day"
+	case shared && !allowed(q.alertHour, instanceKey):
+		reason = "alerts_hour"
+	case shared && q.alertDay != nil && !allowed(q.alertDay, instanceKey):
+		reason = "alerts_day"
 	default:
 		reason = q.refuseInstance()
 	}
@@ -186,7 +205,15 @@ func (q *Queue) Admit(workspace int64) (reason string) {
 	}
 	q.wsHour.Hit(key)
 	q.wsDay.Hit(key)
-	q.hitInstance()
+	for range max(1, recipients) {
+		if shared {
+			q.alertHour.Hit(instanceKey)
+			if q.alertDay != nil {
+				q.alertDay.Hit(instanceKey)
+			}
+		}
+		q.hitInstance()
+	}
 	return ""
 }
 

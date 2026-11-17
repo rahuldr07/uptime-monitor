@@ -1396,11 +1396,11 @@ func TestServerEmailChargedOncePerAlertAcrossRetries(t *testing.T) {
 	}
 	// One alert used one of the 10 hourly slots, not three.
 	for i := 0; i < 9; i++ {
-		if r := q.Admit(1); r != "" {
+		if r := q.Admit(1, 1); r != "" {
 			t.Fatalf("admit %d refused (%s): the retries were charged", i+2, r)
 		}
 	}
-	if r := q.Admit(1); r != "workspace_hour" {
+	if r := q.Admit(1, 1); r != "workspace_hour" {
 		t.Fatalf("10 alerts should spend the hour budget, got %q", r)
 	}
 }
@@ -1408,7 +1408,7 @@ func TestServerEmailChargedOncePerAlertAcrossRetries(t *testing.T) {
 func TestServerEmailOverBudgetRecordsLimitReached(t *testing.T) {
 	f, q, snd := serverEmailFixture(t, 0)
 	for i := 0; i < 10; i++ {
-		q.Admit(1)
+		q.Admit(1, 1)
 	}
 	atomic.StoreInt32(&f.status, 500)
 	f.tick(t)

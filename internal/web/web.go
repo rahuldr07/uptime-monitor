@@ -179,7 +179,18 @@ func New(o Options) (*Server, error) {
 	s.apiLimiter.Now = now
 	s.statusCache.maxBytes = statusCacheMaxBytes
 	funcs := template.FuncMap{
-		"ago":    func(t time.Time) string { return humanAgo(s.now().Sub(t)) },
+		"ago": func(t time.Time) string { return humanAgo(s.now().Sub(t)) },
+		"alertkind": func(a store.Alert) string {
+			switch {
+			case a.OK:
+				return ""
+			case a.Error == notify.LimitReached:
+				return "limit"
+			case a.Error == notify.LoginRejected:
+				return "login"
+			}
+			return ""
+		},
 		"dur":    humanDur,
 		"durstr": func(d time.Duration) string { return shortDur(d) },
 		"ts":     formatTS,

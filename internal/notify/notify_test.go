@@ -355,7 +355,7 @@ type fakeSys struct {
 	err     error
 }
 
-func (f *fakeSys) Admit(int64) string {
+func (f *fakeSys) Admit(int64, int) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.admits++
@@ -458,5 +458,31 @@ func TestSMTPAuthFailureThroughSend(t *testing.T) {
 	err := e.Send(context.Background(), []string{"x@y.z"}, "s", "b")
 	if err == nil || StatusText(err) != LoginRejected || !strings.Contains(err.Error(), "535") {
 		t.Fatalf("err %v, status %q (the raw error must stay in err)", err, StatusText(err))
+	}
+}
+
+func TestServerEmailErrorsAreGenericForTenants(t *testing.T) {
+	login := &textproto.Error{Code: 535, Msg: "5.7.8 operator-smtp.example.com rejected the login"}
+	sys := &fakeSys{err: login}
+	se := ServerEmail{Mail: sys, Recipients: func(context.Context) ([]string, error) { return []string{"a@example.com"}, nil }}
+	err := se.Notify(context.Background(), Event{Target: "x"})
+	if got := StatusText(err); got != ServerMailFailed {
+		t.Fatalf("status %q, want the generic text, never Login rejected or the SMTP reply", got)
+	}
+	if !strings.Contains(err.Error(), "operator-smtp.example.com") {
+		t.Fatalf("the raw error must stay in the error for the log: %v", err)
+	}
+	broken := ServerEmail{Mail: sys, Recipients: func(context.Context) ([]string, error) { return nil, errors.New("db locked") }}
+	if got := StatusText(broken.Admit(context.Background())); got != ServerMailFailed {
+		t.Fatalf("lookup failure status %q", got)
+	}
+	none := ServerEmail{Mail: sys, Recipients: func(context.Context) ([]string, error) { return nil, nil }}
+	if got := StatusText(none.Admit(context.Background())); got != "no verified account email" {
+		t.Fatalf("no recipient status %q", got)
+	}
+	// The user's own SMTP channel keeps the friendly login text.
+	own := fmt.Errorf("email: %w", login)
+	if StatusText(own) != LoginRejected {
+		t.Fatal("own channel lost the login message")
 	}
 }

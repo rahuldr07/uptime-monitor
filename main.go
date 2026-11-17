@@ -212,15 +212,7 @@ func run(cfgPath string, logger *slog.Logger) error {
 	mailer := newMailer(ctx, cfg, logger)
 	sysMail, _ := mailer.(notify.SystemMail) // nil without system mail
 	mon := monitor.New(monitor.Options{Store: st, Logger: logger, FailureThreshold: cfg.FailureThreshold,
-		Notifiers: func(ctx context.Context, ws int64) (notify.Multi, error) {
-			n, err := st.Workspace(ws).Notify(ctx)
-			if err != nil {
-				return nil, err
-			}
-			restricted := ws != store.OperatorWorkspaceID
-			m := notify.FromConfig(n, logger, cfg.AllowPrivate(!restricted), restricted)
-			return notify.WithServerEmail(m, n, sysMail, ws, st.Workspace(ws).MemberEmails), nil
-		},
+		Notifiers:      workspaceNotifiers(st, cfg, logger, sysMail),
 		PrivateAllowed: func(ws int64) bool { return cfg.AllowPrivate(ws == store.OperatorWorkspaceID) },
 		UserAgent:      userAgent(version, cfg.BaseURL)})
 	if err := mon.Start(ctx); err != nil {
@@ -467,6 +459,21 @@ func seedNotify(ctx context.Context, ws *store.WS, cfg *config.Config) error {
 	return ws.SetSetting(ctx, "notify", string(b))
 }
 
+// workspaceNotifiers loads a workspace's alert channels from its saved
+// settings (none saved means none configured), plus the fallback email when
+// the server has mail.
+func workspaceNotifiers(st *store.Store, cfg *config.Config, logger *slog.Logger, sys notify.SystemMail) func(context.Context, int64) (notify.Multi, error) {
+	return func(ctx context.Context, ws int64) (notify.Multi, error) {
+		n, err := st.Workspace(ws).Notify(ctx)
+		if err != nil {
+			return nil, err
+		}
+		restricted := ws != store.OperatorWorkspaceID
+		m := notify.FromConfig(n, logger, cfg.AllowPrivate(!restricted), restricted)
+		return notify.WithServerEmail(m, n, sys, ws, st.Workspace(ws).MemberEmails), nil
+	}
+}
+
 // newMailer returns the system mail queue and starts its worker, or a literal
 // nil Mailer when no mail is configured. The host is the operator's choice,
 // so private addresses are allowed (D-126).
@@ -475,9 +482,12 @@ func newMailer(ctx context.Context, cfg *config.Config, logger *slog.Logger) web
 		return nil
 	}
 	m := cfg.Mail
+	if cfg.Signup == "open" && *cfg.Limits.MailPerDay == 0 {
+		logger.Warn("open sign-up with system mail and no daily mail cap: set limits.mail_per_day below your provider's daily limit", "event", "mail_per_day_unset")
+	}
 	sender := notify.Email{Host: m.SMTPHost, Port: m.SMTPPort, Username: m.Username, Password: m.Password,
 		From: m.From, RequireTLS: *m.RequireTLS, Dial: netguard.Dialer(true, 30*time.Second).DialContext}
-	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, PerDay: *cfg.Limits.MailPerDay, Logger: logger})
+	q := mail.New(mail.Options{Sender: sender, PerHour: *cfg.Limits.MailPerHour, PerDay: *cfg.Limits.MailPerDay, ExemptWorkspace: store.OperatorWorkspaceID, Logger: logger})
 	go q.Run(ctx)
 	return q
 }

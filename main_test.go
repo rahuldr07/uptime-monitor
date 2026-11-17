@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rahuldr07/uptime-monitor/internal/config"
+	"github.com/rahuldr07/uptime-monitor/internal/notify"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 	"github.com/rahuldr07/uptime-monitor/internal/web"
 
@@ -274,5 +275,71 @@ func TestEnableUser(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("%d workspaces still suspended", n)
+	}
+}
+
+type fakeSysMail struct{}
+
+func (fakeSysMail) Admit(int64, int) string                                 { return "" }
+func (fakeSysMail) Deliver(context.Context, []string, string, string) error { return nil }
+
+// A workspace with no saved notify row gets the fallback email when the
+// server has mail, and none without.
+func TestWorkspaceNotifiersFallbackWithNoSavedSettings(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	now := time.Now()
+	tok, _ := st.CreateToken(ctx, store.TokenSetup, 0, time.Hour, now)
+	if _, err := st.CompleteSetup(ctx, store.SetupInput{Email: "op@example.com", PasswordHash: "phc", WorkspaceName: "W", SetupToken: tok, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	_, tenant, err := st.CreateAccount(ctx, store.AccountInput{Email: "t@example.com", PasswordHash: "phc", WorkspaceName: "T", Slug: "tenant", Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	names := func(sys notify.SystemMail, ws int64) string {
+		m, err := workspaceNotifiers(st, cfg, slog.Default(), sys)(ctx, ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var n []string
+		for _, x := range m {
+			n = append(n, x.Name)
+		}
+		return strings.Join(n, ",")
+	}
+	for _, ws := range []int64{store.OperatorWorkspaceID, tenant.ID()} {
+		if got := names(fakeSysMail{}, ws); got != "log,server-email" {
+			t.Errorf("workspace %d with mail: %q", ws, got)
+		}
+		if got := names(nil, ws); got != "log" {
+			t.Errorf("workspace %d without mail: %q", ws, got)
+		}
+	}
+}
+
+func TestNewMailerWarnsWithoutDailyCapOnOpenSignup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	hour, day := 500, 0
+	tls := true
+	cfg := &config.Config{Signup: "open", Mail: &config.Mail{SMTPHost: "h", SMTPPort: 587, From: "a@b.co", RequireTLS: &tls},
+		Limits: config.Limits{MailPerHour: &hour, MailPerDay: &day}}
+	newMailer(ctx, cfg, logger)
+	if !strings.Contains(buf.String(), "mail_per_day") {
+		t.Fatalf("no warning: %s", buf.String())
+	}
+	buf.Reset()
+	day = 300
+	newMailer(ctx, cfg, logger)
+	if strings.Contains(buf.String(), "mail_per_day_unset") {
+		t.Fatalf("warned with a cap set: %s", buf.String())
 	}
 }
