@@ -8,10 +8,12 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - Settings page, opened from the gear item at the bottom of the sidebar: Profile (email, time zone), Security (password, sign-in methods, sign out everywhere), Notifications and Danger zone (delete account), each its own page under `/settings/` with a shared sub-navigation.
-- **Set a password** for an account that signed up with Google or GitHub: with `mail` configured it emails a one-hour link to the account address and the password is chosen on the `/reset` page, which reads "Choose a password" for an account that has none. Limited to 3 links per hour per user, plus the existing per-address reset-mail budget.
+- **Email me a link** (Security → Password) for an account that signed up with Google or GitHub: with `mail` configured it emails a one-hour link to the account address and the password is chosen on the `/reset` page, which reads "Choose a password" for an account that has none. The page then asks the user to check their inbox and offers Send again. Limited to 3 links per hour per user, plus the existing per-address reset-mail budget; a message the mail budgets refuse is reported as "sent recently", never as sent.
+- The operator panel's Reset link says so when the email limit stopped the message, instead of an error page.
 
 ### Changed
 
+- Settings → Danger zone redirects operators to Profile (they cannot delete their account there).
 - Alert channels moved to Settings → Notifications; the sidebar no longer has an Alert channels item. The Account page is gone: its cards are in Profile, Security and Danger zone. The sidebar email is plain text, and the footer's time zone note links to Settings → Profile.
 - With `mail` configured, a first password can no longer be set in place after a Google or GitHub sign-in (the POST is refused); use the emailed link. Without `mail` the earlier rule is unchanged.
 - Emails that pointed at `/account` now point at `/settings/security`; connecting a provider and signing in again return to Settings → Security. The time zone report from the browser is sent to `/settings/tz-detected`.

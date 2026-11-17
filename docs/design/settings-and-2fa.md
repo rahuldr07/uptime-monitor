@@ -67,7 +67,7 @@ component and its responsive rules).
 | Profile | `/settings/profile` | user | Email (read-only), Time zone (moved from Account) |
 | Security | `/settings/security` | user | Password, Two-factor (Part B), Sign-in methods, Sessions ("Sign out everywhere") |
 | Notifications | `/settings/notifications` | workspace | The Alert channels page body, unchanged in behaviour |
-| Danger zone | `/settings/danger` | user | Delete account |
+| Danger zone | `/settings/danger` | user | Delete account. Operators cannot delete their account here, so for them the page redirects (302) to Profile and the sub-nav omits it. |
 
 POST routes move with their cards:
 
@@ -112,13 +112,17 @@ schema is added.
 ### 4.1 Flow
 
 1. Security → Password card says "You sign in with Google and have no
-   password." with a **Set a password** button.
+   password." with an **Email me a link** button.
 2. The button POSTs to `/settings/security/password-link`. The server issues
    the existing reset token (`TokenReset`) through the same mail path as
    `/forgot`, with an email variant worded "Set a password for your Uptime
-   account". The page shows "We sent a link to a…@gmail.com. It works for 1
-   hour." No recent re-sign-in is needed to request it; the inbox is the
-   proof.
+   account". The page returns to Security with `?sent=1` (the address is not
+   put in the URL) and the Password card shows "Check you@example.com for a
+   link to set your password. It works for 1 hour." with a secondary **Send
+   again** button. If the mail queue or a mail budget refused the message
+   (`mail.ErrDropped`), nothing is claimed as sent: the user sees the "sent
+   recently" message below. No recent re-sign-in is needed to request it; the
+   inbox is the proof.
 3. The link opens the existing `/reset` page, worded "Choose a password" for
    an account that has none. Completing it behaves as `/reset` does today
    (D-126), including signing out other sessions; Part B changes the sign-in
@@ -131,8 +135,10 @@ sign-in" form is removed when `mail` is configured.
 ### 4.2 Limits and edge cases
 
 - Budgets: the existing reset-mail budgets apply, plus 3 links per hour per
-  user from this button. Over budget: "A link was sent recently. Check your
-  inbox or try again later."
+  user from this button. The per-address budget is checked first, and the
+  user's own slot is given back when nothing was sent (dropped or failed).
+  Over budget or dropped: "A link was sent recently. Check your inbox or try
+  again later." A send failure shows an error and uses no slot.
 - No `mail` configured: the email step is impossible, so the current rule
   stays (a Google/GitHub sign-in within the last 10 minutes, then the
   password form on the Security page). The card says so.

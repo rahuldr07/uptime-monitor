@@ -122,7 +122,7 @@ on narrow ones):
 | Profile | `/settings/profile` | email, time zone |
 | Security | `/settings/security` | password, sign-in methods (Google, GitHub), sign out everywhere |
 | Notifications | `/settings/notifications` | alert channels (Telegram, Slack, email), as the Alert channels page was |
-| Danger zone | `/settings/danger` | delete account (not shown to operators) |
+| Danger zone | `/settings/danger` | delete account (operators are redirected to Profile) |
 
 `/settings` goes to Profile. The old `GET /account` and `GET /alerts` answer
 302 to Security and Notifications. Their POST paths (`/account/...`,
@@ -242,10 +242,12 @@ last 10 minutes instead of the password, by signing in again with a connected
 provider. That proves only that the browser holds a live session with that
 provider, not that the user just typed a password.
 
-**First password.** When `mail` is set, **Set a password** on Settings →
+**First password.** When `mail` is set, **Email me a link** on Settings →
 Security emails a one-hour link to the account's address, and the password is
 chosen on the `/reset` page (worded "Choose a password" while the account has
-none). The inbox, not a recent provider sign-in, is the proof, so the in-place
+none). The page then says to check the inbox and offers Send again; if a mail
+budget refused the message, it says a link was sent recently instead of
+claiming success. The inbox, not a recent provider sign-in, is the proof, so the in-place
 form is gone and its POST is refused. The button is limited to 3 links per
 hour per user and shares the per-address reset-mail budget. Without `mail` no
 link can be sent, so the earlier rule stays: a provider sign-in within the
