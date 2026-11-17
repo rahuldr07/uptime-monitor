@@ -380,8 +380,7 @@ code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3
   button:not(:disabled):active,.btn:active{transform:scale(.98)}
   .dt tbody td{transition:background-color .12s ease}
 }
-/* scroll bars: thin and themed everywhere, the page gutter reserved so locking the page does not shift the layout */
-html{scrollbar-gutter:stable}
+/* scroll bars: thin and themed everywhere */
 *{scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
@@ -396,7 +395,8 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 /* long unbroken values (names, URLs, errors) wrap in headings, banners and cards instead of widening the page */
 .shell{min-width:0}
 .topbar>*,.banner>*,.card .head>*,.dt-bar>*,.alert>*,.tile{min-width:0}
-.topbar>div:first-child{flex:1 1 260px}
+.topbar>div:first-child{flex:1 1 auto}
+.topbar .sub{flex-wrap:wrap}
 :is(.topbar h1,.topbar .sub,.topbar .small,.banner,.card h2,.card .head,.tile .v,.group-title,.status-head,.maint-card,.alert,.help,.field label){overflow-wrap:anywhere}
 .maint-grid{grid-template-columns:minmax(0,1fr) minmax(0,360px)}
 .maint-grid>*{min-width:0}
@@ -406,11 +406,23 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 .dd-list{overflow-x:hidden}
 .dd-opt>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* readable measure on very wide screens: the content column is centred beside the sidebar (tables may use all of it) */
-.main{margin-inline:auto;width:100%}
+.main{margin-inline:auto;width:100%;max-width:1600px}
 /* narrow screens: the nav wraps instead of scrolling sideways, and nothing is a hard target to hit */
 @media(max-width:900px){.side{flex-wrap:wrap;overflow:visible}.side a.nav{min-width:40px;justify-content:center}}
-@media(max-width:639px){.side .foot{flex:1 1 100%;min-width:0;margin:0}.side .foot>a{flex:1;min-width:0}}
-.tabs{overflow-x:auto}
+/* phones: row 1 is the brand and the account strip, row 2 the nav icons spread evenly */
+@media(max-width:639px){
+  .side .foot{order:1;flex:1 1 calc(100% - 90px);min-width:0;margin:0;align-items:center}
+  .side .foot>a{flex:1;min-width:0;padding:0 8px;line-height:40px}
+  .side{gap:0}
+  .side a.nav{order:2;flex:1 1 36px;min-width:0;padding-left:0;padding-right:0;gap:2px}
+  .side a.nav{position:relative}.side .count{position:absolute;top:1px;right:1px;margin:0;padding:0 3px;font-size:10px;line-height:1.3;background:var(--card)}
+  .side .foot{gap:2px}.side .foot button{padding-left:8px;padding-right:8px}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .maint-card .head{flex-wrap:wrap}
+  .dd-opt{white-space:normal}.dd-opt>span{overflow-wrap:anywhere;text-overflow:clip}
+  .days-legend>span:nth-child(2):not(:last-child){order:3;flex:1 1 100%;text-align:center}
+}
+@media(max-width:480px){.tabs{flex-wrap:wrap}.tabs a{flex:1 0 auto;justify-content:center;padding:8px 6px;font-size:12px}}
 @media(max-width:639px),(pointer:coarse){
   button,button.sm,.btn,.btn.sm,.pm-item,.dt-view,.dt-edge-more,.dt-sort,.toast-x,.dt-pills .dd-btn,.dt-size .dd-btn,select,textarea,input:not([type=checkbox]):not([type=radio]),.dd-btn,.dt-pill,.dt-pg,.tabs a,.side a.nav,summary{min-height:40px}
   .dt-pg{min-width:40px}
@@ -422,3 +434,4 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 .dt-pages{flex-wrap:wrap}
 @media(max-width:480px){.days{gap:1px}}
 footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}
+.dt-edge-more{min-height:28px}
