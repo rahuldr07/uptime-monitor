@@ -46,12 +46,12 @@ func loadByID[T any](s *Server, w http.ResponseWriter, r *http.Request, get func
 	var zero T
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return zero, false
 	}
 	v, err := get(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return zero, false
 	}
 	if err != nil {
@@ -82,6 +82,36 @@ func writeHTML(w http.ResponseWriter, code int, b []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
 	w.Write(b)
+}
+
+type notFoundData struct {
+	base
+	Path string
+}
+
+// notFound answers 404. Browsers navigating by GET get a page that says so
+// (inside the layout when signed in); partial refreshes, the JSON API, JSON
+// callers and non-GET requests get the plain 404 they can act on.
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.Header.Get("X-Partial") == "1" ||
+		strings.HasPrefix(r.URL.Path, "/api/") || wantsJSON(r) {
+		http.NotFound(w, r)
+		return
+	}
+	p := []rune(r.URL.Path)
+	if len(p) > 80 {
+		p = append(p[:80], '…')
+	}
+	d := notFoundData{Path: string(p)}
+	page := "notfound_public"
+	if a, ok := s.currentAuth(r); ok {
+		page, d.base = "notfound", s.base(r, a, "", "Page not found")
+		d.NoRefresh = true
+	} else {
+		d.base = s.page(r, "Page not found")
+	}
+	s.renderStatus(w, r, http.StatusNotFound, page, d)
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {

@@ -75,7 +75,7 @@ type Server struct {
 	testURL       *ratelimit.Limiter // Test URL, per workspace
 	alertTest     *ratelimit.Limiter // alert test sends, per workspace
 	pages         map[string]*template.Template
-	mux           *http.ServeMux
+	mux           http.Handler
 
 	statusCache pageCache
 
@@ -239,7 +239,7 @@ func New(o Options) (*Server, error) {
 		},
 	}
 	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
-	for _, page := range []string{"overview", "monitors", "target", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete", "admin_invites"} {
+	for _, page := range []string{"overview", "monitors", "target", "notfound", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete", "admin_invites"} {
 		files := append([]string{"templates/layout.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)
@@ -248,7 +248,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "login", "setup", "reset", "signup", "verify", "forgot"} {
+	for _, page := range []string{"status", "notfound_public", "login", "setup", "reset", "signup", "verify", "forgot"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)

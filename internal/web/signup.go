@@ -41,7 +41,7 @@ func (s *Server) signupPage(w http.ResponseWriter, r *http.Request) {
 			d.Hint = msgInviteOnly
 		case "open":
 		default:
-			http.NotFound(w, r)
+			s.notFound(w, r)
 			return
 		}
 		if d.Hint == "" {
@@ -73,7 +73,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	addr := clientKey(r, s.cfg.ProxyHops())
 	raw := r.FormValue("invite")
 	if raw == "" && s.cfg.Signup == "closed" {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	// Open mode without an invite: every well-formed attempt, duplicates
@@ -125,7 +125,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 	if !open {
 		tok, err := s.sys.PeekToken(ctx, store.TokenInvite, raw, s.now())
 		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
+			s.notFound(w, r)
 			return
 		}
 		if err != nil {
@@ -189,7 +189,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, store.ErrNotFound):
 		refundAddr = true
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	case err != nil:
 		s.fail(w, err)

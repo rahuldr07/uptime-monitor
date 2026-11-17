@@ -55,7 +55,7 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.sys.PeekToken(ctx, store.TokenReset, tok, s.now()); errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	} else if err != nil {
 		s.fail(w, err)
@@ -73,7 +73,7 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 	cur, signedIn := s.currentAuth(r)
 	u, err := s.sys.ResetPassword(ctx, tok, phc, s.now())
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {

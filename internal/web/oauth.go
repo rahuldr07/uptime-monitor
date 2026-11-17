@@ -140,7 +140,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p := s.oauth[r.PathValue("provider")]
 	if p == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	q := r.URL.Query()
@@ -154,7 +154,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 	case "link", "reauth":
 		a, ok := s.currentAuth(r)
 		if !ok {
-			http.NotFound(w, r)
+			s.notFound(w, r)
 			return
 		}
 		uid = a.User.ID
@@ -171,12 +171,12 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	invite := q.Get("invite")
 	if len(invite) > 128 {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	next := ""
@@ -246,7 +246,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p := s.oauth[r.PathValue("provider")]
 	if p == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	// The cookie is used once: it is deleted on every outcome once the provider is known.

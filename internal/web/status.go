@@ -288,7 +288,7 @@ func (s *Server) statusRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := ws.Info(r.Context())
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := s.sys.WorkspaceBySlug(r.Context(), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {

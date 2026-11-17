@@ -132,7 +132,7 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 		in.PasswordUnlocked = true
 	}
 	if in.SetupToken == "" && !in.PasswordUnlocked {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 		s.setupMode.Store(false)
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrSetupDone) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {

@@ -22,7 +22,7 @@ type forgotData struct {
 
 func (s *Server) forgotPage(w http.ResponseWriter, r *http.Request) {
 	if s.mail == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -34,7 +34,7 @@ func (s *Server) forgotPage(w http.ResponseWriter, r *http.Request) {
 // never replaces an earlier link.
 func (s *Server) forgotPost(w http.ResponseWriter, r *http.Request) {
 	if s.mail == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

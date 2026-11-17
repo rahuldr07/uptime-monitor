@@ -50,6 +50,7 @@ func (s *Server) routeTable() []route {
 	files := http.StripPrefix("/static/", cacheControl(http.FileServer(http.FS(static))))
 	return []route{
 		{"GET", "/static/", classPublic, files.ServeHTTP, nil},
+		{"GET", "/", classPublic, s.notFound, nil}, // catch-all for GET; GET /{$} below is more specific
 		{"GET", "/healthz", classPublic, s.healthz, nil},
 		{"GET", "/status", classPublic, s.statusRedirect, nil},
 		{"GET", "/s/{slug}", classPublic, s.statusPage, nil},
@@ -119,7 +120,7 @@ func (s *Server) routeTable() []route {
 
 // routes builds s.mux from routeTable, wrapping each handler by its class.
 func (s *Server) routes() {
-	m := http.NewServeMux()
+	m, other := http.NewServeMux(), http.NewServeMux()
 	for _, r := range s.routeTable() {
 		h := r.handler
 		switch r.class {
@@ -128,7 +129,7 @@ func (s *Server) routes() {
 			inner := h
 			h = func(w http.ResponseWriter, req *http.Request) {
 				if !s.setupMode.Load() {
-					http.NotFound(w, req)
+					s.notFound(w, req)
 					return
 				}
 				inner(w, req)
@@ -166,6 +167,18 @@ func (s *Server) routes() {
 			h = sameOrigin(h)
 		}
 		m.HandleFunc(r.method+" "+r.pattern, h)
+		if r.pattern != "/" {
+			other.HandleFunc(r.method+" "+r.pattern, h)
+		}
 	}
-	s.mux = m
+	// The GET catch-all would turn every other method on an unknown path into
+	// 405. Those requests use a mux without it, so they keep a plain 404 and
+	// known paths keep their 405.
+	s.mux = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			m.ServeHTTP(w, r)
+			return
+		}
+		other.ServeHTTP(w, r)
+	})
 }

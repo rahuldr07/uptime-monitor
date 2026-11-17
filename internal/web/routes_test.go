@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 63 {
-		t.Errorf("len = %d, want 63", len(routes))
+	if len(routes) != 64 {
+		t.Errorf("len = %d, want 64", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -46,7 +46,7 @@ func TestRouteTableIsComplete(t *testing.T) {
 		byClass[r.class][key] = true
 	}
 	for class, want := range map[routeClass][]string{
-		classPublic: {"GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /verify", "POST /verify", "POST /verify/resend", "GET /reset", "POST /reset", "GET /auth/{provider}/start", "GET /auth/{provider}/callback"},
+		classPublic: {"GET /", "GET /static/", "GET /healthz", "GET /status", "GET /s/{slug}", "GET /verify", "POST /verify", "POST /verify/resend", "GET /reset", "POST /reset", "GET /auth/{provider}/start", "GET /auth/{provider}/callback"},
 		classSetup:  {"GET /setup", "POST /setup"},
 		classGuest:  {"GET /login", "POST /login", "GET /signup", "POST /signup", "GET /forgot", "POST /forgot"},
 		classUser:   {"POST /logout", "GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete", "POST /account/identities/{provider}/delete", "POST /account/identities/{provider}/connect"},

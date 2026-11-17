@@ -91,7 +91,7 @@ func (s *Server) withAuthCache(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), authKey{}, &authResult{}))
 		if p := r.URL.Path; p == "/admin" || strings.HasPrefix(p, "/admin/") {
 			if a, ok := s.currentAuth(r); !ok || !a.User.IsOperator {
-				http.NotFound(w, r)
+				s.notFound(w, r)
 				return
 			}
 		}
@@ -146,7 +146,7 @@ func (s *Server) requireOperator(h func(http.ResponseWriter, *http.Request, *aut
 			h(w, r, a)
 			return
 		}
-		http.NotFound(w, r)
+		s.notFound(w, r)
 	}
 }
 

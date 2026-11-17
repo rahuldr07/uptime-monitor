@@ -175,14 +175,14 @@ func (s *Server) adminDisable(w http.ResponseWriter, r *http.Request, a *authCtx
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	ctx := context.WithoutCancel(r.Context())
-	id, ok := pathUserID(w, r)
+	id, ok := s.pathUserID(w, r)
 	if !ok {
 		return
 	}
 	ids, err := s.sys.SetUserDisabled(ctx, id, true, s.now())
 	switch {
 	case isNotFound(err):
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	case isOperatorErr(err):
 		s.operatorRefused(w, r, a, "disable", id, msgNoDisableOp)
@@ -204,13 +204,13 @@ func (s *Server) adminEnable(w http.ResponseWriter, r *http.Request, a *authCtx)
 	s.adminMu.Lock()
 	defer s.adminMu.Unlock()
 	ctx := context.WithoutCancel(r.Context())
-	id, ok := pathUserID(w, r)
+	id, ok := s.pathUserID(w, r)
 	if !ok {
 		return
 	}
 	ids, err := s.sys.SetUserDisabled(ctx, id, false, s.now())
 	if isNotFound(err) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {
@@ -273,7 +273,7 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 	ids, err := s.sys.SetUserDisabled(ctx, u.ID, true, s.now())
 	switch {
 	case isNotFound(err):
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	case isOperatorErr(err):
 		s.operatorRefused(w, r, a, "delete", u.ID, msgNoDeleteOp)
@@ -305,7 +305,7 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request, a *authCtx)
 // adminResend mails a new verification link to an unverified, enabled user.
 func (s *Server) adminResend(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	if s.mail == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	u, ok := s.adminTarget(w, r)
@@ -313,7 +313,7 @@ func (s *Server) adminResend(w http.ResponseWriter, r *http.Request, a *authCtx)
 		return
 	}
 	if u.VerifiedAt != nil || u.DisabledAt != nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err := s.sendVerify(r.Context(), u); err != nil {
@@ -390,10 +390,10 @@ func (k adminKeep) DeleteURL(id int64) string {
 	return path
 }
 
-func pathUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+func (s *Server) pathUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return 0, false
 	}
 	return id, true

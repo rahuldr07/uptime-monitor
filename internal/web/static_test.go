@@ -140,7 +140,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 63
+	const want = 64
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

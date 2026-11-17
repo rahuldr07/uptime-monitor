@@ -311,7 +311,7 @@ const msgLastMethod = "Add a password or connect another provider first."
 func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	name := r.PathValue("provider")
 	if name != "google" && name != "github" {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	d, err := s.accountView(r, a)
@@ -329,7 +329,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 	err = s.sys.UnlinkIdentity(r.Context(), a.User.ID, name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	case errors.Is(err, store.ErrLastSignInMethod):
 		fail(http.StatusUnprocessableEntity, msgLastMethod)
@@ -349,7 +349,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 func (s *Server) accountIdentityConnect(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	name := r.PathValue("provider")
 	if s.oauth[name] == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	d, err := s.accountView(r, a)

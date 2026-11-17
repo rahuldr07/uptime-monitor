@@ -111,7 +111,7 @@ func (s *Server) verifyPost(w http.ResponseWriter, r *http.Request) {
 // accounts exist.
 func (s *Server) verifyResend(w http.ResponseWriter, r *http.Request) {
 	if s.mail == nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
