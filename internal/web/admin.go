@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
@@ -23,6 +24,7 @@ const (
 	msgDeleteFailed    = "Delete failed; the user is left disabled."
 	msgVerifyQueued    = "Verification email queued (subject to mail limits)."
 	msgResetQueued     = "Reset email queued (subject to mail limits)."
+	msgResetNotSent    = "Reset email not sent: the email limit for this address or the server is used up. Try again later."
 	msgInviteRevoked   = "Invite revoked."
 	msgInviteNotFound  = "Invite not found."
 
@@ -349,7 +351,10 @@ func (s *Server) adminResetLink(w http.ResponseWriter, r *http.Request, a *authC
 			}
 			subject, body := resetMail(s.cfg.LinkBase() + "/reset?token=" + raw)
 			return subject, body, nil
-		}); err != nil {
+		}); errors.Is(err, mail.ErrDropped) {
+			s.operatorRefused(w, r, a, "reset_link", u.ID, msgResetNotSent)
+			return
+		} else if err != nil {
 			s.fail(w, err)
 			return
 		}

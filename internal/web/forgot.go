@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
@@ -59,7 +60,7 @@ func (s *Server) forgotPost(w http.ResponseWriter, r *http.Request) {
 			}
 			subject, body := resetMail(s.cfg.BaseURL + "/reset?token=" + raw)
 			return subject, body, nil
-		}); err != nil {
+		}); err != nil && !errors.Is(err, mail.ErrDropped) {
 			s.logger.Error("forgot: cannot send reset link", "err", err, "user_id", u.ID)
 		}
 	}

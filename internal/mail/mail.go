@@ -95,12 +95,17 @@ func New(o Options) *Queue {
 	return q
 }
 
+// ErrDropped is returned by Send when the message was not queued because the
+// queue is full or a budget is spent. compose was not called.
+var ErrDropped = errors.New("mail: dropped (queue full or budget spent)")
+
 // Send checks the queue has room and the recipient budgets (3/hour, 10/day)
 // and instance budget allow it, then calls compose, then records the budgets
 // and queues the result without blocking. When the queue is full or a budget
 // is spent, the message is dropped with a WARN (event=mail_dropped, reason,
-// email_hash) and compose is NOT called, so no token is created. Send returns
-// compose's error (nothing is charged then), nil otherwise. Compose runs with
+// email_hash), compose is NOT called, so no token is created, and Send returns
+// ErrDropped. Otherwise it returns compose's error (nothing is charged then),
+// or nil. Compose runs with
 // the queue locked: it must not call Send or Notice, and callers must not
 // hold a store transaction across Send.
 func (q *Queue) Send(to string, compose func() (subject, body string, err error)) error {
@@ -108,7 +113,7 @@ func (q *Queue) Send(to string, compose func() (subject, body string, err error)
 	defer q.mu.Unlock()
 	if reason := q.refuse(to, true); reason != "" {
 		q.drop(to, reason)
-		return nil
+		return ErrDropped
 	}
 	subject, body, err := compose()
 	if err != nil {

@@ -373,3 +373,17 @@ func TestPerDayZeroIsUnlimited(t *testing.T) {
 		}
 	}
 }
+
+func TestSendDroppedReturnsErrDropped(t *testing.T) {
+	h := newHarness(100, 0)
+	for i := 0; i < 3; i++ {
+		if err := h.q.Send("a@example.com", func() (string, string, error) { return "s", "b", nil }); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	ran := false
+	err := h.q.Send("a@example.com", func() (string, string, error) { ran = true; return "s", "b", nil })
+	if !errors.Is(err, ErrDropped) || ran {
+		t.Fatalf("4th send: err=%v composed=%v, want ErrDropped and no compose", err, ran)
+	}
+}

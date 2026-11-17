@@ -3,14 +3,12 @@ package web
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/password"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -23,7 +21,7 @@ const (
 	msgLastOperator    = "The last operator can't delete their account."
 	msgAccountDeleted  = "Your account was deleted."
 
-	msgPwLinkSent     = "We sent a link to %s. It works for 1 hour."
+	msgPwLinkSent     = "Link sent."
 	msgPwLinkTooMany  = "A link was sent recently. Check your inbox or try again later."
 	msgPwLinkFailed   = "We couldn't send the email. Try again later."
 	msgPwLinkUseEmail = "To set a password, use Set a password to get a link by email."
@@ -134,6 +132,8 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 // accountPasswordLink emails the account address a reset link worded for
 // choosing a first password. It is the same token and page as /forgot; the
 // token is created inside compose so a dropped message never replaces a link.
+// The address is not put in the URL: the page shows a persistent "check your
+// email" state for ?sent=1 instead.
 func (s *Server) accountPasswordLink(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	if s.mail == nil {
 		s.notFound(w, r)
@@ -149,47 +149,42 @@ func (s *Server) accountPasswordLink(w http.ResponseWriter, r *http.Request, a *
 		s.renderStatus(w, r, http.StatusConflict, "settings", d)
 		return
 	}
-	if ok, _ := s.pwLinkByUser.Take(strconv.FormatInt(a.User.ID, 10)); !ok {
-		redirect(w, r, "/settings/security", msgPwLinkTooMany)
-		return
-	}
+	// The shared per-address budget is checked first, so a refusal there does
+	// not use up the user's own 3 an hour; a slot is given back when nothing
+	// was sent.
 	if ok, _ := s.mailByAddr.Take(clientKey(r, s.cfg.ProxyHops())); !ok {
 		s.logger.Warn("set-password link throttled", "event", "mail_throttled", "ip", clientIP(r, s.cfg.ProxyHops()))
 		redirect(w, r, "/settings/security", msgPwLinkTooMany)
 		return
 	}
+	key := strconv.FormatInt(a.User.ID, 10)
+	if ok, _ := s.pwLinkByUser.Take(key); !ok {
+		redirect(w, r, "/settings/security", msgPwLinkTooMany)
+		return
+	}
 	ctx := context.WithoutCancel(r.Context())
-	if err := s.mail.Send(a.User.Email, func() (string, string, error) {
+	err = s.mail.Send(a.User.Email, func() (string, string, error) {
 		raw, err := s.sys.CreateToken(ctx, store.TokenReset, a.User.ID, resetTTL, s.now())
 		if err != nil {
 			return "", "", err
 		}
 		subject, body := setPasswordMail(s.cfg.BaseURL + "/reset?token=" + raw)
 		return subject, body, nil
-	}); err != nil {
+	})
+	if errors.Is(err, mail.ErrDropped) {
+		s.pwLinkByUser.Undo(key)
+		redirect(w, r, "/settings/security", msgPwLinkTooMany)
+		return
+	}
+	if err != nil {
+		s.pwLinkByUser.Undo(key)
 		s.logger.Error("set password: cannot send link", "err", err, "user_id", a.User.ID)
 		d.Error = msgPwLinkFailed
 		s.renderStatus(w, r, http.StatusBadGateway, "settings", d)
 		return
 	}
 	s.logger.Info("set-password link sent", "event", "password_link_sent", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
-	redirect(w, r, "/settings/security", fmt.Sprintf(msgPwLinkSent, maskEmail(a.User.Email)))
-}
-
-// maskEmail shows enough of an address to recognise it: the first letter of
-// the local part and the whole domain. A one-letter local part is hidden
-// completely, and anything that is not an address becomes "your email".
-func maskEmail(addr string) string {
-	at := strings.LastIndexByte(addr, '@')
-	if at < 1 || at == len(addr)-1 {
-		return "your email"
-	}
-	local, domain := addr[:at], addr[at:]
-	if utf8.RuneCountInString(local) == 1 {
-		return "…" + domain
-	}
-	first, _ := utf8.DecodeRuneInString(local)
-	return string(first) + "…" + domain
+	redirect(w, r, "/settings/security?sent=1", msgPwLinkSent)
 }
 
 func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *authCtx) {

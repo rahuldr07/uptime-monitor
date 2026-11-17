@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
 
@@ -30,7 +31,9 @@ type verifyData struct {
 // context that survives a client disconnect.
 func (s *Server) sendVerify(ctx context.Context, u store.User) error {
 	ctx = context.WithoutCancel(ctx)
-	return s.mail.Send(u.Email, func() (string, string, error) {
+	// A message the budgets refused is not an error here: callers answer the
+	// same either way, as before.
+	err := s.mail.Send(u.Email, func() (string, string, error) {
 		raw, err := s.sys.CreateToken(ctx, store.TokenVerify, u.ID, verifyTTL, s.now())
 		if err != nil {
 			return "", "", err
@@ -38,6 +41,10 @@ func (s *Server) sendVerify(ctx context.Context, u store.User) error {
 		subject, body := verifyMail(s.cfg.BaseURL + "/verify?token=" + raw)
 		return subject, body, nil
 	})
+	if errors.Is(err, mail.ErrDropped) {
+		return nil
+	}
+	return err
 }
 
 func (s *Server) verifyBadLink(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +162,7 @@ func (s *Server) ownerNotice(ctx context.Context, email string) int64 {
 		subject, body := duplicateMail(s.cfg.BaseURL)
 		return subject, body, nil
 	})
-	if err != nil && !errors.Is(err, errNoticeThrottled) {
+	if err != nil && !errors.Is(err, errNoticeThrottled) && !errors.Is(err, mail.ErrDropped) {
 		s.logger.Error("sign-up: cannot send notice", "err", err, "user_id", u.ID)
 	}
 	return u.ID

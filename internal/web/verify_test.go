@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rahuldr07/uptime-monitor/internal/mail"
 	"github.com/rahuldr07/uptime-monitor/internal/password"
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -24,13 +25,17 @@ type fakeMailer struct {
 	mu   sync.Mutex
 	sent []sentMail
 	drop bool
+	fail error // returned by Send before compose runs, like an SMTP-side failure
 }
 
 func (m *fakeMailer) Send(to string, compose func() (string, string, error)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.drop {
-		return nil
+		return mail.ErrDropped
+	}
+	if m.fail != nil {
+		return m.fail
 	}
 	subject, body, err := compose()
 	if err != nil {
