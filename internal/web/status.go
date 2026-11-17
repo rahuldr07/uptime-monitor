@@ -33,6 +33,7 @@ type statusData struct {
 	Groups      []statusGroup
 	Total       int
 	Upcoming    []store.Maintenance // scheduled within the next 7 days
+	TZCaption   string              // the owner's zone, for the footer: "IST (Asia/Kolkata), UTC+05:30"
 }
 
 // statusCacheTTL bounds how often anonymous visitors can make the server
@@ -402,6 +403,10 @@ func (s *Server) statusData(ctx context.Context, ws *store.WS, theme string, par
 	d := statusData{base: s.baseFor(ctx, ws, "status", "Status", theme, false)}
 	d.Loc = ws.OwnerLocation(ctx)
 	d.TZNote = zoneNote(d.Loc, d.Now)
+	d.TZCaption = d.TZNote
+	if d.TZNote != "UTC" {
+		d.TZCaption += ", " + zoneOffset(d.Loc, d.Now)
+	}
 	d.StatusTitle, d.StatusDesc = s.statusMeta(ctx, ws)
 	d.Title = d.StatusTitle
 	views, err := s.views(ctx, ws, viewOpts{days: true})

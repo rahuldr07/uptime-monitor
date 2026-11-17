@@ -380,3 +380,4 @@ code{background:var(--gray-bg);color:var(--text);padding:1px 5px;border-radius:3
   button:not(:disabled):active,.btn:active{transform:scale(.98)}
   .dt tbody td{transition:background-color .12s ease}
 }
+footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}

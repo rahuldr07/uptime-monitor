@@ -263,7 +263,8 @@
     d.val.textContent = o ? o.text : '';
     d.btn.disabled = d.s.disabled;
   }
-  function optText(d, i) { return d.s.options[i].text.trim().toLowerCase(); }
+  function normQ(t) { return t.trim().toLowerCase().replace(/_/g, ' ').replace(/\u2212/g, '-'); } // zone names read with spaces and a minus sign
+  function optText(d, i) { return normQ(d.s.options[i].text); }
   function selectable(d, i) { var li = d.items[i]; return !li.hidden && li.getAttribute('aria-disabled') !== 'true'; }
   function setHi(d, i, scroll) {
     if (d.hi >= 0 && d.items[d.hi]) d.items[d.hi].classList.remove('hl');
@@ -290,7 +291,7 @@
     m.style.left = Math.max(8, Math.min(d.alignEnd ? r.right - w : r.left, vw - 8 - w)) + 'px';
   }
   function applyFilter(d) {
-    var q = d.filter.value.trim().toLowerCase(), any = false;
+    var q = normQ(d.filter.value), any = false;
     d.items.forEach(function (li, i) { var hide = !!q && optText(d, i).indexOf(q) < 0; li.hidden = hide; if (!hide) any = true; });
     d.none.hidden = any;
     if (d.hi < 0 || !selectable(d, d.hi)) { setHi(d, -1); moveHi(d, 1, true); }
@@ -1414,10 +1415,10 @@
   }
   // Tells the server the browser's time zone when it differs from the one the server has (body[data-tz]; empty
   // means none yet). The server says whether the user's effective zone changed; only then is the page reloaded.
-  // A rejected report is not repeated for the rest of the tab session.
+  // A report the server rejected as not a zone (422) is not repeated for the rest of the tab session.
   function detectTZ() {
     var b = document.body, tz = '';
-    if (!b.hasAttribute('data-tz')) return;
+    if (!b.hasAttribute('data-tz') || b.hasAttribute('data-tz-skip')) return; // skip: this page answered a POST, a reload would repeat it
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { }
     if (!tz || tz === b.getAttribute('data-tz')) return;
     try { if (sessionStorage.getItem('tz-rejected') === tz) return; } catch (e) { }
@@ -1425,7 +1426,7 @@
     fetch('/account/tz-detected', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
       .then(function (r) {
         if (r.ok) return r.json();
-        try { sessionStorage.setItem('tz-rejected', tz); } catch (e) { }
+        if (r.status === 422) { try { sessionStorage.setItem('tz-rejected', tz); } catch (e) { } } // 429 and others may pass later
         return null;
       })
       .then(function (j) { if (j && j.changed) location.replace(location.href); })

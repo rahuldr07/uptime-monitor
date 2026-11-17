@@ -93,7 +93,7 @@ func (s *Server) accountView(r *http.Request, a *authCtx) (accountData, error) {
 		return accountData{}, err
 	}
 	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator, HasPassword: a.HasPassword}
-	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(a.User.Location().String(), d.Now)
+	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(store.CanonicalZone(a.User.Location().String()), d.Now)
 	d.Recent = s.recentAuth(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/account")
 	d.SoleMethod = !a.HasPassword && len(ids) == 1

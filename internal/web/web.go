@@ -352,6 +352,7 @@ type base struct {
 	Loc        *time.Location      // zone of every time on the page; nil means UTC
 	TZNote     string              // Loc as shown in the footer, e.g. "IST (Asia/Kolkata)"
 	DetectedTZ string              // the zone last reported by this user's browser, for the page to compare
+	NoDetect   bool                // rendered for a POST: the browser must not report its zone and reload
 }
 
 // base builds the view model of a signed-in workspace page.
@@ -359,7 +360,7 @@ func (s *Server) base(r *http.Request, a *authCtx, page, title string) base {
 	b := s.baseFor(r.Context(), a.WS, page, title, themeFrom(r), true)
 	b.UserEmail = a.User.Email
 	b.IsOperator = a.User.IsOperator
-	b.Loc, b.DetectedTZ = a.User.Location(), a.User.DetectedTZ
+	b.Loc, b.DetectedTZ, b.NoDetect = a.User.Location(), a.User.DetectedTZ, r.Method != http.MethodGet
 	b.TZNote = zoneNote(b.Loc, b.Now)
 	// Only signed-in flows redirect with a flash; never echo ?msg= to anonymous
 	// visitors, and only show messages the server itself signed.

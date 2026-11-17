@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	_ "time/tzdata" // the tests must not depend on the host tz database
 
 	_ "modernc.org/sqlite"
 

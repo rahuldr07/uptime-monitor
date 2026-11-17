@@ -4,9 +4,9 @@
 </div>
 <div class="card block" id="timezone">
   <h2>Time zone</h2>
-  <p class="muted small" style="margin:6px 0 12px">Times on your pages and in the emails sent to you use this zone: now {{.ZoneNow}}. Automatic follows the zone your browser reports. Your public status page and alert emails use the same zone, and the API and logs stay in UTC.</p>
+  <p class="muted small" style="margin:6px 0 12px">Times in the app and in emails to you are shown in <b>{{.ZoneNow}}</b>. Automatic follows your browser. Your public status page and alert emails use this zone too. The 90-day bars, the API and logs stay in UTC.</p>
   <form method="post" action="/account/timezone" style="max-width:360px">
-    <div class="field"><label for="acc-tz">Time zone</label><select id="acc-tz" name="time_zone">{{range .Zones}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+    <div class="field"><label for="acc-tz">Time zone</label><select id="acc-tz" name="time_zone">{{range .Zones}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select><div class="help">Search by city or offset, for example "Kolkata" or "+05:30".</div></div>
     <div style="margin-top:14px"><button type="submit" class="primary">Save time zone</button></div>
   </form>
 </div>

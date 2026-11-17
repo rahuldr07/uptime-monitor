@@ -19,7 +19,11 @@ type maintForm struct {
 	Starts   string // datetime-local value, empty for "now"
 	Duration string
 	Group    string
+	Zone     string // the zone the form was shown in, sent back so a change in between is noticed
 }
+
+// zoneName is the listed name of loc, as sent in the form's zone field.
+func zoneName(loc *time.Location) string { return store.CanonicalZone(loc.String()) }
 
 type maintenanceData struct {
 	base
@@ -32,6 +36,7 @@ type maintenanceData struct {
 func (s *Server) maintenanceData(r *http.Request, a *authCtx, f maintForm) (maintenanceData, error) {
 	ws := a.WS
 	d := maintenanceData{base: s.base(r, a, "maintenance", "Maintenance"), Form: f}
+	d.Form.Zone = zoneName(d.Loc)
 	if d.Form.Duration == "" {
 		d.Form.Duration = "1h"
 	}
@@ -86,9 +91,13 @@ func parseMaintForm(r *http.Request, now time.Time, loc *time.Location) (maintFo
 	m.StartsAt = now
 	if f.Starts != "" {
 		var err error
-		m.StartsAt, err = time.ParseInLocation("2006-01-02T15:04", f.Starts, loc)
+		const layout = "2006-01-02T15:04"
+		m.StartsAt, err = time.ParseInLocation(layout, f.Starts, loc)
 		if err != nil {
 			return f, m, fmt.Errorf("start time: pick a date and time")
+		}
+		if m.StartsAt.In(loc).Format(layout) != f.Starts { // Go moved it: a daylight saving gap
+			return f, m, fmt.Errorf("That time doesn't exist on this date in %s.", zoneName(loc))
 		}
 	}
 	if f.Duration == "" {
@@ -107,8 +116,13 @@ func parseMaintForm(r *http.Request, now time.Time, loc *time.Location) (maintFo
 
 func (s *Server) maintenanceCreate(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ws := a.WS
-	f, m, err := parseMaintForm(r, s.now(), a.User.Location())
-	if err == nil {
+	loc := a.User.Location()
+	f, m, err := parseMaintForm(r, s.now(), loc)
+	if z := r.FormValue("zone"); f.Starts != "" && z != "" && store.CanonicalZone(z) != zoneName(loc) {
+		// The zone changed (another tab, or detection) since the form was
+		// shown, so the start time the user typed would mean something else.
+		err = fmt.Errorf("Your time zone changed to %s — check the start time.", zoneName(loc))
+	} else if err == nil {
 		m, err = ws.CreateMaintenance(r.Context(), m, s.now())
 	}
 	if err != nil {
