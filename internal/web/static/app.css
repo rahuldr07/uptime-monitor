@@ -19,7 +19,7 @@ h1,h2,h3{font-weight:600;margin:0}h1{font-size:18px}h2{font-size:14px}h3{font-si
 .side .count{margin-left:auto;font-size:11px;line-height:1.4;padding:0 6px;border-radius:3px;background:transparent;border:1px solid currentColor;color:var(--bad-text);font-weight:600}.side .count.maint{color:var(--info-text)}
 .side .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);padding-top:12px;border-top:1px solid var(--border)}
 .side .foot button,.side .foot .btn{width:100%;justify-content:flex-start}
-.side .foot>a{padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side .foot button{padding-left:11px;gap:10px}.side .foot button .ic{width:16px;height:16px;stroke-width:1.5}
+.side .foot>a,.side .foot>.who{padding:2px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side .foot button{padding-left:11px;gap:10px}.side .foot button .ic{width:16px;height:16px;stroke-width:1.5}
 .main{flex:1;min-width:0;padding:22px 28px 60px;max-width:1240px}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;flex-wrap:wrap}
 .topbar .sub{font-size:12px;color:var(--faint);margin-top:2px;display:flex;gap:6px;align-items:center}
@@ -238,6 +238,11 @@ button.sm .ic,.btn.sm .ic,.dt-view .ic,.dd-btn .ic,.dd-opt .ic,.pm-item .ic,.fie
 .copyrow{display:flex;gap:8px;align-items:stretch}.copyrow input{flex:1}
 .seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--radius);overflow:hidden}.seg a{padding:4px 10px;font-size:12px;color:var(--muted)}.seg a.active{background:var(--accent-bg);color:var(--accent-text)}.seg a:hover{text-decoration:none;color:var(--text);background:var(--card2)}.seg a.active:hover{color:var(--accent-text)}.seg a:focus-visible,.tabs a:focus-visible{outline-offset:-2px}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px}.tabs a{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}.tabs a.active{color:var(--accent-text);border-color:var(--accent)}.tabs a:hover{text-decoration:none;color:var(--text)}
+/* Settings: the sub-nav is wrapping tabs on narrow screens and a vertical list beside the content from 900px */
+.settings-nav{flex-wrap:wrap}.settings-body{min-width:0}.sec{margin:0 0 4px;font-size:16px}.sec-lead{margin:0 0 14px;font-size:12px;color:var(--muted)}
+.side a.nav.gear{margin-top:auto}.side a.nav.gear+.foot{margin-top:0}
+@media(max-width:900px){.side a.nav.gear{margin-top:0}}
+@media(min-width:900px){.settings{display:grid;grid-template-columns:170px minmax(0,1fr);gap:28px;align-items:start}.settings-nav{flex-direction:column;border-bottom:0;gap:2px;margin:0;position:sticky;top:18px}.settings-nav a{border-bottom:0;border-left:2px solid transparent;margin:0;padding:7px 10px}.settings-nav a.active{border-left-color:var(--accent);background:var(--card2)}}
 .search{position:relative;flex:0 1 260px;width:260px}.search input{padding-left:30px}.search .ic{position:absolute;left:9px;top:9px;color:var(--faint);pointer-events:none}
 kbd{font:inherit;font-size:11px;line-height:1.4;display:inline-block;padding:0 5px;border:1px solid var(--border-strong);border-bottom-width:2px;border-radius:3px;color:var(--muted);background:var(--card)}
 .section{margin:22px 0 10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -412,7 +417,7 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 /* phones: row 1 is the brand and the account strip, row 2 the nav icons spread evenly */
 @media(max-width:639px){
   .side .foot{order:1;flex:1 1 calc(100% - 90px);min-width:0;margin:0;align-items:center}
-  .side .foot>a{flex:1;min-width:0;padding:0 8px;line-height:40px}
+  .side .foot>a,.side .foot>.who{flex:1;min-width:0;padding:0 8px;line-height:40px}
   .side{gap:0}
   .side a.nav{order:2;flex:1 1 36px;min-width:0;padding-left:0;padding-right:0;gap:2px}
   .side a.nav{position:relative}.side .count{position:absolute;top:1px;right:1px;margin:0;padding:0 3px;font-size:10px;line-height:1.3;background:var(--card)}

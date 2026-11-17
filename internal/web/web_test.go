@@ -502,7 +502,7 @@ func TestAlertsPageCorruptNotify(t *testing.T) {
 	if err := e.st.Workspace(1).SetSetting(context.Background(), "notify", "{bad"); err != nil {
 		t.Fatal(err)
 	}
-	resp, body := e.get(t, e.op, "/alerts")
+	resp, body := e.get(t, e.op, "/settings/notifications")
 	if resp.StatusCode != 200 || !strings.Contains(body, "could not be read") {
 		t.Fatalf("status %d, body lacks the error banner", resp.StatusCode)
 	}
@@ -511,14 +511,14 @@ func TestAlertsPageCorruptNotify(t *testing.T) {
 func TestAlertsSettings(t *testing.T) {
 	e := newEnv(t)
 	c := e.op
-	if resp, body := e.get(t, c, "/alerts"); resp.StatusCode != 200 || !strings.Contains(body, "Telegram") {
+	if resp, body := e.get(t, c, "/settings/notifications"); resp.StatusCode != 200 || !strings.Contains(body, "Telegram") {
 		t.Fatal("alerts page")
 	}
-	resp, body := e.post(t, c, "/alerts", url.Values{"slack_url": {"http://insecure"}})
+	resp, body := e.post(t, c, "/settings/notifications", url.Values{"slack_url": {"http://insecure"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "https webhook") {
 		t.Fatalf("validation: %d", resp.StatusCode)
 	}
-	resp, _ = e.post(t, c, "/alerts", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}, "slack_url": {"https://hooks.example/x"},
+	resp, _ = e.post(t, c, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}, "slack_url": {"https://hooks.example/x"},
 		"smtp_host": {"h"}, "smtp_from": {"a@b"}, "smtp_to": {"x@y, z@w"}, "email_enabled": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("save: %d", resp.StatusCode)
@@ -530,10 +530,10 @@ func TestAlertsSettings(t *testing.T) {
 	if strings.Join(names, ",") != "telegram,email" {
 		t.Fatalf("notifiers after save (slack unticked should be disabled): %v", names)
 	}
-	if _, body := e.get(t, c, "/alerts"); !strings.Contains(body, "x@y, z@w") || !strings.Contains(body, `value="email"`) {
+	if _, body := e.get(t, c, "/settings/notifications"); !strings.Contains(body, "x@y, z@w") || !strings.Contains(body, `value="email"`) {
 		t.Fatal("alerts page should show saved settings and test buttons")
 	}
-	if resp, body := e.post(t, c, "/alerts/test", url.Values{"channel": {"nope"}}); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "failed") {
+	if resp, body := e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"nope"}}); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "failed") {
 		t.Fatalf("unknown channel test: %d", resp.StatusCode)
 	}
 }
@@ -809,7 +809,7 @@ func TestMaintenanceWindows(t *testing.T) {
 	}
 
 	// Schedule one for tomorrow 09:00 in the user's zone, UTC+5:30.
-	if resp, _ := e.post(t, c, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusSeeOther {
+	if resp, _ := e.post(t, c, "/settings/profile/timezone", url.Values{"time_zone": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("set time zone: %d", resp.StatusCode)
 	}
 	resp, _ = e.post(t, c, "/maintenance", url.Values{"title": {"Disk swap"}, "starts": {"2026-11-08T09:00"}, "duration": {"30m"}})
@@ -953,7 +953,7 @@ func TestEventsFilteredByWorkspace(t *testing.T) {
 func TestAlertsNoConfigFallback(t *testing.T) {
 	e := newEnv(t)
 	e.cfg.Notify = config.Notify{Slack: &config.Slack{WebhookURL: "https://hooks.example/x"}}
-	_, body := e.get(t, e.op, "/alerts")
+	_, body := e.get(t, e.op, "/settings/notifications")
 	if strings.Contains(body, "hooks.example") {
 		t.Fatal("config webhook leaked into the alerts page")
 	}
@@ -963,7 +963,7 @@ func TestAlertsNoConfigFallback(t *testing.T) {
 	}
 	// Saving a blank form must not copy the config webhook into the workspace.
 	c := e.op
-	if resp, _ := e.post(t, c, "/alerts", url.Values{}); resp.StatusCode != http.StatusSeeOther {
+	if resp, _ := e.post(t, c, "/settings/notifications", url.Values{}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("blank alerts POST: %d", resp.StatusCode)
 	}
 	n, err := e.st.Workspace(1).Notify(context.Background())

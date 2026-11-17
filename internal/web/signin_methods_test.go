@@ -31,30 +31,30 @@ func TestSetFirstPasswordRecentAuth(t *testing.T) {
 	c, u := o.socialClient(t, "person@example.com", "google", "12345")
 
 	// The page offers "Set a password" and no current-password prompts.
-	_, body := o.get(t, c, "/account")
+	_, body := o.get(t, c, "/settings/security")
 	if !strings.Contains(body, "Set a password") || strings.Contains(body, `name="current"`) {
 		t.Errorf("account page: %s", body)
 	}
 	// Validation comes first.
-	if r, _ := o.post(t, c, "/account/password", url.Values{"new": {"short"}, "confirm": {"short"}}); r.StatusCode != http.StatusUnprocessableEntity {
+	if r, _ := o.post(t, c, "/settings/security/password", url.Values{"new": {"short"}, "confirm": {"short"}}); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("short: %d", r.StatusCode)
 	}
-	if r, _ := o.post(t, c, "/account/password", url.Values{"new": {testSecret}, "confirm": {"other other other"}}); r.StatusCode != http.StatusUnprocessableEntity {
+	if r, _ := o.post(t, c, "/settings/security/password", url.Values{"new": {testSecret}, "confirm": {"other other other"}}); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("mismatch: %d", r.StatusCode)
 	}
 
 	// Outside the window: refused, with the reauth link; nothing changes.
 	o.advance(recentAuthWindow + time.Second)
-	resp, body := o.post(t, c, "/account/password", newPW)
+	resp, body := o.post(t, c, "/settings/security/password", newPW)
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Sign in again to continue") ||
-		!strings.Contains(body, "To set a password, connect another account or delete your account, sign in again with Google first.") ||
+		!strings.Contains(body, "To set a password or change your sign-in methods, sign in again with Google first.") ||
 		!strings.Contains(body, `/auth/google/start?intent=reauth`) {
 		t.Fatalf("outside window: %d %s", resp.StatusCode, body)
 	}
 	if has, _ := o.st.HasPassword(t.Context(), u.ID); has {
 		t.Fatal("password set outside the window")
 	}
-	_, body = o.get(t, c, "/account")
+	_, body = o.get(t, c, "/settings/security")
 	if strings.Contains(body, "Set a password</button>") || !strings.Contains(body, "Sign in again with Google") {
 		t.Errorf("account page outside window: %s", body)
 	}
@@ -64,11 +64,11 @@ func TestSetFirstPasswordRecentAuth(t *testing.T) {
 	if r, _ := o.run(t, other, "google", ""); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("second session: %d", r.StatusCode)
 	}
-	if r, _ := o.run(t, c, "google", "intent=reauth&next=%2Faccount"); r.Header.Get("Location") != "/account" {
+	if r, _ := o.run(t, c, "google", "intent=reauth&next=%2Fsettings%2Fsecurity"); r.Header.Get("Location") != "/settings/security" {
 		t.Fatalf("reauth: %d %s", r.StatusCode, r.Header.Get("Location"))
 	}
-	resp, _ = o.post(t, c, "/account/password", newPW)
-	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/account" || m != msgPasswordChanged {
+	resp, _ = o.post(t, c, "/settings/security/password", newPW)
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != msgPasswordChanged {
 		t.Fatalf("set: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if has, _ := o.st.HasPassword(t.Context(), u.ID); !has {
@@ -85,7 +85,7 @@ func TestSetFirstPasswordRecentAuth(t *testing.T) {
 		t.Errorf("password sign-in: %d", r.StatusCode)
 	}
 	// And the page now offers Change password.
-	if _, body := o.get(t, c, "/account"); !strings.Contains(body, "Change password") {
+	if _, body := o.get(t, c, "/settings/security"); !strings.Contains(body, "Change password") {
 		t.Errorf("account page after: %s", body)
 	}
 }
@@ -94,7 +94,7 @@ func TestAccountDeleteSocialOnly(t *testing.T) {
 	o := newOEnv(t, `{}`, "google")
 	c, u := o.socialClient(t, "person@example.com", "google", "12345")
 	o.advance(recentAuthWindow + time.Second)
-	resp, body := o.post(t, c, "/account/delete", nil)
+	resp, body := o.post(t, c, "/settings/danger/delete", nil)
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "sign in again with Google") {
 		t.Fatalf("outside window: %d %s", resp.StatusCode, body)
 	}
@@ -104,11 +104,11 @@ func TestAccountDeleteSocialOnly(t *testing.T) {
 	if r, _ := o.run(t, c, "google", "intent=reauth"); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("reauth: %d", r.StatusCode)
 	}
-	_, body = o.get(t, c, "/account")
+	_, body = o.get(t, c, "/settings/danger")
 	if strings.Contains(body, `name="current"`) || !strings.Contains(body, "Delete account") {
 		t.Errorf("delete form inside window: %s", body)
 	}
-	resp, _ = o.post(t, c, "/account/delete", nil)
+	resp, _ = o.post(t, c, "/settings/danger/delete", nil)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") == "" || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
 		t.Fatalf("inside window: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -124,8 +124,8 @@ func TestDisconnectProvider(t *testing.T) {
 	if r, _ := o.run(t, alice, "google", "intent=link"); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("link: %d", r.StatusCode)
 	}
-	_, body := o.get(t, alice, "/account")
-	for _, want := range []string{"person@example.com", "/account/identities/google/delete", `/auth/github/start?intent=link`} {
+	_, body := o.get(t, alice, "/settings/security")
+	for _, want := range []string{"person@example.com", "/settings/security/identities/google/delete", `/auth/github/start?intent=link`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("account page lacks %q", want)
 		}
@@ -135,7 +135,7 @@ func TestDisconnectProvider(t *testing.T) {
 	}
 
 	// With a password it must be confirmed.
-	del := "/account/identities/google/delete"
+	del := "/settings/security/identities/google/delete"
 	if r, _ := o.post(t, alice, del, nil); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("no password: %d", r.StatusCode)
 	}
@@ -146,7 +146,7 @@ func TestDisconnectProvider(t *testing.T) {
 		t.Fatal("disconnected without the password")
 	}
 	resp, _ := o.post(t, alice, del, url.Values{"current": {testSecret}})
-	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/account" || m != "Google disconnected." {
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != "Google disconnected." {
 		t.Fatalf("disconnect: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if ids, _ := o.st.Identities(t.Context(), aliceID); len(ids) != 0 {
@@ -159,7 +159,7 @@ func TestDisconnectProvider(t *testing.T) {
 	if r, _ := o.post(t, alice, del, url.Values{"current": {testSecret}}); r.StatusCode != http.StatusNotFound {
 		t.Errorf("not connected: %d", r.StatusCode)
 	}
-	if r, _ := o.post(t, alice, "/account/identities/nope/delete", nil); r.StatusCode != http.StatusNotFound {
+	if r, _ := o.post(t, alice, "/settings/security/identities/nope/delete", nil); r.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown provider: %d", r.StatusCode)
 	}
 }
@@ -168,7 +168,7 @@ func TestDisconnectLastMethodAndRecentAuth(t *testing.T) {
 	o := newOEnv(t, `{}`)
 	c, u := o.socialClient(t, "person@example.com", "google", "12345")
 	// The only method cannot go, even with a recent sign-in.
-	resp, body := o.post(t, c, "/account/identities/google/delete", nil)
+	resp, body := o.post(t, c, "/settings/security/identities/google/delete", nil)
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgLastMethod) {
 		t.Fatalf("last method: %d %s", resp.StatusCode, body)
 	}
@@ -180,7 +180,7 @@ func TestDisconnectLastMethodAndRecentAuth(t *testing.T) {
 		t.Fatalf("link github: %d", r.StatusCode)
 	}
 	o.advance(recentAuthWindow + time.Second)
-	resp, body = o.post(t, c, "/account/identities/google/delete", nil)
+	resp, body = o.post(t, c, "/settings/security/identities/google/delete", nil)
 	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Sign in again to continue") {
 		t.Fatalf("outside window: %d %s", resp.StatusCode, body)
 	}
@@ -190,7 +190,7 @@ func TestDisconnectLastMethodAndRecentAuth(t *testing.T) {
 	if r, _ := o.run(t, c, "google", "intent=reauth"); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("reauth: %d", r.StatusCode)
 	}
-	resp, _ = o.post(t, c, "/account/identities/google/delete", nil)
+	resp, _ = o.post(t, c, "/settings/security/identities/google/delete", nil)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("inside window: %d", resp.StatusCode)
 	}
@@ -198,7 +198,7 @@ func TestDisconnectLastMethodAndRecentAuth(t *testing.T) {
 		t.Errorf("identities: %+v", ids)
 	}
 	// Now github is the last one again.
-	if r, _ := o.post(t, c, "/account/identities/github/delete", nil); r.StatusCode != http.StatusUnprocessableEntity {
+	if r, _ := o.post(t, c, "/settings/security/identities/github/delete", nil); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("last again: %d", r.StatusCode)
 	}
 }
@@ -311,12 +311,12 @@ func TestLinkNeedsRecentAuthPasswordAccount(t *testing.T) {
 	}
 
 	// The page offers a password form instead of a link.
-	_, body = o.get(t, alice, "/account")
-	if !strings.Contains(body, `action="/account/identities/google/connect"`) || strings.Contains(body, `href="/auth/google/start?intent=link"`) {
+	_, body = o.get(t, alice, "/settings/security")
+	if !strings.Contains(body, `action="/settings/security/identities/google/connect"`) || strings.Contains(body, `href="/auth/google/start?intent=link"`) {
 		t.Errorf("account page: %s", body)
 	}
 	// Wrong password, then the right one, then the flow works.
-	conn := "/account/identities/google/connect"
+	conn := "/settings/security/identities/google/connect"
 	if r, _ := o.post(t, alice, conn, url.Values{"current": {"wrong wrong wrong"}}); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("wrong password: %d", r.StatusCode)
 	}
@@ -333,7 +333,7 @@ func TestLinkNeedsRecentAuthPasswordAccount(t *testing.T) {
 		t.Errorf("added notice: %+v", m)
 	}
 	// Disconnecting sends the other notice.
-	if r, _ := o.post(t, alice, "/account/identities/google/delete", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusSeeOther {
+	if r, _ := o.post(t, alice, "/settings/security/identities/google/delete", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("disconnect: %d", r.StatusCode)
 	}
 	if m := o.mailTo("alice@example.com", subjRemoved); m == nil || !strings.Contains(m.Body, "Google") {
@@ -365,12 +365,12 @@ func TestLinkNeedsRecentAuthSocialOnly(t *testing.T) {
 	if r := o.start(t, c, "github", "intent=link"); r.StatusCode != http.StatusForbidden {
 		t.Fatalf("start outside window: %d", r.StatusCode)
 	}
-	if r, _ := o.post(t, c, "/account/identities/github/connect", nil); r.StatusCode != http.StatusForbidden {
+	if r, _ := o.post(t, c, "/settings/security/identities/github/connect", nil); r.StatusCode != http.StatusForbidden {
 		t.Errorf("connect outside window: %d", r.StatusCode)
 	}
-	_, body := o.get(t, c, "/account")
+	_, body := o.get(t, c, "/settings/security")
 	if strings.Contains(body, `/auth/github/start?intent=link`) || strings.Contains(body, "/connect") ||
-		strings.Count(body, "To set a password, connect another account or delete your account, sign in again with Google first.") != 1 {
+		strings.Count(body, "To set a password or change your sign-in methods, sign in again with Google first.") != 1 {
 		t.Errorf("account page outside window: %s", body)
 	}
 	if ids, _ := o.st.Identities(t.Context(), u.ID); len(ids) != 1 {
@@ -394,22 +394,22 @@ func TestLinkNeedsRecentAuthSocialOnly(t *testing.T) {
 func TestConnectEndpointAndPageHints(t *testing.T) {
 	o := newOEnv(t, `{}`, "google")
 	alice, _ := o.account(t, "alice@example.com")
-	if r, _ := o.post(t, alice, "/account/identities/github/connect", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusNotFound {
+	if r, _ := o.post(t, alice, "/settings/security/identities/github/connect", url.Values{"current": {testSecret}}); r.StatusCode != http.StatusNotFound {
 		t.Errorf("disabled provider: %d", r.StatusCode)
 	}
 	// Inside the window the password is still checked, and success is a redirect to the flow.
-	if r, _ := o.post(t, alice, "/account/identities/google/connect", url.Values{"current": {"wrong wrong wrong"}}); r.StatusCode != http.StatusUnprocessableEntity {
+	if r, _ := o.post(t, alice, "/settings/security/identities/google/connect", url.Values{"current": {"wrong wrong wrong"}}); r.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("wrong password inside window: %d", r.StatusCode)
 	}
-	_, body := o.get(t, alice, "/account")
+	_, body := o.get(t, alice, "/settings/security")
 	if !strings.Contains(body, `href="/auth/google/start?intent=link"`) {
 		t.Errorf("connect link inside window: %s", body)
 	}
 
 	// A sole sign-in method has no Disconnect, only a hint.
 	c, _ := o.socialClient(t, "person@example.com", "google", "12345")
-	_, body = o.get(t, c, "/account")
-	if strings.Contains(body, "/account/identities/google/delete") || !strings.Contains(body, "This is your only way to sign in") {
+	_, body = o.get(t, c, "/settings/security")
+	if strings.Contains(body, "/settings/security/identities/google/delete") || !strings.Contains(body, "This is your only way to sign in") {
 		t.Errorf("sole method: %s", body)
 	}
 	// No state cookie from a callback for an unknown provider.

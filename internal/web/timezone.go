@@ -17,7 +17,7 @@ type zoneOption struct {
 	Selected     bool
 }
 
-// zoneOptions lists the Account page's time zone choices: Automatic first,
+// zoneOptions lists the Profile page's time zone choices: Automatic first,
 // then every zone with its current offset. A saved alias selects its listed
 // zone; a saved name that no longer loads counts as Automatic.
 func zoneOptions(u store.User, now time.Time) []zoneOption {
@@ -58,13 +58,13 @@ func (s *Server) resetOwnedStatus(ctx context.Context, userID int64) {
 // to automatic.
 func (s *Server) accountTimeZone(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	fail := func(code int, msg string) {
-		d, err := s.accountView(r, a)
+		d, err := s.settingsView(r, a, secProfile)
 		if err != nil {
 			s.fail(w, err)
 			return
 		}
 		d.Error = msg
-		s.renderStatus(w, r, code, "account", d)
+		s.renderStatus(w, r, code, "settings", d)
 	}
 	if ok, retry := s.tzDetect.Take("save:" + strconv.FormatInt(a.User.ID, 10)); !ok {
 		retryAfter(w, retry)
@@ -76,7 +76,7 @@ func (s *Server) accountTimeZone(w http.ResponseWriter, r *http.Request, a *auth
 		return
 	}
 	s.resetOwnedStatus(r.Context(), a.User.ID)
-	redirect(w, r, "/account", msgTimeZoneSaved)
+	redirect(w, r, "/settings/profile", msgTimeZoneSaved)
 }
 
 // accountDetectedZone records the zone the browser reports. It answers whether

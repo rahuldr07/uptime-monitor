@@ -16,8 +16,8 @@ import (
 
 // ---- alerts ----
 
+// alertsData is the Notifications section's part of the Settings view model.
 type alertsData struct {
-	base
 	N         config.Notify // secrets blanked; see Saved
 	To        string
 	Has       map[string]bool
@@ -55,9 +55,9 @@ func (s *Server) alertsPage(w http.ResponseWriter, r *http.Request, a *authCtx) 
 
 func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, a *authCtx, code int, n config.Notify, errMsg string) {
 	ws := a.WS
-	d := alertsData{base: s.base(r, a, "alerts", "Alert channels"), Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold,
-		Saved: map[string]bool{}, Stored: map[string]bool{}}
+	d := s.settingsBase(r, a, secNotifications)
 	d.Error = errMsg
+	d.alertsData = alertsData{Has: map[string]bool{}, Threshold: s.cfg.FailureThreshold, Saved: map[string]bool{}, Stored: map[string]bool{}}
 	// Copy each channel so blanking secrets cannot touch shared config.
 	tg, sl, em := config.Telegram{}, config.Slack{}, config.Email{}
 	if n.Telegram != nil {
@@ -87,7 +87,7 @@ func (s *Server) renderAlerts(w http.ResponseWriter, r *http.Request, a *authCtx
 		d.Has[nn.Name] = true
 	}
 	d.Last, _ = ws.LastAlerts(r.Context())
-	s.renderStatus(w, r, code, "alerts", d)
+	s.renderStatus(w, r, code, "settings", d)
 }
 
 // parseNotifyForm builds notify settings from the alerts form. Secret
@@ -202,7 +202,7 @@ func (s *Server) alertsSave(w http.ResponseWriter, r *http.Request, a *authCtx) 
 	if _, ok := s.saveNotify(w, r, a); !ok {
 		return
 	}
-	redirect(w, r, "/alerts", "Alert channels saved.")
+	redirect(w, r, "/settings/notifications", "Alert channels saved.")
 }
 
 // alertsTest saves the form first, then sends a test through one channel.
@@ -228,5 +228,5 @@ func (s *Server) alertsTest(w http.ResponseWriter, r *http.Request, a *authCtx) 
 		s.renderAlerts(w, r, a, http.StatusBadGateway, n, "Settings saved, but the test to "+ch+" failed: "+notify.StatusText(err))
 		return
 	}
-	redirect(w, r, "/alerts", "Settings saved and test alert sent to "+ch+".")
+	redirect(w, r, "/settings/notifications", "Settings saved and test alert sent to "+ch+".")
 }

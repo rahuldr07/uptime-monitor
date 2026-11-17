@@ -11,7 +11,7 @@
   <h2>Welcome. Three steps to your first status page.</h2>
   <div class="guide">
     <div class="step"><span class="n">1</span><h3>Add a monitor</h3><p>Paste a URL. We check it every 30 seconds by default and record every result.</p><div><button type="button" class="primary sm" data-action="open-panel"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Add monitor</button></div></div>
-    <div class="step{{if .HasChannel}} done{{end}}"><span class="n">{{if .HasChannel}}<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>{{else}}2{{end}}</span><h3>Connect an alert channel</h3><p>Telegram, Slack or email. You get one message when something goes down and one when it recovers.</p><div><a class="btn sm" href="/alerts">{{if .HasChannel}}Edit channels{{else}}Set up alerts{{end}}</a></div></div>
+    <div class="step{{if .HasChannel}} done{{end}}"><span class="n">{{if .HasChannel}}<svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>{{else}}2{{end}}</span><h3>Connect an alert channel</h3><p>Telegram, Slack or email. You get one message when something goes down and one when it recovers.</p><div><a class="btn sm" href="/settings/notifications">{{if .HasChannel}}Edit channels{{else}}Set up alerts{{end}}</a></div></div>
     <div class="step"><span class="n">3</span><h3>Share the status page</h3><p>A public, read-only page with 90 days of history. Give it a title and share the link.</p><div><a class="btn sm" href="{{.StatusURL}}" target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="#i-external"/></svg>Open status page</a></div></div>
   </div>
 </div>

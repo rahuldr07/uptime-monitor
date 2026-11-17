@@ -1,8 +1,7 @@
-{{define "content"}}
-<div class="topbar">
-  <div><h1>Alert channels</h1><div class="sub">A monitor is marked down after {{.Threshold}} consecutive failed checks and up on the first success. Each delivery is retried three times.</div></div>
-</div>
-<form method="post" action="/alerts">
+{{define "notifications"}}
+<h2 class="sec">Alert channels</h2>
+<p class="sec-lead">A monitor is marked down after {{.Threshold}} consecutive failed checks and up on the first success. Each delivery is retried three times.</p>
+<form method="post" action="/settings/notifications">
 <button type="submit" class="sr" aria-hidden="true" tabindex="-1">Save</button>
 <div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:14px">
   <div class="card">
@@ -38,7 +37,7 @@
 {{end}}
 
 {{define "chan-actions"}}{{if or .Has .Stored}}<div class="btns" style="margin-top:12px;justify-content:space-between">
-  {{if .Has}}<button type="submit" formaction="/alerts/test" name="channel" value="{{.Channel}}" class="sm">Save and send test</button>{{else}}<span></span>{{end}}
+  {{if .Has}}<button type="submit" formaction="/settings/notifications/test" name="channel" value="{{.Channel}}" class="sm">Save and send test</button>{{else}}<span></span>{{end}}
   {{if .Stored}}<label style="display:flex;gap:6px;align-items:center;margin:0;font-size:12px"><input type="checkbox" name="{{.Clear}}" value="1">Remove these settings</label>{{end}}
 </div>{{end}}{{end}}
 

@@ -1,21 +1,30 @@
 {{define "content"}}
 <div class="topbar">
-  <div><h1>Account</h1><div class="sub">{{.UserEmail}}</div></div>
+  <div><h1>Settings</h1><div class="sub">{{.UserEmail}}</div></div>
+</div>
+<div class="settings">
+{{template "settings-nav" .}}
+<div class="settings-body">
+{{if eq .Section "profile"}}
+<div class="card block">
+  <h2>Email</h2>
+  <p class="muted small" style="margin:6px 0 0">{{.UserEmail}}</p>
 </div>
 <div class="card block" id="timezone">
   <h2>Time zone</h2>
   <p class="muted small" style="margin:6px 0 12px">Times in the app and in emails to you are shown in <b>{{.ZoneNow}}</b>. Automatic follows your browser. Your public status page and alert emails use this zone too. The 90-day bars, the API and logs stay in UTC.</p>
-  <form method="post" action="/account/timezone" style="max-width:360px">
+  <form method="post" action="/settings/profile/timezone" style="max-width:360px">
     <div class="field"><label for="acc-tz">Time zone</label><select id="acc-tz" name="time_zone">{{range .Zones}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select><div class="help">Search by city or offset, for example "Kolkata" or "+05:30".</div></div>
     <div style="margin-top:14px"><button type="submit" class="primary">Save time zone</button></div>
   </form>
 </div>
+{{else if eq .Section "security"}}
 <div class="card block" id="methods">
   <h2>Sign-in methods</h2>
-  {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "set a password, connect another account or delete your account"}}{{end}}
+  {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "set a password or change your sign-in methods"}}{{end}}
   <h3 style="margin:14px 0 0;font-size:13px">Password</h3>
   {{if .HasPassword}}
-  <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
+  <form method="post" action="/settings/security/password" style="max-width:360px;margin-top:10px">
     <div class="field"><label for="acc-current">Current password</label><input id="acc-current" name="current" type="password" required autocomplete="current-password"></div>
     <div class="field"><label for="acc-new">New password</label><input id="acc-new" name="new" type="password" required minlength="10" autocomplete="new-password"></div>
     <div class="field"><label for="acc-confirm">Confirm new password</label><input id="acc-confirm" name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
@@ -25,7 +34,7 @@
   {{else if .NeedReauth}}
   <p class="muted small" style="margin:6px 0 0">You sign in with {{.SignInLabel}} and have no password yet.</p>
   {{else}}
-  <form method="post" action="/account/password" style="max-width:360px;margin-top:10px">
+  <form method="post" action="/settings/security/password" style="max-width:360px;margin-top:10px">
     <p class="muted small" style="margin:0 0 10px">You sign in with {{.SignInLabel}} and have no password yet. Set one to also sign in with your email.</p>
     <div class="field"><label for="acc-new">New password</label><input id="acc-new" name="new" type="password" required minlength="10" autocomplete="new-password"></div>
     <div class="field"><label for="acc-confirm">Confirm new password</label><input id="acc-confirm" name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
@@ -43,7 +52,7 @@
     {{if $.SoleMethod}}
     <span class="muted small" style="flex-basis:100%">This is your only way to sign in. To disconnect it, first set a password or connect another account.</span>
     {{else if not $.NeedReauth}}
-    <form method="post" action="/account/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm-danger data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it." style="display:flex;gap:6px;align-items:flex-start">
+    <form method="post" action="/settings/security/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm-danger data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it." style="display:flex;gap:6px;align-items:flex-start">
       {{if $.HasPassword}}<div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to disconnect {{.Label}}" autocomplete="current-password" style="width:170px"></div>{{end}}
       <button type="submit">Disconnect</button>
     </form>
@@ -52,7 +61,7 @@
     {{if $.Recent}}
     <a class="btn sm" href="/auth/{{.Name}}/start?intent=link"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</a>
     {{else if $.HasPassword}}
-    <form method="post" action="/account/identities/{{.Name}}/connect" style="display:flex;gap:6px;align-items:flex-start">
+    <form method="post" action="/settings/security/identities/{{.Name}}/connect" style="display:flex;gap:6px;align-items:flex-start">
       <div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to connect {{.Label}}" autocomplete="current-password" style="width:170px"></div>
       <button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</button>
     </form>
@@ -65,18 +74,33 @@
 <div class="card block">
   <h2>Sessions</h2>
   <p class="muted small" style="margin:6px 0 12px">Sign out on every device, including this one.</p>
-  <form method="post" action="/account/signout-all" data-confirm-title="Sign out everywhere?" data-confirm="Sign out everywhere? You will need to sign in again."><button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out everywhere</button></form>
+  <form method="post" action="/settings/security/signout-all" data-confirm-title="Sign out everywhere?" data-confirm="Sign out everywhere? You will need to sign in again."><button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out everywhere</button></form>
 </div>
+{{else if eq .Section "notifications"}}
+{{template "notifications" .}}
+{{else if eq .Section "danger"}}
 {{if .CanDelete}}
 <div class="card block">
   <h2>Delete account</h2>
   <p class="muted small" style="margin:6px 0 12px">Permanently deletes your account, your workspace, its monitors and all of their history.</p>
-  {{if .NeedReauth}}<p class="muted small" style="margin:6px 0 0">Sign in again first, under <a href="#methods">Sign-in methods</a>, to delete your account.</p>{{else}}
-  <form method="post" action="/account/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
+  {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "delete your account"}}{{else}}
+  <form method="post" action="/settings/danger/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
     {{if .HasPassword}}<div class="field"><label for="del-current">Current password</label><input id="del-current" name="current" type="password" required autocomplete="current-password"></div>{{end}}
     <div style="margin-top:14px"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete account</button></div>
   </form>
   {{end}}
 </div>
+{{else}}
+<div class="card block"><h2>Delete account</h2><p class="muted small" style="margin:6px 0 0">Operator accounts can't be deleted here.</p></div>
 {{end}}
 {{end}}
+</div>
+</div>
+{{end}}
+
+{{define "settings-nav"}}<nav class="tabs settings-nav" aria-label="Settings">
+  <a{{if eq .Section "profile"}} class="active" aria-current="page"{{end}} href="/settings/profile">Profile</a>
+  <a{{if eq .Section "security"}} class="active" aria-current="page"{{end}} href="/settings/security">Security</a>
+  <a{{if eq .Section "notifications"}} class="active" aria-current="page"{{end}} href="/settings/notifications">Notifications</a>
+  {{if .CanDelete}}<a{{if eq .Section "danger"}} class="active" aria-current="page"{{end}} href="/settings/danger">Danger zone</a>{{end}}
+</nav>{{end}}

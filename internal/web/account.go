@@ -28,27 +28,6 @@ const (
 // sensitive actions.
 const recentAuthWindow = 10 * time.Minute
 
-type accountProvider struct {
-	Name, Label string
-	Enabled     bool // can be started from this instance
-	Connected   bool
-	Email       string // the provider's email at link time
-}
-
-type accountData struct {
-	base
-	CanDelete   bool // operators cannot delete their account here
-	HasPassword bool
-	Providers   []accountProvider
-	SignInLabel string      // the connected providers, for "You sign in with …"
-	SoleMethod  bool        // the only way to sign in is one provider: it cannot be disconnected
-	Recent      bool        // auth_at is within the window
-	NeedReauth  bool        // no password and no recent sign-in: sensitive forms are replaced by reauth links
-	Reauth      []oauthLink // one per connected, enabled provider
-	Zones       []zoneOption
-	ZoneNow     string // the zone in use, e.g. "Asia/Kolkata (UTC+05:30)"
-}
-
 // recentAuth reports whether the session authenticated for real within the window.
 func (s *Server) recentAuth(a *authCtx) bool {
 	if a.AuthAt == nil {
@@ -86,56 +65,16 @@ func (s *Server) reauthState(a *authCtx, ids []store.Identity, next string) (boo
 	return true, links
 }
 
-// accountView builds the Account page's view model.
-func (s *Server) accountView(r *http.Request, a *authCtx) (accountData, error) {
-	ids, err := s.myIdentities(r.Context(), a.User.ID)
-	if err != nil {
-		return accountData{}, err
-	}
-	d := accountData{base: s.base(r, a, "account", "Account"), CanDelete: !a.User.IsOperator, HasPassword: a.HasPassword}
-	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(store.CanonicalZone(a.User.Location().String()), d.Now)
-	d.Recent = s.recentAuth(a)
-	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/account")
-	d.SoleMethod = !a.HasPassword && len(ids) == 1
-	for _, name := range []string{"google", "github"} {
-		p := accountProvider{Name: name, Label: providerLabel(name), Enabled: s.oauth[name] != nil}
-		for _, i := range ids {
-			if i.Provider == name {
-				p.Connected, p.Email = true, i.Email
-			}
-		}
-		if p.Connected {
-			if d.SignInLabel != "" {
-				d.SignInLabel += " or "
-			}
-			d.SignInLabel += p.Label
-		}
-		if p.Enabled || p.Connected {
-			d.Providers = append(d.Providers, p)
-		}
-	}
-	return d, nil
-}
-
-func (s *Server) accountPage(w http.ResponseWriter, r *http.Request, a *authCtx) {
-	d, err := s.accountView(r, a)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.render(w, r, "account", d)
-}
-
 func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
-	d, err := s.accountView(r, a)
+	d, err := s.settingsView(r, a, secSecurity)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	fail := func(code int, msg string) {
 		d.Error = msg
-		s.renderStatus(w, r, code, "account", d)
+		s.renderStatus(w, r, code, "settings", d)
 	}
 	cur, pw := r.FormValue("current"), r.FormValue("new")
 	if err := password.CheckLength(pw); err != nil {
@@ -174,7 +113,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 	}
 	s.logger.Info("password changed", "event", "password_changed", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	s.noticePasswordChanged(a.User.Email)
-	redirect(w, r, "/account", msgPasswordChanged)
+	redirect(w, r, "/settings/security", msgPasswordChanged)
 }
 
 func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *authCtx) {
@@ -243,14 +182,14 @@ func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *aut
 // in-flight request cannot restart a runner.
 func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCtx) {
 	ctx := r.Context()
-	d, err := s.accountView(r, a)
+	d, err := s.settingsView(r, a, secDanger)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	fail := func(code int, msg string) {
 		d.Error = msg
-		s.renderStatus(w, r, code, "account", d)
+		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkCurrent(ctx, w, a, r.FormValue("current"), fail) {
 		return
@@ -317,14 +256,14 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, r)
 		return
 	}
-	d, err := s.accountView(r, a)
+	d, err := s.settingsView(r, a, secSecurity)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	fail := func(code int, msg string) {
 		d.Error = msg
-		s.renderStatus(w, r, code, "account", d)
+		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
 		return
@@ -343,7 +282,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 	}
 	s.logger.Info("oauth unlinked", "event", "oauth_unlink", "provider", name, "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	s.noticeMethodChanged(a.User, providerLabel(name), false)
-	redirect(w, r, "/account", providerLabel(name)+" disconnected.")
+	redirect(w, r, "/settings/security", providerLabel(name)+" disconnected.")
 }
 
 // accountIdentityConnect lets a password account that has been signed in a
@@ -355,14 +294,14 @@ func (s *Server) accountIdentityConnect(w http.ResponseWriter, r *http.Request, 
 		s.notFound(w, r)
 		return
 	}
-	d, err := s.accountView(r, a)
+	d, err := s.settingsView(r, a, secSecurity)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	fail := func(code int, msg string) {
 		d.Error = msg
-		s.renderStatus(w, r, code, "account", d)
+		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
 		return

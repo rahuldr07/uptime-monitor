@@ -33,19 +33,19 @@ func TestChangePassword(t *testing.T) {
 	e := newEnv(t)
 	other := e.signIn(t, opEmail, testSecret)
 	resetTok := e.resetToken(t)
-	resp, body := e.post(t, e.op, "/account/password", url.Values{"current": {"wrong wrong wrong"}, "new": {newSecretPW}, "confirm": {newSecretPW}})
+	resp, body := e.post(t, e.op, "/settings/security/password", url.Values{"current": {"wrong wrong wrong"}, "new": {newSecretPW}, "confirm": {newSecretPW}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "Current password is incorrect.") {
 		t.Fatalf("wrong current: %d %s", resp.StatusCode, body)
 	}
-	resp, _ = e.post(t, e.op, "/account/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {"different different"}})
+	resp, _ = e.post(t, e.op, "/settings/security/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {"different different"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("mismatch: %d", resp.StatusCode)
 	}
 	if e.status(t, other) != http.StatusOK {
 		t.Fatal("failed attempts must not revoke sessions")
 	}
-	resp, _ = e.post(t, e.op, "/account/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}})
-	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/account?") {
+	resp, _ = e.post(t, e.op, "/settings/security/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}})
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/settings/security?") {
 		t.Fatalf("success: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if e.status(t, other) != http.StatusUnauthorized {
@@ -74,7 +74,7 @@ func TestChangePassword(t *testing.T) {
 func TestSignOutEverywhere(t *testing.T) {
 	e := newEnv(t)
 	other := e.signIn(t, opEmail, testSecret)
-	resp, _ := e.post(t, e.op, "/account/signout-all", url.Values{})
+	resp, _ := e.post(t, e.op, "/settings/security/signout-all", url.Values{})
 	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login?") {
 		t.Fatalf("signout-all: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -154,27 +154,27 @@ func TestChangePasswordCurrentIsRateLimited(t *testing.T) {
 	e := newEnv(t)
 	bad := url.Values{"current": {"wrong wrong wrong"}, "new": {newSecretPW}, "confirm": {newSecretPW}}
 	for i := 1; i <= 5; i++ {
-		if resp, _ := e.post(t, e.op, "/account/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
+		if resp, _ := e.post(t, e.op, "/settings/security/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
 			t.Fatalf("attempt %d: %d", i, resp.StatusCode)
 		}
 	}
-	resp, body := e.post(t, e.op, "/account/password", bad)
+	resp, body := e.post(t, e.op, "/settings/security/password", bad)
 	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgTooMany) {
 		t.Fatalf("6th: %d %s", resp.StatusCode, body)
 	}
 	// Even the right password is refused while limited.
 	good := url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}}
-	if resp, _ := e.post(t, e.op, "/account/password", good); resp.StatusCode != http.StatusTooManyRequests {
+	if resp, _ := e.post(t, e.op, "/settings/security/password", good); resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("right password while limited: %d", resp.StatusCode)
 	}
 	// Another user has their own budget, and a correct entry is refunded.
 	c, _ := e.account(t, "other@example.com")
-	if resp, _ := e.post(t, c, "/account/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
+	if resp, _ := e.post(t, c, "/settings/security/password", bad); resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("other user: %d", resp.StatusCode)
 	}
 	for i := 0; i < 6; i++ {
 		g := url.Values{"current": {testSecret}, "new": {newSecretPW + "x"}, "confirm": {"mismatch mismatch"}}
-		if resp, _ := e.post(t, c, "/account/password", g); resp.StatusCode != http.StatusUnprocessableEntity {
+		if resp, _ := e.post(t, c, "/settings/security/password", g); resp.StatusCode != http.StatusUnprocessableEntity {
 			t.Fatalf("mismatch %d: %d", i, resp.StatusCode)
 		}
 	}

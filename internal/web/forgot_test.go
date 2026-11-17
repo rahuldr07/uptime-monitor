@@ -232,7 +232,7 @@ func TestForgotNoStore(t *testing.T) {
 func TestPasswordChangeNotice(t *testing.T) {
 	e := newEnvMail(t, openCfg)
 	c, _ := e.account(t, "a@x.example")
-	if resp, _ := e.post(t, c, "/account/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}}); resp.StatusCode != 303 {
+	if resp, _ := e.post(t, c, "/settings/security/password", url.Values{"current": {testSecret}, "new": {newSecretPW}, "confirm": {newSecretPW}}); resp.StatusCode != 303 {
 		t.Fatalf("change: %d", resp.StatusCode)
 	}
 	sent := e.mail.all()

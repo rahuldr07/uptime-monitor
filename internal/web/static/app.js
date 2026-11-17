@@ -1426,7 +1426,7 @@
     if (!tz || tz === b.getAttribute('data-tz')) return;
     try { if (sessionStorage.getItem('tz-rejected') === tz) return; } catch (e) { }
     var fd = new FormData(); fd.append('tz', tz);
-    fetch('/account/tz-detected', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+    fetch('/settings/tz-detected', { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
       .then(function (r) {
         if (r.ok) return r.json();
         if (r.status === 422) { try { sessionStorage.setItem('tz-rejected', tz); } catch (e) { } } // 429 and others may pass later

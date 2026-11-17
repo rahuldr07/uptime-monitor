@@ -45,14 +45,14 @@ func fallbackEnv(t *testing.T) (*env, *mail.Queue, *sinkSender) {
 
 func TestFallbackLineAndTest(t *testing.T) {
 	e, _, snd := fallbackEnv(t)
-	_, body := e.get(t, e.op, "/alerts")
+	_, body := e.get(t, e.op, "/settings/notifications")
 	for _, want := range []string{"Alerts are emailed from this server to " + opEmail + ". To send from your own mail account or to other addresses, fill in SMTP below.", `name="server_email" value="1" checked`, "no deliveries yet"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page lacks %q", want)
 		}
 	}
 	// The Test button saves the form and tests the fallback.
-	resp, body := e.post(t, e.op, "/alerts/test", url.Values{"channel": {"server-email"}, "server_email_form": {"1"}, "server_email": {"1"}})
+	resp, body := e.post(t, e.op, "/settings/notifications/test", url.Values{"channel": {"server-email"}, "server_email_form": {"1"}, "server_email": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("test: %d %s", resp.StatusCode, body)
 	}
@@ -64,8 +64,8 @@ func TestFallbackLineAndTest(t *testing.T) {
 
 func TestFallbackHiddenWithOwnSMTPOrNoServerMail(t *testing.T) {
 	e, _, snd := fallbackEnv(t)
-	e.post(t, e.op, "/alerts", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "email_enabled": {"1"}})
-	_, body := e.get(t, e.op, "/alerts")
+	e.post(t, e.op, "/settings/notifications", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "email_enabled": {"1"}})
+	_, body := e.get(t, e.op, "/settings/notifications")
 	if strings.Contains(body, "emailed from this server") {
 		t.Fatal("fallback line shown with own SMTP")
 	}
@@ -77,11 +77,11 @@ func TestFallbackHiddenWithOwnSMTPOrNoServerMail(t *testing.T) {
 		t.Fatalf("channels = %v", names)
 	}
 	own := url.Values{"channel": {"server-email"}, "smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "email_enabled": {"1"}}
-	if resp, _ := e.post(t, e.op, "/alerts/test", own); resp.StatusCode != http.StatusBadGateway || len(snd.sent()) != 0 {
+	if resp, _ := e.post(t, e.op, "/settings/notifications/test", own); resp.StatusCode != http.StatusBadGateway || len(snd.sent()) != 0 {
 		t.Fatalf("fallback test with own SMTP: %d", resp.StatusCode)
 	}
 	// A disabled own channel means email is off: no fallback either.
-	e.post(t, e.op, "/alerts", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}})
 	for _, n := range e.mon.Notifiers(context.Background(), 1) {
 		if n.Name == notify.ServerEmailName {
 			t.Fatal("fallback active beside a disabled email channel")
@@ -89,7 +89,7 @@ func TestFallbackHiddenWithOwnSMTPOrNoServerMail(t *testing.T) {
 	}
 	// No system mail: no line, no channel.
 	plain := newEnv(t)
-	if _, body := plain.get(t, plain.op, "/alerts"); strings.Contains(body, "emailed from this server") {
+	if _, body := plain.get(t, plain.op, "/settings/notifications"); strings.Contains(body, "emailed from this server") {
 		t.Fatal("fallback line shown without system mail")
 	}
 }
@@ -106,26 +106,26 @@ func TestFallbackSwitchPersistsAcrossOtherSaves(t *testing.T) {
 		}
 		return false
 	}
-	e.post(t, e.op, "/alerts", url.Values{"server_email_form": {"1"}}) // box unticked
+	e.post(t, e.op, "/settings/notifications", url.Values{"server_email_form": {"1"}}) // box unticked
 	if !off() || active() {
 		t.Fatalf("switch off: stored %v, active %v", off(), active())
 	}
-	_, body := e.get(t, e.op, "/alerts")
+	_, body := e.get(t, e.op, "/settings/notifications")
 	card := body[strings.Index(body, `name="server_email"`):strings.Index(body, "SMTP host")]
 	if strings.Contains(body, `name="server_email" value="1" checked`) || !strings.Contains(body, "Email alerts are off. Tick Email to have this server send them to "+opEmail+".") ||
 		strings.Contains(card, "badge") {
 		t.Fatal("box should show unticked with the off copy and no status badge")
 	}
 	// Saving Telegram from a form without the switch (as when SMTP is set) keeps it off.
-	e.post(t, e.op, "/alerts", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}})
 	if !off() || active() {
 		t.Fatal("saving another channel reset the switch")
 	}
-	e.post(t, e.op, "/alerts", url.Values{"server_email_form": {"1"}, "server_email": {"1"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"server_email_form": {"1"}, "server_email": {"1"}})
 	if off() || !active() {
 		t.Fatal("ticking the box should turn it back on")
 	}
-	e.post(t, e.op, "/alerts", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}})
 	if off() || !active() {
 		t.Fatal("saving another channel turned the switch off")
 	}
@@ -139,7 +139,7 @@ func TestFallbackLimitReachedStatus(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		q.Admit(1, 1)
 	}
-	resp, body := e.post(t, e.op, "/alerts/test", url.Values{"channel": {"server-email"}})
+	resp, body := e.post(t, e.op, "/settings/notifications/test", url.Values{"channel": {"server-email"}})
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "Limit reached") || len(snd.sent()) != 0 {
 		t.Fatalf("test over budget: %d sent=%v", resp.StatusCode, snd.sent())
 	}
@@ -147,32 +147,32 @@ func TestFallbackLimitReachedStatus(t *testing.T) {
 	if err := e.st.InsertAlert(context.Background(), store.Alert{TargetID: alertTarget(t, e), SentAt: e.now(), Channel: notify.ServerEmailName, Event: "down", Error: notify.LimitReached}); err != nil {
 		t.Fatal(err)
 	}
-	if _, body := e.get(t, e.op, "/alerts"); !strings.Contains(body, ">Limit reached</span>") {
+	if _, body := e.get(t, e.op, "/settings/notifications"); !strings.Contains(body, ">Limit reached</span>") {
 		t.Fatal("status badge should read Limit reached")
 	}
 }
 
 func TestLoginRejectedStatusShown(t *testing.T) {
 	e := newEnv(t)
-	e.post(t, e.op, "/alerts", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "email_enabled": {"1"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "email_enabled": {"1"}})
 	if err := e.st.InsertAlert(context.Background(), store.Alert{TargetID: alertTarget(t, e), SentAt: e.now(), Channel: "email", Event: "down", Error: notify.LoginRejected}); err != nil {
 		t.Fatal(err)
 	}
-	if _, body := e.get(t, e.op, "/alerts"); !strings.Contains(body, "Login rejected — check the username and password") {
+	if _, body := e.get(t, e.op, "/settings/notifications"); !strings.Contains(body, "Login rejected — check the username and password") {
 		t.Fatal("login rejected message missing")
 	}
 }
 
 func TestSMTPUserAndPasswordTrimmed(t *testing.T) {
 	e := newEnv(t)
-	e.post(t, e.op, "/alerts", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"},
+	e.post(t, e.op, "/settings/notifications", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"},
 		"smtp_user": {"  me@b.co \t"}, "smtp_pass": {" pa ss "}, "email_enabled": {"1"}})
 	n, _ := e.opWS.Notify(context.Background())
 	if n.Email == nil || n.Email.Username != "me@b.co" || n.Email.Password != "pa ss" {
 		t.Fatalf("stored %+v", n.Email)
 	}
 	// A blank password keeps the saved one.
-	e.post(t, e.op, "/alerts", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "smtp_user": {"me@b.co"}, "email_enabled": {"1"}})
+	e.post(t, e.op, "/settings/notifications", url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "smtp_user": {"me@b.co"}, "email_enabled": {"1"}})
 	if n, _ = e.opWS.Notify(context.Background()); n.Email.Password != "pa ss" {
 		t.Fatalf("password not kept: %q", n.Email.Password)
 	}
@@ -265,10 +265,10 @@ func TestFallbackForNonOperatorTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := e.signIn(t, "tenant@example.com", testSecret)
-	if _, body := e.get(t, c, "/alerts"); !strings.Contains(body, "Alerts are emailed from this server to tenant@example.com") {
+	if _, body := e.get(t, c, "/settings/notifications"); !strings.Contains(body, "Alerts are emailed from this server to tenant@example.com") {
 		t.Fatal("tenant page lacks the fallback copy")
 	}
-	resp, body := e.post(t, c, "/alerts/test", url.Values{"channel": {"server-email"}, "server_email_form": {"1"}, "server_email": {"1"}})
+	resp, body := e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"server-email"}, "server_email_form": {"1"}, "server_email": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("tenant test: %d %s", resp.StatusCode, body)
 	}
@@ -286,12 +286,12 @@ func TestFallbackHeaderBoxDrivesOwnSMTPEnabled(t *testing.T) {
 	ctx := context.Background()
 	smtp := url.Values{"smtp_host": {"smtp.example.com"}, "smtp_from": {"a@b.co"}, "smtp_to": {"x@y.co"}, "server_email_form": {"1"}}
 	smtp.Set("server_email", "1") // Email ticked in the fallback form, with SMTP filled in
-	e.post(t, e.op, "/alerts", smtp)
+	e.post(t, e.op, "/settings/notifications", smtp)
 	if n, _ := e.opWS.Notify(ctx); n.Email == nil || n.Email.Disabled {
 		t.Fatalf("ticked Email with SMTP should save an enabled channel: %+v", n.Email)
 	}
 	smtp.Del("server_email")
-	e.post(t, e.op, "/alerts", smtp)
+	e.post(t, e.op, "/settings/notifications", smtp)
 	if n, _ := e.opWS.Notify(ctx); n.Email == nil || !n.Email.Disabled {
 		t.Fatalf("unticked Email should save a disabled channel: %+v", n.Email)
 	}

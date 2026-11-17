@@ -37,7 +37,7 @@ func TestAccountTimeZoneValidation(t *testing.T) {
 		{"../etc/localtime", http.StatusUnprocessableEntity, "Asia/Kolkata"},
 		{"", http.StatusSeeOther, ""}, // automatic
 	} {
-		resp, body := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {c.value}})
+		resp, body := e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {c.value}})
 		if resp.StatusCode != c.code {
 			t.Errorf("%q: status %d, want %d", c.value, resp.StatusCode, c.code)
 		}
@@ -48,7 +48,7 @@ func TestAccountTimeZoneValidation(t *testing.T) {
 			t.Errorf("%q: stored %q, want %q", c.value, got, c.want)
 		}
 	}
-	if resp, _ := e.post(t, e.client(t), "/account/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
+	if resp, _ := e.post(t, e.client(t), "/settings/profile/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
 		t.Errorf("anonymous save should go to sign-in: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
@@ -58,7 +58,7 @@ func TestAccountPageShowsZoneField(t *testing.T) {
 	if err := e.st.SetDetectedZone(context.Background(), e.opUser(t).ID, "Asia/Kolkata"); err != nil {
 		t.Fatal(err)
 	}
-	_, body := e.get(t, e.op, "/account")
+	_, body := e.get(t, e.op, "/settings/profile")
 	body = html.UnescapeString(body)
 	for _, want := range []string{`id="timezone"`, `<option value="" selected>Automatic: Asia/Kolkata (UTC+05:30)</option>`,
 		`<option value="Asia/Kolkata">Asia/Kolkata (UTC+05:30)</option>`, `<b>Asia/Kolkata (UTC+05:30)</b>`} {
@@ -71,14 +71,14 @@ func TestAccountPageShowsZoneField(t *testing.T) {
 func TestDetectedZoneEndpoint(t *testing.T) {
 	e := newEnv(t)
 	post := func(c *http.Client, tz string) (*http.Response, string) {
-		return e.post(t, c, "/account/tz-detected", url.Values{"tz": {tz}})
+		return e.post(t, c, "/settings/tz-detected", url.Values{"tz": {tz}})
 	}
 	// Signed out: sent to sign in, nothing stored.
 	if resp, _ := post(e.client(t), "Asia/Kolkata"); resp.StatusCode != http.StatusSeeOther {
 		t.Errorf("anonymous: %d", resp.StatusCode)
 	}
 	// Cross-site posts are refused.
-	req, _ := http.NewRequest("POST", e.ts.URL+"/account/tz-detected", strings.NewReader("tz=Asia%2FKolkata"))
+	req, _ := http.NewRequest("POST", e.ts.URL+"/settings/tz-detected", strings.NewReader("tz=Asia%2FKolkata"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://evil.example")
 	if resp, err := e.op.Do(req); err != nil || resp.StatusCode != http.StatusForbidden {
@@ -104,7 +104,7 @@ func TestDetectedZoneEndpoint(t *testing.T) {
 		t.Error("page does not carry the detected zone and its label")
 	}
 	// An explicit choice wins and is never overwritten; only the detected value follows the browser.
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/New_York"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"America/New_York"}})
 	if _, body := post(e.op, "Europe/Paris"); !strings.Contains(body, `"changed": false`) {
 		t.Errorf("explicit zone: %s", body)
 	}
@@ -112,7 +112,7 @@ func TestDetectedZoneEndpoint(t *testing.T) {
 		t.Fatalf("zones = %q, %q", u.TimeZone, u.DetectedTZ)
 	}
 	// Back to automatic: the detected zone applies again.
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {""}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {""}})
 	if got := e.opUser(t).Location().String(); got != "Europe/Paris" {
 		t.Fatalf("effective zone = %s", got)
 	}
@@ -130,7 +130,7 @@ func TestPagesRenderInViewerZone(t *testing.T) {
 	if !strings.Contains(body, "Nov 8 09:00:00") || !strings.Contains(body, "Times in UTC") {
 		t.Fatal("default zone is UTC")
 	}
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
 	_, body = e.get(t, e.op, "/maintenance")
 	if !strings.Contains(body, "Nov 8 14:30:00") || strings.Contains(body, "Nov 8 09:00:00") || !strings.Contains(body, "Times in IST (Asia/Kolkata)") {
 		t.Fatal("page should show 14:30 in Asia/Kolkata")
@@ -163,13 +163,13 @@ func TestPublicStatusPageUsesOwnerZone(t *testing.T) {
 		t.Fatalf("owner without a zone: status page should show UTC with its label:\n%s", body)
 	}
 	// Viewer zones do not matter: an anonymous visitor sees the owner's. Changing it drops the cached page.
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
 	_, body = e.get(t, anon, "/s/default")
 	if !strings.Contains(body, "Nov 8 17:30 IST") || strings.Contains(body, "12:00 UTC") {
 		t.Fatal("status page should use the owner's zone, with its abbreviation")
 	}
 	// Daily bars stay UTC days whatever the zone: 2026-11-07 12:00 UTC is already Nov 8 in Auckland.
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Pacific/Auckland"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"Pacific/Auckland"}})
 	tg, err := e.opWS.CreateTarget(ctx, store.Target{Name: "api", URL: "http://x.example", Interval: time.Hour, Timeout: time.Second}, e.now())
 	if err != nil {
 		t.Fatal(err)
@@ -209,13 +209,13 @@ func TestStoredJunkZoneDoesNotBreakPages(t *testing.T) {
 	if _, err := raw.Exec(`UPDATE users SET time_zone = 'Gone/Zone', detected_tz = 'Also/Gone'`); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/account", "/maintenance", "/"} {
+	for _, path := range []string{"/settings/profile", "/maintenance", "/"} {
 		resp, body := e.get(t, e.op, path)
 		if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Times in UTC") {
 			t.Errorf("%s: %d, want a page in UTC", path, resp.StatusCode)
 		}
 	}
-	_, body := e.get(t, e.op, "/account")
+	_, body := e.get(t, e.op, "/settings/profile")
 	if !strings.Contains(body, `<option value="" selected>Automatic: UTC`) {
 		t.Error("an unloadable saved zone should show as Automatic")
 	}
@@ -223,10 +223,10 @@ func TestStoredJunkZoneDoesNotBreakPages(t *testing.T) {
 
 func TestZoneAliasesDisplayAsListedNames(t *testing.T) {
 	e := newEnv(t)
-	if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Calcutta"}}); resp.StatusCode != http.StatusOK {
+	if resp, _ := e.post(t, e.op, "/settings/tz-detected", url.Values{"tz": {"Asia/Calcutta"}}); resp.StatusCode != http.StatusOK {
 		t.Fatal(resp.StatusCode)
 	}
-	_, body := e.get(t, e.op, "/account")
+	_, body := e.get(t, e.op, "/settings/profile")
 	body = html.UnescapeString(body)
 	for _, want := range []string{`data-tz="Asia/Calcutta"`, "Times in IST (Asia/Kolkata)", `<option value="" selected>Automatic: Asia/Kolkata (UTC+05:30)</option>`} {
 		if !strings.Contains(body, want) {
@@ -234,12 +234,12 @@ func TestZoneAliasesDisplayAsListedNames(t *testing.T) {
 		}
 	}
 	// The browser flipping between the alias and the listed name changes nothing.
-	if _, b := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); !strings.Contains(b, `"changed": false`) {
+	if _, b := e.post(t, e.op, "/settings/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); !strings.Contains(b, `"changed": false`) {
 		t.Errorf("alias vs listed name: %s", b)
 	}
 	// A saved alias selects the listed option; underscores read as spaces in labels.
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/Buenos_Aires"}})
-	_, body = e.get(t, e.op, "/account")
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"America/Buenos_Aires"}})
+	_, body = e.get(t, e.op, "/settings/profile")
 	if !strings.Contains(body, `<option value="America/Argentina/Buenos_Aires" selected>America/Argentina/Buenos Aires (`) {
 		t.Error("saved alias should select its listed zone")
 	}
@@ -248,17 +248,17 @@ func TestZoneAliasesDisplayAsListedNames(t *testing.T) {
 func TestTimeZoneRateLimits(t *testing.T) {
 	e := newEnv(t)
 	for i := 0; i < 10; i++ {
-		if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusOK {
+		if resp, _ := e.post(t, e.op, "/settings/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusOK {
 			t.Fatalf("detect %d: %d", i, resp.StatusCode)
 		}
-		if resp, _ := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusSeeOther {
+		if resp, _ := e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusSeeOther {
 			t.Fatalf("save %d: %d", i, resp.StatusCode)
 		}
 	}
-	if resp, _ := e.post(t, e.op, "/account/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusTooManyRequests {
+	if resp, _ := e.post(t, e.op, "/settings/tz-detected", url.Values{"tz": {"Asia/Kolkata"}}); resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("detect over the limit: %d", resp.StatusCode)
 	}
-	if resp, body := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many changes") {
+	if resp, body := e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"UTC"}}); resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many changes") {
 		t.Errorf("save over the limit: %d", resp.StatusCode)
 	}
 }
@@ -266,10 +266,10 @@ func TestTimeZoneRateLimits(t *testing.T) {
 // A page rendered for a POST must not trigger detection, whose reload would repeat the POST.
 func TestPostRenderedPageSkipsDetection(t *testing.T) {
 	e := newEnv(t)
-	if _, body := e.get(t, e.op, "/account"); strings.Contains(body, "data-tz-skip") {
+	if _, body := e.get(t, e.op, "/settings/profile"); strings.Contains(body, "data-tz-skip") {
 		t.Error("a GET page should detect")
 	}
-	resp, body := e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Nope/Nope"}})
+	resp, body := e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"Nope/Nope"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "data-tz-skip") {
 		t.Errorf("a POST-rendered page should skip detection: %d", resp.StatusCode)
 	}
@@ -277,7 +277,7 @@ func TestPostRenderedPageSkipsDetection(t *testing.T) {
 
 func TestMaintenanceStartInDSTGapAndZoneChange(t *testing.T) {
 	e := newEnv(t)
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/New_York"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"America/New_York"}})
 	form := func(starts, zone string) url.Values {
 		return url.Values{"title": {"x"}, "starts": {starts}, "duration": {"1h"}, "zone": {zone}}
 	}
@@ -316,12 +316,12 @@ func TestHourlyCellLabelsInZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/targets/" + strconv.FormatInt(tg.ID, 10)
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"Asia/Kolkata"}})
 	if _, body := e.get(t, e.op, path); !strings.Contains(body, `title="Nov 7 17:30 · `) {
 		t.Error("12:00 UTC hour should read 17:30 in Asia/Kolkata")
 	}
 	e.setClock(time.Date(2026, 3, 8, 15, 0, 0, 0, time.UTC)) // New York springs forward at 07:00 UTC
-	e.post(t, e.op, "/account/timezone", url.Values{"time_zone": {"America/New_York"}})
+	e.post(t, e.op, "/settings/profile/timezone", url.Values{"time_zone": {"America/New_York"}})
 	_, body := e.get(t, e.op, path)
 	if !strings.Contains(body, `title="Mar 8 01:00 · `) || !strings.Contains(body, `title="Mar 8 03:00 · `) || strings.Contains(body, `title="Mar 8 02:00 · `) {
 		t.Error("cells should skip 02:00 across the DST change")

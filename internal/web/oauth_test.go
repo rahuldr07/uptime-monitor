@@ -152,7 +152,7 @@ func jarCookie(c *http.Client, name string) *http.Cookie {
 
 func signedIn(t *testing.T, o *oenv, c *http.Client) bool {
 	t.Helper()
-	resp, _ := o.get(t, c, "/account")
+	resp, _ := o.get(t, c, "/settings/profile")
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -328,7 +328,7 @@ func TestOAuthLoginUnlinkedEmailOwned(t *testing.T) {
 	uid := o.userID(t, "person@example.com")
 	c := o.client(t)
 	resp, body := o.run(t, c, "google", "")
-	want := "An account with this email already exists. Sign in with your password (or use Forgot password if you don't have one), then connect Google from your Account page."
+	want := "An account with this email already exists. Sign in with your password (or use Forgot password if you don't have one), then connect Google from Settings."
 	wantFail(t, resp, body, http.StatusConflict, strings.ReplaceAll(want, "'", "&#39;"))
 	if ids, _ := o.st.Identities(t.Context(), uid); len(ids) != 0 {
 		t.Errorf("identity linked: %+v", ids)
@@ -476,7 +476,7 @@ func TestOAuthLink(t *testing.T) {
 
 	// no identity: link; the provider email may differ from the account email.
 	resp, _ := o.run(t, alice, "google", "intent=link")
-	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/account" || m != "Google connected." {
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != "Google connected." {
 		t.Fatalf("link: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	ids, _ := o.st.Identities(t.Context(), aliceID)
@@ -486,14 +486,14 @@ func TestOAuthLink(t *testing.T) {
 	if !strings.Contains(o.logs.String(), "event=oauth_link") {
 		t.Error("no oauth_link event")
 	}
-	// the flash is signed, so /account shows it
+	// the flash is signed, so /settings/security shows it
 	if _, body := o.get(t, alice, resp.Header.Get("Location")); !strings.Contains(body, "Google connected.") {
-		t.Error("flash not shown on /account")
+		t.Error("flash not shown on /settings/security")
 	}
 
 	// already linked to this user
 	resp, _ = o.run(t, alice, "google", "intent=link")
-	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/account" || m != "Google is already connected." {
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/security" || m != "Google is already connected." {
 		t.Errorf("relink: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 
@@ -553,7 +553,7 @@ func TestOAuthReauth(t *testing.T) {
 	signedAt := o.now()
 	o.advance(5 * time.Minute)
 	resp, _ := o.run(t, c, "google", "intent=reauth")
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/account" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/settings/security" {
 		t.Fatalf("reauth: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	au, err := o.st.SessionAuth(t.Context(), raw, o.now())
@@ -892,9 +892,9 @@ func TestOAuthSocialOnlyAccount(t *testing.T) {
 		path string
 		form url.Values
 	}{
-		{"/account/delete", url.Values{"current": {"x"}}},
-		{"/account/delete", url.Values{"current": {""}}},
-		{"/account/password", url.Values{"current": {""}, "new": {testSecret}, "confirm": {testSecret}}},
+		{"/settings/danger/delete", url.Values{"current": {"x"}}},
+		{"/settings/danger/delete", url.Values{"current": {""}}},
+		{"/settings/security/password", url.Values{"current": {""}, "new": {testSecret}, "confirm": {testSecret}}},
 	} {
 		resp, body := o.post(t, c, p.path, p.form)
 		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Sign in again to continue") {

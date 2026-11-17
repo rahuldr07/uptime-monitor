@@ -249,15 +249,15 @@ func TestTestURLAndAlertTestLimits(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		if resp, _ := e.post(t, c, "/alerts/test", url.Values{"channel": {"log"}}); resp.StatusCode == 429 {
+		if resp, _ := e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"log"}}); resp.StatusCode == 429 {
 			t.Fatalf("alert test limited early at %d", i)
 		}
 	}
-	if resp, body := e.post(t, c, "/alerts/test", url.Values{"channel": {"log"}}); resp.StatusCode != 429 {
+	if resp, body := e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"log"}}); resp.StatusCode != 429 {
 		t.Fatalf("6th alert test: %d %s", resp.StatusCode, body)
 	}
 	for i := 0; i < 7; i++ {
-		if resp, _ := e.post(t, e.op, "/alerts/test", url.Values{"channel": {"log"}}); resp.StatusCode == 429 {
+		if resp, _ := e.post(t, e.op, "/settings/notifications/test", url.Values{"channel": {"log"}}); resp.StatusCode == 429 {
 			t.Fatal("operator limited")
 		}
 	}
@@ -316,9 +316,9 @@ func TestAlertTestLimitDoesNotSave(t *testing.T) {
 	e := newEnv(t)
 	c, ws := e.account(t, "a@example.com")
 	for i := 0; i < 5; i++ {
-		e.post(t, c, "/alerts/test", url.Values{"channel": {"log"}})
+		e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"log"}})
 	}
-	resp, body := e.post(t, c, "/alerts/test", url.Values{"channel": {"slack"}, "slack_url": {"https://hooks.slack.com/services/T/B/x"}})
+	resp, body := e.post(t, c, "/settings/notifications/test", url.Values{"channel": {"slack"}, "slack_url": {"https://hooks.slack.com/services/T/B/x"}})
 	if resp.StatusCode != 429 || !strings.Contains(body, "Too many test messages. Wait a minute and try again. Settings were not saved.") {
 		t.Fatalf("6th: %d %s", resp.StatusCode, body)
 	}

@@ -199,7 +199,7 @@ func TestVerifyOtherUsersSession(t *testing.T) {
 	if !e.verified(t, "a@x.example") {
 		t.Fatal("A not verified")
 	}
-	if resp, body := e.get(t, b, "/account"); resp.StatusCode != 200 || !strings.Contains(body, "b@x.example") {
+	if resp, body := e.get(t, b, "/settings/profile"); resp.StatusCode != 200 || !strings.Contains(body, "b@x.example") {
 		t.Fatalf("B session: %d", resp.StatusCode)
 	}
 	e.signIn(t, "a@x.example", testSecret)

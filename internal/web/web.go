@@ -256,9 +256,12 @@ func New(o Options) (*Server, error) {
 		},
 	}
 	shared := []string{"templates/icons.html", "templates/form.html", "templates/partials.html"}
-	for _, page := range []string{"overview", "monitors", "target", "notfound", "incidents", "alerts", "maintenance", "account", "admin_users", "admin_delete", "admin_invites"} {
+	for _, page := range []string{"overview", "monitors", "target", "notfound", "incidents", "maintenance", "settings", "admin_users", "admin_delete", "admin_invites"} {
 		files := append([]string{"templates/layout.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
+		if page == "settings" {
+			files = append(files, "templates/alerts.html") // the Notifications section
+		}
 		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", page, err)

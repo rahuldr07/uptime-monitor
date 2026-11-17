@@ -85,7 +85,7 @@ func TestInviteSignupFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("signup: %d %s", resp.StatusCode, body)
 	}
-	if resp, _ := e.get(t, c, "/account"); resp.StatusCode != 200 {
+	if resp, _ := e.get(t, c, "/settings/profile"); resp.StatusCode != 200 {
 		t.Fatalf("new session: %d", resp.StatusCode)
 	}
 	u, _, err := e.st.UserByEmail(t.Context(), "new@example.com")

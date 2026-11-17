@@ -51,7 +51,7 @@ func TestDeleteAccountRemovesEverything(t *testing.T) {
 		t.Fatalf("status page before delete: %d", resp.StatusCode)
 	}
 
-	resp, body := e.post(t, bc, "/account/delete", url.Values{"current": {testSecret}})
+	resp, body := e.post(t, bc, "/settings/danger/delete", url.Values{"current": {testSecret}})
 	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login?") {
 		t.Fatalf("delete: %d %q %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
@@ -91,7 +91,7 @@ func TestDeleteAccountRemovesEverything(t *testing.T) {
 func TestDeleteAccountWrongPassword(t *testing.T) {
 	e := newEnv(t)
 	bc, bws := e.account(t, "bob@example.com")
-	resp, body := e.post(t, bc, "/account/delete", url.Values{"current": {"not the password"}})
+	resp, body := e.post(t, bc, "/settings/danger/delete", url.Values{"current": {"not the password"}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgBadCurrent) {
 		t.Fatalf("wrong password: %d %s", resp.StatusCode, body)
 	}
@@ -108,7 +108,7 @@ func TestDeleteAccountWrongPassword(t *testing.T) {
 
 func TestLastOperatorCannotDelete(t *testing.T) {
 	e := newEnv(t)
-	resp, body := e.post(t, e.op, "/account/delete", url.Values{"current": {testSecret}})
+	resp, body := e.post(t, e.op, "/settings/danger/delete", url.Values{"current": {testSecret}})
 	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "The last operator can&#39;t delete their account.") {
 		t.Fatalf("last operator: %d %s", resp.StatusCode, body)
 	}
@@ -132,7 +132,7 @@ func TestDeletedTargetNotRestarted(t *testing.T) {
 	if err := e.mon.Reload(t.Context(), tg.ID); err != nil {
 		t.Fatal(err)
 	}
-	if resp, _ := e.post(t, bc, "/account/delete", url.Values{"current": {testSecret}}); resp.StatusCode != http.StatusSeeOther {
+	if resp, _ := e.post(t, bc, "/settings/danger/delete", url.Values{"current": {testSecret}}); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("delete: %d", resp.StatusCode)
 	}
 	if err := e.mon.Reload(t.Context(), tg.ID); err != nil {

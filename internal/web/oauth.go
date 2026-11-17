@@ -28,7 +28,7 @@ const (
 
 	msgOAuthFailed     = "Sign-in failed. Try again."
 	msgOAuthInviteOnly = "Sign-up on this instance is by invitation."
-	msgOAuthExists     = "An account with this email already exists. Sign in with your password (or use Forgot password if you don't have one), then connect %s from your Account page."
+	msgOAuthExists     = "An account with this email already exists. Sign in with your password (or use Forgot password if you don't have one), then connect %s from Settings."
 	msgOAuthNoEmail    = "Your %s account has no verified email address."
 	msgOAuthTaken      = "This %s account is already connected to a different account."
 	msgOAuthHave       = "You already have a %s account connected. Disconnect it first."
@@ -161,13 +161,13 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 		// Connecting a provider adds a way to sign in, and reauth trusts the
 		// provider: it needs a recent sign-in (or the password, via /connect).
 		if intent == "link" && !s.recentAuth(a) {
-			d, err := s.accountView(r, a)
+			d, err := s.settingsView(r, a, secSecurity)
 			if err != nil {
 				s.fail(w, err)
 				return
 			}
 			d.Error = msgSignInAgain
-			s.renderStatus(w, r, http.StatusForbidden, "account", d)
+			s.renderStatus(w, r, http.StatusForbidden, "settings", d)
 			return
 		}
 	default:
@@ -226,13 +226,13 @@ type oauthReq struct {
 func (q *oauthReq) fail(code int, reason, msg string) {
 	q.s.logger.Warn("oauth failed", "event", "oauth_failed", "provider", q.p.Name(), "reason", reason, "ip", q.ip)
 	if q.a != nil && (q.st.Intent == "link" || q.st.Intent == "reauth") {
-		d, err := q.s.accountView(q.r, q.a)
+		d, err := q.s.settingsView(q.r, q.a, secSecurity)
 		if err != nil {
 			q.serverErr(err)
 			return
 		}
 		d.Error = msg
-		q.s.renderStatus(q.w, q.r, code, "account", d)
+		q.s.renderStatus(q.w, q.r, code, "settings", d)
 		return
 	}
 	d := loginData{base: q.s.page(q.r, "Sign in"), SignupMode: q.s.cfg.Signup, Mail: q.s.mail != nil, Providers: q.s.oauthLinks("", "")}
@@ -476,7 +476,7 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 	}
 	switch {
 	case linked && owner.ID == q.a.User.ID:
-		redirect(q.w, q.r, "/account", q.p.Label()+" is already connected.")
+		redirect(q.w, q.r, "/settings/security", q.p.Label()+" is already connected.")
 		return
 	case linked:
 		q.fail(http.StatusConflict, "identity_taken", fmt.Sprintf(msgOAuthTaken, q.p.Label()))
@@ -488,7 +488,7 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 		o, ierr := s.sys.IdentityUser(q.r.Context(), q.p.Name(), q.id.Subject)
 		switch {
 		case ierr == nil && o.ID == q.a.User.ID:
-			redirect(q.w, q.r, "/account", q.p.Label()+" is already connected.")
+			redirect(q.w, q.r, "/settings/security", q.p.Label()+" is already connected.")
 		case ierr == nil:
 			q.fail(http.StatusConflict, "identity_taken", fmt.Sprintf(msgOAuthTaken, q.p.Label()))
 		default:
@@ -502,7 +502,7 @@ func (q *oauthReq) link(owner store.User, linked bool) {
 	}
 	s.logger.Info("oauth linked", "event", "oauth_link", "provider", q.p.Name(), "user_id", q.a.User.ID, "ip", q.ip)
 	s.noticeMethodChanged(q.a.User, q.p.Label(), true)
-	redirect(q.w, q.r, "/account", q.p.Label()+" connected.")
+	redirect(q.w, q.r, "/settings/security", q.p.Label()+" connected.")
 }
 
 func (q *oauthReq) reauth(owner store.User, linked bool) {
@@ -516,7 +516,7 @@ func (q *oauthReq) reauth(owner store.User, linked bool) {
 		return
 	}
 	s.logger.Info("oauth reauth", "event", "oauth_reauth", "provider", q.p.Name(), "user_id", q.a.User.ID, "ip", q.ip)
-	next := "/account"
+	next := "/settings/security"
 	if q.st.Next != "" {
 		next = safeNext(q.st.Next)
 	}

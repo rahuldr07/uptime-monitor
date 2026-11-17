@@ -186,32 +186,35 @@ var attackForm = url.Values{
 
 // isoCases has one entry per workspace route, keyed "METHOD pattern".
 var isoCases = map[string]isoCase{
-	"GET /{$}":                      {},
-	"GET /events":                   {sse: true},
-	"GET /targets":                  {query: "?target=%T"},
-	"POST /targets":                 {form: attackForm},
-	"POST /targets/test":            {form: attackForm},
-	"GET /targets/{id}":             {query: "?target=%T&tab=checks"},
-	"POST /targets/{id}":            {form: attackForm},
-	"POST /targets/{id}/delete":     {form: attackForm},
-	"POST /targets/{id}/pause":      {form: attackForm},
-	"POST /targets/{id}/mute":       {form: attackForm},
-	"POST /targets/{id}/check":      {form: attackForm},
-	"GET /incidents":                {query: "?target=%T"},
-	"POST /incidents/{id}/ack":      {form: attackForm},
-	"POST /incidents/{id}/note":     {form: attackForm},
-	"GET /alerts":                   {query: "?target=%T", deny: "leave blank to keep"}, // B stored no channel
-	"POST /alerts":                  {form: attackForm},
-	"POST /alerts/test":             {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
-	"POST /status/settings":         {form: statusAttackForm},
-	"GET /maintenance":              {query: "?target=%T"},
-	"POST /maintenance":             {form: attackForm},
-	"POST /maintenance/{id}/end":    {form: attackForm},
-	"POST /maintenance/{id}/delete": {form: attackForm},
-	"GET /api/maintenance":          {query: "?target=%T"},
-	"GET /api/status":               {query: "?target=%T"},
-	"GET /api/targets/{id}/checks":  {query: "?range=30d"},
-	"GET /api/incidents":            {query: "?target=%T"},
+	"GET /{$}":                          {},
+	"GET /events":                       {sse: true},
+	"GET /targets":                      {query: "?target=%T"},
+	"POST /targets":                     {form: attackForm},
+	"POST /targets/test":                {form: attackForm},
+	"GET /targets/{id}":                 {query: "?target=%T&tab=checks"},
+	"POST /targets/{id}":                {form: attackForm},
+	"POST /targets/{id}/delete":         {form: attackForm},
+	"POST /targets/{id}/pause":          {form: attackForm},
+	"POST /targets/{id}/mute":           {form: attackForm},
+	"POST /targets/{id}/check":          {form: attackForm},
+	"GET /incidents":                    {query: "?target=%T"},
+	"POST /incidents/{id}/ack":          {form: attackForm},
+	"POST /incidents/{id}/note":         {form: attackForm},
+	"GET /settings/notifications":       {query: "?target=%T", deny: "leave blank to keep"}, // B stored no channel
+	"POST /settings/notifications":      {form: attackForm},
+	"POST /settings/notifications/test": {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
+	"GET /alerts":                       {query: "?target=%T"},
+	"POST /alerts":                      {form: attackForm},
+	"POST /alerts/test":                 {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
+	"POST /status/settings":             {form: statusAttackForm},
+	"GET /maintenance":                  {query: "?target=%T"},
+	"POST /maintenance":                 {form: attackForm},
+	"POST /maintenance/{id}/end":        {form: attackForm},
+	"POST /maintenance/{id}/delete":     {form: attackForm},
+	"GET /api/maintenance":              {query: "?target=%T"},
+	"GET /api/status":                   {query: "?target=%T"},
+	"GET /api/targets/{id}/checks":      {query: "?range=30d"},
+	"GET /api/incidents":                {query: "?target=%T"},
 }
 
 // pathFor replaces {id} with the id of A's matching object.
@@ -335,7 +338,7 @@ func testIsolationDelete(t *testing.T) {
 	before := snapshotWS(t, e.opWS, a)
 	users := e.userCount(t)
 
-	resp, body := e.post(t, bob, "/account/delete", url.Values{"current": {testSecret}})
+	resp, body := e.post(t, bob, "/settings/danger/delete", url.Values{"current": {testSecret}})
 	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login?") {
 		t.Fatalf("B's delete: %d %q %s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
@@ -539,7 +542,7 @@ func testIsolationAggregates(t *testing.T) {
 	e := newEnv(t)
 	bob, bws := e.account(t, "b@example.com")
 	seedWorkspace(t, e, bws, "B-target-zz", "B-maint-zz")
-	paths := []string{"/api/status", "/api/incidents", "/api/maintenance", "/", "/alerts", "/incidents", "/maintenance", "/targets"}
+	paths := []string{"/api/status", "/api/incidents", "/api/maintenance", "/", "/settings/notifications", "/incidents", "/maintenance", "/targets"}
 	capture := func() map[string]string {
 		out := map[string]string{}
 		for _, p := range paths {
