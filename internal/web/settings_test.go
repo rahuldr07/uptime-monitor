@@ -131,3 +131,87 @@ func TestMailLinksPointToSettings(t *testing.T) {
 		t.Errorf("passwordChangedMail: %s", b)
 	}
 }
+
+func TestSettingsNotifications(t *testing.T) {
+	e := newEnv(t)
+	resp, body := e.get(t, e.op, "/settings/notifications")
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	for _, w := range []string{"Telegram", "Slack", ">Email</label>", `action="/settings/notifications"`, `class="active" aria-current="page" href="/settings/notifications">Notifications</a>`} {
+		if !strings.Contains(body, w) {
+			t.Errorf("page lacks %q", w)
+		}
+	}
+	// The v1.4.0 fallback copy shows when the server has mail and no SMTP host is set.
+	f, _, _ := fallbackEnv(t)
+	if _, body := f.get(t, f.op, "/settings/notifications"); !strings.Contains(body, "Alerts are emailed from this server to "+opEmail) {
+		t.Error("fallback copy missing")
+	}
+}
+
+func TestAlertsRedirect(t *testing.T) {
+	e := newEnv(t)
+	resp, _ := e.get(t, e.op, "/alerts")
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/settings/notifications" {
+		t.Fatalf("GET /alerts: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestAlertsPostAlias(t *testing.T) {
+	e := newEnv(t)
+	form := url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}}
+	resp, _ := e.post(t, e.op, "/alerts", form)
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/notifications" || m != "Alert channels saved." {
+		t.Fatalf("POST /alerts: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	n, err := e.opWS.Notify(t.Context())
+	if err != nil || n.Telegram == nil || n.Telegram.ChatID != "1" {
+		t.Fatalf("alias did not save: %+v %v", n, err)
+	}
+	// A save through the new path gives the same answer.
+	resp, _ = e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"2"}, "tg_enabled": {"1"}})
+	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/notifications" || m != "Alert channels saved." {
+		t.Fatalf("POST /settings/notifications: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	// Test sends through the alias fail the same way as through the new path.
+	for _, p := range []string{"/alerts/test", "/settings/notifications/test"} {
+		if resp, body := e.post(t, e.op, p, url.Values{"channel": {"nope"}}); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "failed") {
+			t.Errorf("%s: %d", p, resp.StatusCode)
+		}
+	}
+}
+
+func TestSettingsNotificationsTenant(t *testing.T) {
+	e := newEnv(t)
+	e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"optoken"}, "tg_chat": {"OPCHAT"}, "tg_enabled": {"1"}})
+	c, _ := e.account(t, "t@x.example")
+	resp, body := e.get(t, c, "/settings/notifications")
+	if resp.StatusCode != 200 {
+		t.Fatalf("tenant: %d", resp.StatusCode)
+	}
+	if strings.Contains(body, "OPCHAT") || strings.Contains(body, "Saved · leave blank to keep") {
+		t.Error("tenant sees the operator's channels")
+	}
+	for _, href := range []string{"/settings/profile", "/settings/security", "/settings/notifications", "/settings/danger"} {
+		if !strings.Contains(body, `href="`+href+`"`) {
+			t.Errorf("sub-nav lacks %s", href)
+		}
+	}
+	// The operator cannot delete their account, so the sub-nav leaves that page out.
+	_, op := e.get(t, e.op, "/settings/notifications")
+	if strings.Contains(op, `href="/settings/danger"`) {
+		t.Error("operator sub-nav links to Danger zone")
+	}
+}
+
+func TestMainNavHasNoAlertChannels(t *testing.T) {
+	e := newEnv(t)
+	_, body := e.get(t, e.op, "/")
+	if strings.Contains(body, `href="/alerts"`) || strings.Contains(body, "Alert channels</span>") {
+		t.Error("main nav still has Alert channels")
+	}
+	if !strings.Contains(body, `href="/settings/notifications"`) {
+		t.Error("overview onboarding no longer links to the channels")
+	}
+}
