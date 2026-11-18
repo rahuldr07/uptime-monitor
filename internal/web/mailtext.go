@@ -56,7 +56,9 @@ const (
 )
 
 // stamp ends a notice with when it happened, in the owner's zone.
-func stamp(at time.Time, loc *time.Location) string { return "\nWhen: " + notify.FormatTime(at, loc) + "\n" }
+func stamp(at time.Time, loc *time.Location) string {
+	return "\nWhen: " + notify.FormatTime(at, loc) + "\n"
+}
 
 // mfaLimitedMail warns the owner that codes were guessed. method is how the
 // guesser got as far as the code: "password", "google" or "github"; "" is
