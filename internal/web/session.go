@@ -26,9 +26,15 @@ type authCtx struct {
 	// keep it while revoking the rest.
 	sessionHash string
 	// AuthAt is when the session last authenticated for real; nil for old sessions.
-	AuthAt      *time.Time
+	AuthAt *time.Time
+	// MFAAt is when a valid two-factor or recovery code last verified this
+	// session; nil if never.
+	MFAAt       *time.Time
 	HasPassword bool
 }
+
+// twoFactor reports whether the account has two-factor authentication on.
+func (a *authCtx) twoFactor() bool { return a.User.TOTPEnabledAt != nil }
 
 type authKey struct{}
 
@@ -79,7 +85,7 @@ func (s *Server) lookupAuth(r *http.Request) (*authCtx, bool) {
 		return nil, false
 	}
 	return &authCtx{User: au.User, WS: au.WS, Workspace: au.Workspace,
-		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash, AuthAt: au.AuthAt, HasPassword: au.HasPassword}, true
+		IsOperator: au.User.IsOperator, sessionHash: au.SessionHash, AuthAt: au.AuthAt, MFAAt: au.MFAAt, HasPassword: au.HasPassword}, true
 }
 
 // withAuthCache installs the per-request cache that currentAuth fills. It

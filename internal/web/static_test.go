@@ -15,60 +15,66 @@ import (
 // workspace handlers that live in the same files, must reach data through the
 // signed-in user's *store.WS.
 var sysAllowed = map[string][]string{
-	"session.go|(*Server).lookupAuth":             {"SessionAuth"},            // session cookie -> user
-	"setup.go|(*Server).setupPage":                {"Workspace", "PeekToken"}, // first-run setup
-	"setup.go|(*Server).setupPost":                {"PeekToken", "CompleteSetup"},
-	"signup.go|(*Server).signupPage":              {"PeekToken"},
-	"signup.go|(*Server).signupPost":              {"PeekToken", "CreateAccount"},
-	"forgot.go|(*Server).forgotPost":              {"UserByEmail", "CreateToken"},
-	"verify.go|(*Server).sendVerify":              {"CreateToken"},
-	"verify.go|(*Server).verifyPage":              {"PeekToken"},
-	"verify.go|(*Server).verifyPost":              {"PeekToken", "VerifyEmail"},
-	"verify.go|(*Server).verifyResend":            {"UserByEmail"},
-	"verify.go|(*Server).ownerNotice":             {"UserByEmail"},
-	"login.go|(*Server).loginPost":                {"UserByEmail"},
-	"login.go|(*Server).logout":                   {"DeleteSession"},
-	"oauth.go|(*Server).oauthCallback":            {"IdentityUser"},
-	"oauth.go|(*oauthReq).signIn":                 {"TouchIdentity"},
-	"oauth.go|(*oauthReq).unlinkedLogin":          {"UserByEmail"},
-	"oauth.go|(*oauthReq).signUp":                 {"PeekToken", "CreateAccount", "IdentityUser"},
-	"oauth.go|(*oauthReq).link":                   {"LinkIdentity", "IdentityUser"},
-	"oauth.go|(*oauthReq).reauth":                 {"MarkReauth"},
-	"account.go|(*Server).accountPassword":        {"SetPassword", "SetFirstPassword"},
-	"account.go|(*Server).accountSignOutAll":      {"DeleteUserSessions"},
-	"account.go|(*Server).accountPasswordLink":    {"CreateToken"},
-	"timezone.go|(*Server).accountTimeZone":       {"SetTimeZone"},
-	"timezone.go|(*Server).accountDetectedZone":   {"SetDetectedZone"},
-	"timezone.go|(*Server).resetOwnedStatus":      {"OwnedWorkspaceIDs"},
-	"account.go|(*Server).accountDelete":          {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
-	"account.go|(*Server).checkCurrent":           {"PasswordHash"},
-	"account.go|(*Server).accountIdentityConnect": {"MarkReauth"},
-	"account.go|(*Server).myIdentities":           {"Identities"},
-	"account.go|(*Server).accountIdentityDelete":  {"UnlinkIdentity"},
-	"admin.go|(*Server).adminUsersView":           {"ListUsers", "IdentityProviders"},
-	"reset.go|(*Server).resetPage":                {"PeekToken"},
-	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword"},
-	"reset.go|(*Server).chooseWording":            {"PeekToken", "HasPassword"},
-	"targets.go|(*Server).hostRateErr":            {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
-	"admin.go|(*Server).adminTarget":              {"UserByID"},
-	"admin.go|(*Server).adminDisable":             {"SetUserDisabled"},
-	"admin.go|(*Server).adminEnable":              {"SetUserDisabled", "Workspace"},
-	"admin.go|(*Server).adminDelete":              {"SetUserDisabled", "DeleteAccount"},
-	"admin.go|(*Server).adminResetLink":           {"CreateToken"},
-	"admin.go|(*Server).adminInvitesView":         {"ListInvites"},
-	"admin.go|(*Server).adminInviteCreate":        {"CreateInvite"},
-	"admin.go|(*Server).adminInviteRevoke":        {"RevokeInvite"},
-	"twofactor.go|(*Server).startSession":         {"CreatePendingLogin", "DeleteSession", "CreateSession", "CreateSessionMFA"},
-	"twofactor.go|(*Server).verifyCode":           {"UseRecoveryCode", "TOTPSecret", "AcceptTOTPStep"},
-	"twofactor.go|(*Server).recoveryUsed":         {"RecoveryCodesLeft"},
-	"twofactor.go|(*Server).login2FAPage":         {"PendingLogin"},
-	"twofactor.go|(*Server).login2FAPost":         {"TryPendingLogin", "PendingLogin", "UserByID", "DeletePendingLogin", "FinishPendingLogin"},
-	"twofactor.go|(*Server).login2FACancel":       {"DeletePendingLogin"},
-	"web.go|(*Server).healthz":                    {"Ping"},
-	"status.go|(*Server).statusRedirect":          {"Workspace"},                    // operator's page for anonymous visitors
-	"helpers.go|(*Server).notFound":               {"Workspace"},                    // is there a general status page to link to
-	"status.go|(*Server).statusPage":              {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
-	"events.go|(*Server).events":                  {"SessionAuth"},                  // session re-check only
+	"session.go|(*Server).lookupAuth":                     {"SessionAuth"},            // session cookie -> user
+	"setup.go|(*Server).setupPage":                        {"Workspace", "PeekToken"}, // first-run setup
+	"setup.go|(*Server).setupPost":                        {"PeekToken", "CompleteSetup"},
+	"signup.go|(*Server).signupPage":                      {"PeekToken"},
+	"signup.go|(*Server).signupPost":                      {"PeekToken", "CreateAccount"},
+	"forgot.go|(*Server).forgotPost":                      {"UserByEmail", "CreateToken"},
+	"verify.go|(*Server).sendVerify":                      {"CreateToken"},
+	"verify.go|(*Server).verifyPage":                      {"PeekToken"},
+	"verify.go|(*Server).verifyPost":                      {"PeekToken", "VerifyEmail"},
+	"verify.go|(*Server).verifyResend":                    {"UserByEmail"},
+	"verify.go|(*Server).ownerNotice":                     {"UserByEmail"},
+	"login.go|(*Server).loginPost":                        {"UserByEmail"},
+	"login.go|(*Server).logout":                           {"DeleteSession"},
+	"oauth.go|(*Server).oauthCallback":                    {"IdentityUser"},
+	"oauth.go|(*oauthReq).signIn":                         {"TouchIdentity"},
+	"oauth.go|(*oauthReq).unlinkedLogin":                  {"UserByEmail"},
+	"oauth.go|(*oauthReq).signUp":                         {"PeekToken", "CreateAccount", "IdentityUser"},
+	"oauth.go|(*oauthReq).link":                           {"LinkIdentity", "IdentityUser"},
+	"oauth.go|(*oauthReq).reauth":                         {"MarkReauth"},
+	"account.go|(*Server).accountPassword":                {"SetPassword", "SetFirstPassword"},
+	"account.go|(*Server).accountSignOutAll":              {"DeleteUserSessions"},
+	"account.go|(*Server).accountPasswordLink":            {"CreateToken"},
+	"timezone.go|(*Server).accountTimeZone":               {"SetTimeZone"},
+	"timezone.go|(*Server).accountDetectedZone":           {"SetDetectedZone"},
+	"timezone.go|(*Server).resetOwnedStatus":              {"OwnedWorkspaceIDs"},
+	"account.go|(*Server).accountDelete":                  {"IsLastOperator", "DeleteUserSessions", "DeleteAccount"},
+	"account.go|(*Server).checkPassword":                  {"PasswordHash"},
+	"account.go|(*Server).accountIdentityConnect":         {"MarkReauth"},
+	"account.go|(*Server).myIdentities":                   {"Identities"},
+	"account.go|(*Server).accountIdentityDelete":          {"UnlinkIdentity"},
+	"admin.go|(*Server).adminUsersView":                   {"ListUsers", "IdentityProviders"},
+	"reset.go|(*Server).resetPage":                        {"PeekToken"},
+	"reset.go|(*Server).resetPost":                        {"PeekToken", "ResetPassword"},
+	"reset.go|(*Server).chooseWording":                    {"PeekToken", "HasPassword"},
+	"targets.go|(*Server).hostRateErr":                    {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
+	"admin.go|(*Server).adminTarget":                      {"UserByID"},
+	"admin.go|(*Server).adminDisable":                     {"SetUserDisabled"},
+	"admin.go|(*Server).adminEnable":                      {"SetUserDisabled", "Workspace"},
+	"admin.go|(*Server).adminDelete":                      {"SetUserDisabled", "DeleteAccount"},
+	"admin.go|(*Server).adminResetLink":                   {"CreateToken"},
+	"admin.go|(*Server).adminInvitesView":                 {"ListInvites"},
+	"admin.go|(*Server).adminInviteCreate":                {"CreateInvite"},
+	"admin.go|(*Server).adminInviteRevoke":                {"RevokeInvite"},
+	"twofactor.go|(*Server).startSession":                 {"CreatePendingLogin", "DeleteSession", "CreateSession", "CreateSessionMFA"},
+	"twofactor.go|(*Server).verifyCode":                   {"UseRecoveryCode", "TOTPSecret", "AcceptTOTPStep"},
+	"twofactor.go|(*Server).recoveryUsed":                 {"RecoveryCodesLeft"},
+	"twofactor.go|(*Server).login2FAPage":                 {"PendingLogin"},
+	"twofactor.go|(*Server).login2FAPost":                 {"TryPendingLogin", "PendingLogin", "UserByID", "DeletePendingLogin", "FinishPendingLogin"},
+	"twofactor.go|(*Server).login2FACancel":               {"DeletePendingLogin"},
+	"twofactor_settings.go|(*Server).twoFactorView":       {"RecoveryCodesLeft", "PendingTOTP"},
+	"twofactor_settings.go|(*Server).twoFactorSetup":      {"BeginTOTP", "MarkReauth"},
+	"twofactor_settings.go|(*Server).twoFactorConfirm":    {"PendingTOTP", "EnableTOTP"},
+	"twofactor_settings.go|(*Server).twoFactorDisable":    {"DisableTOTP"},
+	"twofactor_settings.go|(*Server).twoFactorRegenerate": {"ReplaceRecoveryCodes"},
+	"account.go|(*Server).checkFresh":                     {"MarkMFA"},
+	"web.go|(*Server).healthz":                            {"Ping"},
+	"status.go|(*Server).statusRedirect":                  {"Workspace"},                    // operator's page for anonymous visitors
+	"helpers.go|(*Server).notFound":                       {"Workspace"},                    // is there a general status page to link to
+	"status.go|(*Server).statusPage":                      {"WorkspaceBySlug", "Workspace"}, // slug resolver and anonymous page build
+	"events.go|(*Server).events":                          {"SessionAuth"},                  // session re-check only
 }
 
 func funcName(fd *ast.FuncDecl) string {
@@ -152,7 +158,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 84
+	const want = 88
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

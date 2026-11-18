@@ -83,6 +83,10 @@ func (s *Server) routeTable() []route {
 		{"POST", "/settings/security/signout-all", classUser, nil, s.accountSignOutAll},
 		{"POST", "/settings/security/identities/{provider}/connect", classUser, nil, s.accountIdentityConnect},
 		{"POST", "/settings/security/identities/{provider}/delete", classUser, nil, s.accountIdentityDelete},
+		{"POST", "/settings/security/2fa/setup", classUser, nil, s.twoFactorSetup},
+		{"POST", "/settings/security/2fa/confirm", classUser, nil, s.twoFactorConfirm},
+		{"POST", "/settings/security/2fa/disable", classUser, nil, s.twoFactorDisable},
+		{"POST", "/settings/security/2fa/recovery", classUser, nil, s.twoFactorRegenerate},
 		{"GET", "/settings/danger", classUser, nil, s.settingsPage(secDanger)},
 		{"POST", "/settings/danger/delete", classUser, nil, s.accountDelete},
 		// Old paths: GET redirects, POST stays an alias for one release (forms open in a tab during the upgrade).

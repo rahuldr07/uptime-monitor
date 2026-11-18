@@ -34,6 +34,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page string, dat
 // renderStatus is render with an explicit status code. The body is built
 // first, so a template error is a 500 rather than a 4xx with a broken page.
 func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, code int, page string, data any) {
+	// A setup or recovery-codes view carries a secret: never cache it.
+	if d, ok := data.(settingsData); ok && (d.TFState == tfSetup || d.TFState == tfCodes) {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	b, err := s.renderBytes(r, page, data)
 	if err != nil {
 		s.fail(w, fmt.Errorf("render %s: %w", page, err))

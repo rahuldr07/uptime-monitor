@@ -20,6 +20,12 @@ const (
 	msgMFALimited = "Too many attempts. Try again later."
 	msgMFAError   = "Something went wrong. Try again."
 
+	msgCodeRequired = "Enter a code from your authenticator app."
+	msgSetupExpired = "That setup expired. Start again."
+	msgMFAAlreadyOn = "Two-factor authentication is already on."
+	msgMFANotOn     = "Two-factor authentication is not on."
+	msgMFADisabled  = "Two-factor authentication is off. Your other devices were signed out."
+
 	// The one limiter every code check takes a slot from (spec §8.4).
 	mfaShortWindow = 15 * time.Minute
 	mfaShortMax    = 5

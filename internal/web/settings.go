@@ -1,6 +1,7 @@
 package web
 
 import (
+	"html/template"
 	"net/http"
 
 	"github.com/rahuldr07/uptime-monitor/internal/store"
@@ -38,7 +39,26 @@ type settingsData struct {
 	Reauth      []oauthLink // one per connected, enabled provider
 	Zones       []zoneOption
 	ZoneNow     string // the zone in use, e.g. "Asia/Kolkata (UTC+05:30)"
+
+	// Two-factor card (Security section).
+	TwoFactor  bool   // two-factor is on
+	NeedCode   bool   // two-factor is on and no code verified this session lately: sensitive forms ask for one
+	AuthRecent bool   // auth_at is within the window: Set up needs no password
+	TFState    string // off, setup, codes or on
+	TFQR       template.HTML
+	TFSecret   string   // the pending secret in groups of four
+	TFCodes    []string // the new recovery codes, shown once
+	TFLeft     int
+	TFLow      bool // two or fewer recovery codes left
+	TFNote     string
 }
+
+const (
+	tfOff   = "off"
+	tfSetup = "setup"
+	tfCodes = "codes"
+	tfOn    = "on"
+)
 
 // settingsBase is the part of the view model every section needs.
 func (s *Server) settingsBase(r *http.Request, a *authCtx, section string) settingsData {
@@ -74,8 +94,20 @@ func (s *Server) settingsView(r *http.Request, a *authCtx, section string) (sett
 	d.HasPassword, d.MailOn = a.HasPassword, s.mail != nil
 	d.LinkSent = d.MailOn && !d.HasPassword && r.URL.Query().Get("sent") == "1"
 	d.Zones, d.ZoneNow = zoneOptions(a.User, d.Now), zoneLabel(store.CanonicalZone(a.User.Location().String()), d.Now)
-	d.Recent = s.recentAuth(a)
+	d.Recent = s.recentVerified(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/settings/"+section)
+	d.TwoFactor, d.AuthRecent = a.twoFactor(), s.recentAuth(a)
+	if d.TwoFactor {
+		// A provider sign-in cannot satisfy the code, so no "sign in again" links:
+		// the forms ask for the code itself.
+		d.NeedReauth, d.Reauth = false, nil
+		d.NeedCode = !d.Recent
+	}
+	if section == secSecurity {
+		if err := s.twoFactorView(r, a, &d); err != nil {
+			return settingsData{}, err
+		}
+	}
 	d.SoleMethod = !a.HasPassword && len(ids) == 1
 	d.SignInLabel = signInLabel(ids)
 	for _, name := range []string{"google", "github"} {

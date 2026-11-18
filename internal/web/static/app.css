@@ -443,3 +443,6 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}
 .dt-edge-more{min-height:28px}
 .mfa-actions{margin-top:14px}.mfa-more{margin-top:16px;justify-content:space-between;font-size:13px}
+.qr svg{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--border)}.qr{max-width:236px}.secret{letter-spacing:.06em;user-select:all}
+.codes{list-style:none;margin:12px 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.codes li{margin:0}.codes code{display:block;font-size:14px;padding:6px 10px;text-align:center}
+#two-factor .fp{margin-top:14px}

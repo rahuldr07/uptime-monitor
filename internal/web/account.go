@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rahuldr07/uptime-monitor/internal/mail"
@@ -41,6 +42,21 @@ func (s *Server) recentAuth(a *authCtx) bool {
 		return false
 	}
 	d := s.now().Sub(*a.AuthAt)
+	return d >= -time.Minute && d <= recentAuthWindow
+}
+
+// recentVerified reports whether the session was verified recently enough for
+// a sensitive action. For an account with two-factor on that means a valid
+// code within the window (mfa_at); a password or provider sign-in (auth_at)
+// does not count. Other accounts follow recentAuth.
+func (s *Server) recentVerified(a *authCtx) bool {
+	if !a.twoFactor() {
+		return s.recentAuth(a)
+	}
+	if a.MFAAt == nil {
+		return false
+	}
+	d := s.now().Sub(*a.MFAAt)
 	return d >= -time.Minute && d <= recentAuthWindow
 }
 
@@ -89,7 +105,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		fail(http.StatusConflict, msgPwLinkUseEmail)
 		return
 	}
-	cur, pw := r.FormValue("current"), r.FormValue("new")
+	pw := r.FormValue("new")
 	if err := password.CheckLength(pw); err != nil {
 		fail(http.StatusUnprocessableEntity, err.Error())
 		return
@@ -98,7 +114,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		fail(http.StatusUnprocessableEntity, msgMismatch)
 		return
 	}
-	if !s.checkCurrent(ctx, w, a, cur, fail) {
+	if !s.checkSensitive(w, r, a, fail) {
 		return
 	}
 	newPHC, err := s.hasher.Hash(ctx, pw)
@@ -197,9 +213,62 @@ func (s *Server) accountSignOutAll(w http.ResponseWriter, r *http.Request, a *au
 	redirect(w, r, "/login", msgSignedOutAll)
 }
 
-// checkCurrent verifies the signed-in user's current password with the
-// per-user limiter. On failure it has already answered and reports false.
+// checkCurrent is the password check of an action that two-factor does not
+// guard (the operator's confirmation before deleting a user).
 func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *authCtx, cur string, fail func(int, string)) bool {
+	return s.checkPassword(ctx, w, a, cur, fail, false)
+}
+
+// checkSensitive guards the sensitive actions of spec §9. Password accounts
+// type the current password; accounts with two-factor on also need a code
+// unless one verified this session in the last ten minutes, and for them a
+// recent provider sign-in no longer stands in for a password.
+func (s *Server) checkSensitive(w http.ResponseWriter, r *http.Request, a *authCtx, fail func(int, string)) bool {
+	if !s.checkPassword(r.Context(), w, a, r.FormValue("current"), fail, a.twoFactor()) {
+		return false
+	}
+	return s.checkFresh(r, a, fail, false)
+}
+
+// isRecoveryInput says whether a code field holds something other than a
+// 6-digit code, which is then tried as a recovery code.
+func isRecoveryInput(code string) bool {
+	_, six := sixDigits(code)
+	return !six
+}
+
+// checkFresh requires a valid code for an account with two-factor on, unless
+// the session is already verified (and always when always is set). A good
+// code marks the session verified. It has answered when it reports false.
+func (s *Server) checkFresh(r *http.Request, a *authCtx, fail func(int, string), always bool) bool {
+	if !a.twoFactor() || (!always && s.recentVerified(a)) {
+		return true
+	}
+	code := strings.TrimSpace(r.FormValue("code"))
+	if code == "" {
+		fail(http.StatusUnprocessableEntity, msgCodeRequired)
+		return false
+	}
+	ctx := context.WithoutCancel(r.Context())
+	if ok, msg := s.checkCode(ctx, a.User, code, isRecoveryInput(code), ""); !ok {
+		fail(codeStatus(msg), msg)
+		return false
+	}
+	now := s.now()
+	if err := s.sys.MarkMFA(ctx, a.sessionHash, now); err != nil {
+		s.logger.Error("two-factor: cannot mark the session", "err", err, "user_id", a.User.ID)
+		fail(http.StatusInternalServerError, msgMFAError)
+		return false
+	}
+	a.MFAAt = &now
+	return true
+}
+
+// checkPassword verifies the signed-in user's current password with the
+// per-user limiter. On failure it has already answered and reports false. A
+// social-only account has no password: unless skipRecent is set, a recent
+// sign-in stands in for it.
+func (s *Server) checkPassword(ctx context.Context, w http.ResponseWriter, a *authCtx, cur string, fail func(int, string), skipRecent bool) bool {
 	phc, err := s.sys.PasswordHash(ctx, a.User.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -209,7 +278,7 @@ func (s *Server) checkCurrent(ctx context.Context, w http.ResponseWriter, a *aut
 	// verified; a sign-in within the last 10 minutes stands in for it, and
 	// otherwise the user must sign in again with a provider (§7).
 	if phc == "" {
-		if s.recentAuth(a) {
+		if skipRecent || s.recentAuth(a) {
 			return true
 		}
 		fail(http.StatusForbidden, msgSignInAgain)
@@ -262,7 +331,7 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 		d.Error = msg
 		s.renderStatus(w, r, code, "settings", d)
 	}
-	if !s.checkCurrent(ctx, w, a, r.FormValue("current"), fail) {
+	if !s.checkSensitive(w, r, a, fail) {
 		return
 	}
 	// Refused before anything is revoked or stopped. DeleteAccount repeats the
@@ -336,7 +405,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 		d.Error = msg
 		s.renderStatus(w, r, code, "settings", d)
 	}
-	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
+	if !s.checkSensitive(w, r, a, fail) {
 		return
 	}
 	err = s.sys.UnlinkIdentity(r.Context(), a.User.ID, name)
@@ -374,10 +443,10 @@ func (s *Server) accountIdentityConnect(w http.ResponseWriter, r *http.Request, 
 		d.Error = msg
 		s.renderStatus(w, r, code, "settings", d)
 	}
-	if !s.checkCurrent(r.Context(), w, a, r.FormValue("current"), fail) {
+	if !s.checkSensitive(w, r, a, fail) {
 		return
 	}
-	if a.HasPassword {
+	if a.HasPassword && !a.twoFactor() {
 		if err := s.sys.MarkReauth(r.Context(), a.sessionHash, s.now()); err != nil {
 			s.fail(w, err)
 			return

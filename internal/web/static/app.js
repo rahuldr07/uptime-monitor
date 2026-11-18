@@ -1307,6 +1307,28 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(done, fallback); else fallback();
   }
 
+  // Recovery codes: the page shows them once, so Copy and Download are built here from what is on the page;
+  // the server keeps only hashes and never sees the file.
+  function codesText(btn) {
+    var list = $(btn.getAttribute('data-codes')); if (!list) return '';
+    var out = [], items = list.querySelectorAll('li');
+    for (var i = 0; i < items.length; i++) out.push(items[i].textContent.replace(/\s+/g, ''));
+    return out.join('\n') + '\n';
+  }
+  function copyCodes(btn) {
+    var text = codesText(btn); if (!text) return;
+    copyText(text, function () { toast('Recovery codes copied', 'ok'); }, function () { toast('Could not copy: the browser blocked the clipboard', 'error'); });
+  }
+  function downloadCodes(btn) {
+    var text = codesText(btn); if (!text) return;
+    var body = 'Uptime recovery codes\nEach code works once.\n\n' + text;
+    try {
+      var url = URL.createObjectURL(new Blob([body], { type: 'text/plain' })), a = mk('a');
+      a.href = url; a.download = 'uptime-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (e) { toast('Could not make the file. Use Copy instead.', 'error'); }
+  }
+
   // ---- declarative actions (no inline handlers, so the CSP can forbid inline script) ----
   document.addEventListener('click', function (e) {
     var el = e.target.closest ? e.target.closest('[data-action]') : null; if (!el) return;
@@ -1315,6 +1337,8 @@
     else if (a === 'close-panel') closePanel();
     else if (a === 'theme') cycleTheme();
     else if (a === 'copy') copyField(el);
+    else if (a === 'copy-codes') copyCodes(el);
+    else if (a === 'download-codes') downloadCodes(el);
   });
   document.addEventListener('change', function (e) {
     if (e.target.hasAttribute && e.target.hasAttribute('data-autosubmit') && e.target.form) e.target.form.submit();

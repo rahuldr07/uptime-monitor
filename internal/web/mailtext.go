@@ -49,7 +49,31 @@ func signInMethodMail(base, provider string, added bool, at time.Time, loc *time
 const (
 	msgMFALimitedSubject   = "Too many two-factor attempts"
 	msgRecoveryUsedSubject = "A recovery code was used on your account"
+	msgMFAOnSubject        = "Two-factor authentication was turned on"
+	msgMFAOffSubject       = "Two-factor authentication was turned off"
+	msgMFAResetSubject     = "Two-factor authentication was turned off by an administrator"
+	msgRecoveryNewSubject  = "Your recovery codes were replaced"
 )
+
+func mfaOnMail(base string) (subject, body string) {
+	return msgMFAOnSubject,
+		fmt.Sprintf("Two-factor authentication was turned on. Your other devices were signed out.\n\nIf this was not you, reset your password and turn two-factor authentication off:\n\n%s/forgot\n%s/settings/security\n", base, base)
+}
+
+func mfaOffMail(base string) (subject, body string) {
+	return msgMFAOffSubject,
+		fmt.Sprintf("Two-factor authentication was turned off. Your other devices were signed out.\n\nIf this was not you, reset your password and turn it on again:\n\n%s/forgot\n", base)
+}
+
+func mfaResetMail(base string) (subject, body string) {
+	return msgMFAResetSubject,
+		fmt.Sprintf("An administrator turned off two-factor authentication on your account. You were signed out everywhere.\n\nSign in with your password, then turn it on again under Security in your Settings:\n\n%s/login\n", base)
+}
+
+func recoveryNewMail(base string) (subject, body string) {
+	return msgRecoveryNewSubject,
+		fmt.Sprintf("New recovery codes were created and the old ones stopped working. Your other devices were signed out.\n\nIf this was not you, reset your password:\n\n%s/forgot\n", base)
+}
 
 // mfaLimitedMail warns the owner that codes were guessed. method is how the
 // attacker got as far as the code: "password", "google" or "github".

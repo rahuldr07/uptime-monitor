@@ -160,7 +160,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 		uid = a.User.ID
 		// Connecting a provider adds a way to sign in, and reauth trusts the
 		// provider: it needs a recent sign-in (or the password, via /connect).
-		if intent == "link" && !s.recentAuth(a) {
+		if intent == "link" && !s.recentVerified(a) {
 			d, err := s.settingsView(r, a, secSecurity)
 			if err != nil {
 				s.fail(w, err)
@@ -453,7 +453,7 @@ func (q *oauthReq) signUp() {
 
 func (q *oauthReq) link(owner store.User, linked bool) {
 	s := q.s
-	if !s.recentAuth(q.a) {
+	if !s.recentVerified(q.a) {
 		q.fail(http.StatusForbidden, "not_recent", msgSignInAgain)
 		return
 	}
