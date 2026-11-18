@@ -38,7 +38,7 @@ func (s *Server) issuer(r *http.Request) string {
 }
 
 // twoFactorView fills the Two-factor card: on (codes left), setup (a pending
-// secret, shown only to a recent sign-in) or off.
+// secret, still valid) or off.
 func (s *Server) twoFactorView(r *http.Request, a *authCtx, d *settingsData) error {
 	ctx := r.Context()
 	if a.twoFactor() {
@@ -50,9 +50,6 @@ func (s *Server) twoFactorView(r *http.Request, a *authCtx, d *settingsData) err
 		return nil
 	}
 	d.TFState = tfOff
-	if !s.recentAuth(a) {
-		return nil
-	}
 	secret, err := s.sys.PendingTOTP(ctx, a.User.ID, s.now())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
@@ -63,7 +60,8 @@ func (s *Server) twoFactorView(r *http.Request, a *authCtx, d *settingsData) err
 	d.TFState, d.TFSecret, d.NoRefresh = tfSetup, groupSecret(secret), true
 	// A URI too long for the encoder leaves the typed secret alone.
 	if code, err := qr.Encode(totp.URI(s.issuer(r), a.User.Email, secret)); err == nil {
-		d.TFQR = template.HTML(code.SVG(4)) // #nosec: markup built by internal/qr from numbers only
+		svg := strings.Replace(code.SVG(4), `aria-label="QR code"`, `aria-label="QR code for your authenticator app"`, 1)
+		d.TFQR = template.HTML(svg) // markup built by internal/qr from numbers only
 	}
 	return nil
 }
@@ -76,7 +74,7 @@ func (s *Server) settingsFail(w http.ResponseWriter, r *http.Request, a *authCtx
 		return nil, false
 	}
 	return func(code int, msg string) {
-		d.Error = msg
+		d.TFError = msg
 		s.renderStatus(w, r, code, "settings", d)
 	}, true
 }
@@ -90,18 +88,13 @@ func (s *Server) twoFactorSetup(w http.ResponseWriter, r *http.Request, a *authC
 		fail(http.StatusConflict, msgMFAAlreadyOn)
 		return
 	}
-	// Setup needs a recent sign-in; a stale one confirms with the password,
-	// which counts as signing in again.
-	if !s.recentAuth(a) {
-		if !s.checkPassword(r.Context(), w, a, r.FormValue("current"), fail, false) {
-			return
-		}
-		if a.HasPassword {
-			if err := s.sys.MarkReauth(r.Context(), a.sessionHash, s.now()); err != nil {
-				s.fail(w, err)
-				return
-			}
-		}
+	// Starting setup is a sensitive step: a password account types its
+	// current password (every time, however fresh the session); a social-only
+	// one needs a recent provider sign-in. Confirming needs only the pending
+	// secret, so the 15 minutes of the secret are not cut to the 10 of a
+	// recent sign-in.
+	if !s.checkPassword(r.Context(), w, a, r.FormValue("current"), fail, false) {
+		return
 	}
 	secret, err := totp.NewSecret()
 	if err != nil {
@@ -161,32 +154,25 @@ func (s *Server) twoFactorConfirm(w http.ResponseWriter, r *http.Request, a *aut
 	}
 	// Someone who stole a session must not be able to take the account over
 	// with their own authenticator: this step needs a recent sign-in too.
-	if !s.recentAuth(a) {
-		fail(http.StatusForbidden, msgSignInAgain)
-		return
-	}
 	code := strings.TrimSpace(r.FormValue("code"))
 	if code == "" {
 		fail(http.StatusUnprocessableEntity, msgCodeRequired)
 		return
 	}
-	// The same per-user budget as every other code check.
-	if allowed, wait := s.takeCode(a.User, ""); !allowed {
-		fail(http.StatusTooManyRequests, limitedMessage(wait))
-		return
-	}
-	digits, six := sixDigits(code)
+	// The same gate as every other code check; only the secret differs.
 	var step int64
-	matched := false
-	if six {
+	if ok, msg := s.checkWith(a.User, "", false, func() (bool, error) {
+		digits, six := sixDigits(code)
+		if !six {
+			return false, nil
+		}
+		var matched bool
 		step, matched = totp.Match(secret, digits, s.now())
-	}
-	if !matched {
-		s.codeFailed(a.User, "", "setup")
-		fail(http.StatusUnauthorized, msgMFAWrong)
+		return matched, nil
+	}); !ok {
+		fail(codeStatus(msg), msg)
 		return
 	}
-	s.refundCode(a.User)
 	codes, hashes, err := newRecoveryCodes()
 	if err != nil {
 		s.fail(w, err)
@@ -204,7 +190,7 @@ func (s *Server) twoFactorConfirm(w http.ResponseWriter, r *http.Request, a *aut
 	}
 	s.logger.Warn("two-factor enabled", "event", "mfa_enabled", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	if s.mail != nil {
-		subject, body := mfaOnMail(s.cfg.BaseURL)
+		subject, body := mfaOnMail(s.cfg.BaseURL, now, a.User.Location())
 		s.mail.Notice(a.User.Email, subject, body)
 	}
 	a.User.TOTPEnabledAt, a.MFAAt = &now, &now
@@ -235,7 +221,7 @@ func (s *Server) twoFactorDisable(w http.ResponseWriter, r *http.Request, a *aut
 	}
 	s.logger.Warn("two-factor disabled", "event", "mfa_disabled", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	if s.mail != nil {
-		subject, body := mfaOffMail(s.cfg.BaseURL)
+		subject, body := mfaOffMail(s.cfg.BaseURL, s.now(), a.User.Location())
 		s.mail.Notice(a.User.Email, subject, body)
 	}
 	redirect(w, r, "/settings/security", msgMFADisabled)
@@ -269,8 +255,19 @@ func (s *Server) twoFactorRegenerate(w http.ResponseWriter, r *http.Request, a *
 	}
 	s.logger.Warn("recovery codes replaced", "event", "mfa_recovery_replaced", "user_id", a.User.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	if s.mail != nil {
-		subject, body := recoveryNewMail(s.cfg.BaseURL)
+		subject, body := recoveryNewMail(s.cfg.BaseURL, s.now(), a.User.Location())
 		s.mail.Notice(a.User.Email, subject, body)
 	}
 	s.showCodes(w, r, a, codes, "New recovery codes. The old ones no longer work. Your other devices were signed out.")
+}
+
+// twoFactorCancel drops a pending setup. No session is touched.
+func (s *Server) twoFactorCancel(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	if !a.twoFactor() {
+		if err := s.sys.ClearPendingTOTP(context.WithoutCancel(r.Context()), a.User.ID); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	http.Redirect(w, r, "/settings/security#two-factor", http.StatusSeeOther)
 }

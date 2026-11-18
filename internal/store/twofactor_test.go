@@ -586,3 +586,88 @@ func TestSessionRevokeKeepsPendingLogins(t *testing.T) {
 		t.Fatalf("session revoke removed a pending login: %v", err)
 	}
 }
+
+// A sign-in that created its plain session just before 2FA was enabled must
+// not authenticate afterwards; the session that proved the code does.
+func TestSessionAuthNeedsMFAWhenTwoFactorOn(t *testing.T) {
+	s := open(t)
+	ctx := t.Context()
+	now := time.Now()
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "aa", Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptAuth, err := s.SessionAuth(ctx, kept, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnableTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", 1, []string{"h"}, keptAuth.SessionHash, now); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the race: a plain session created after the revoke.
+	late, err := s.CreateSession(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, late, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("plain session of a 2FA account authenticates: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, plain, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoked session authenticates: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, kept, now); err != nil {
+		t.Errorf("the session that enabled 2FA lost access: %v", err)
+	}
+	mfa, err := s.CreateSessionMFA(ctx, u.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, mfa, now); err != nil {
+		t.Errorf("a code-verified session is refused: %v", err)
+	}
+	// Turned off: plain sessions work again.
+	if err := s.DisableTOTP(ctx, u.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	p2, _ := s.CreateSession(ctx, u.ID, now)
+	if _, err := s.SessionAuth(ctx, p2, now); err != nil {
+		t.Errorf("plain session after turning off: %v", err)
+	}
+}
+
+func TestClearPendingTOTP(t *testing.T) {
+	s := open(t)
+	ctx := t.Context()
+	now := time.Now()
+	u, _, err := s.CreateAccount(ctx, AccountInput{Email: "a@b.co", PasswordHash: "x", WorkspaceName: "A", Slug: "aa", Verified: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := s.CreateSession(ctx, u.ID, now)
+	if _, err := s.BeginTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearPendingTOTP(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingTOTP(ctx, u.ID, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("pending survived: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, now); err != nil {
+		t.Errorf("a session was touched: %v", err)
+	}
+	if err := s.ClearPendingTOTP(ctx, u.ID); err != nil {
+		t.Errorf("clearing nothing: %v", err)
+	}
+}

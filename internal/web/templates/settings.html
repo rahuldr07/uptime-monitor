@@ -22,6 +22,7 @@
 </div>
 {{else if eq .Section "security"}}
 <h2 class="sec">Security</h2>
+{{if eq .TFState "codes"}}{{template "two-factor" .}}{{end}}
 <div class="card block" id="password">
   <h3>Password</h3>
   {{if .HasPassword}}
@@ -29,7 +30,7 @@
     <div class="field"><label for="acc-current">Current password</label><input id="acc-current" name="current" type="password" required autocomplete="current-password"></div>
     <div class="field"><label for="acc-new">New password</label><input id="acc-new" name="new" type="password" required minlength="10" autocomplete="new-password"></div>
     <div class="field"><label for="acc-confirm">Confirm new password</label><input id="acc-confirm" name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
-    {{if .NeedCode}}{{template "code-field" dict "ID" "acc-code"}}{{end}}
+    {{if .NeedCode}}{{template "code-field" dict "ID" "acc-code" "Err" (codeerr . "/settings/security/password")}}{{end}}
     <div style="margin-top:14px"><button type="submit" class="primary">Change password</button></div>
     <p class="muted small" style="margin-top:8px">This signs you out on your other devices.</p>
   </form>
@@ -47,13 +48,13 @@
     <p class="muted small" style="margin:6px 0 10px">You sign in with {{.SignInLabel}} and have no password. Set one to also sign in with your email. {{if .TwoFactor}}Enter a code from your authenticator app to confirm it's you.{{else}}You signed in with {{.SignInLabel}} a moment ago, so you can set it here.{{end}}</p>
     <div class="field"><label for="acc-new">New password</label><input id="acc-new" name="new" type="password" required minlength="10" autocomplete="new-password"></div>
     <div class="field"><label for="acc-confirm">Confirm new password</label><input id="acc-confirm" name="confirm" type="password" data-match="new" required minlength="10" autocomplete="new-password"></div>
-    {{if .NeedCode}}{{template "code-field" dict "ID" "acc-code"}}{{end}}
+    {{if .NeedCode}}{{template "code-field" dict "ID" "acc-code" "Err" (codeerr . "/settings/security/password")}}{{end}}
     <div style="margin-top:14px"><button type="submit" class="primary">Set a password</button></div>
     <p class="muted small" style="margin-top:8px">This signs you out on your other devices.</p>
   </form>
   {{end}}
 </div>
-{{template "two-factor" .}}
+{{if ne .TFState "codes"}}{{template "two-factor" .}}{{end}}
 <div class="card block" id="methods">
   <h3>Sign-in methods</h3>
   {{if and .NeedReauth .MailOn}}{{template "reauth-notice" dict "Links" .Reauth "What" "change your sign-in methods"}}{{end}}
@@ -68,9 +69,10 @@
     {{else if not $.NeedReauth}}
     <form method="post" action="/settings/security/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm-danger data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it." style="display:flex;gap:6px;align-items:flex-start">
       {{if $.HasPassword}}<div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to disconnect {{.Label}}" autocomplete="current-password" style="width:170px"></div>{{end}}
-      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to disconnect {{.Label}}" autocomplete="one-time-code" class="in-code"></div>{{end}}
+      {{if $.NeedCode}}{{$e := codeerr $ (printf "/settings/security/identities/%s/delete" .Name)}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to disconnect {{.Label}}" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" class="in-code"{{if $e}} aria-invalid="true" aria-describedby="err-dis-{{.Name}}"{{end}}></div>{{end}}
       <button type="submit">Disconnect</button>
     </form>
+    {{$n := .Name}}{{with codeerr $ (printf "/settings/security/identities/%s/delete" .Name)}}<div class="field-err row-err" role="alert" id="err-dis-{{$n}}">{{.}}</div>{{end}}
     {{end}}
     {{else if .Enabled}}
     {{if $.Recent}}
@@ -78,9 +80,10 @@
     {{else if or $.HasPassword $.NeedCode}}
     <form method="post" action="/settings/security/identities/{{.Name}}/connect" style="display:flex;gap:6px;align-items:flex-start">
       {{if $.HasPassword}}<div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to connect {{.Label}}" autocomplete="current-password" style="width:170px"></div>{{end}}
-      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to connect {{.Label}}" autocomplete="one-time-code" class="in-code"></div>{{end}}
+      {{if $.NeedCode}}{{$e := codeerr $ (printf "/settings/security/identities/%s/connect" .Name)}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to connect {{.Label}}" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" class="in-code"{{if $e}} aria-invalid="true" aria-describedby="err-con-{{.Name}}"{{end}}></div>{{end}}
       <button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</button>
     </form>
+    {{$n := .Name}}{{with codeerr $ (printf "/settings/security/identities/%s/connect" .Name)}}<div class="field-err row-err" role="alert" id="err-con-{{$n}}">{{.}}</div>{{end}}
     {{end}}
     {{end}}
   </div>
@@ -105,7 +108,7 @@
   {{if .NeedReauth}}{{template "reauth-notice" dict "Links" .Reauth "What" "delete your account"}}{{else}}
   <form method="post" action="/settings/danger/delete" data-confirm-title="Delete account?" data-confirm="Delete your account and all of its data? This cannot be undone." style="max-width:360px">
     {{if .HasPassword}}<div class="field"><label for="del-current">Current password</label><input id="del-current" name="current" type="password" required autocomplete="current-password"></div>{{end}}
-    {{if .NeedCode}}{{template "code-field" dict "ID" "del-code"}}{{end}}
+    {{if .NeedCode}}{{template "code-field" dict "ID" "del-code" "Err" (codeerr . "/settings/danger/delete")}}{{end}}
     <div style="margin-top:14px"><button type="submit" class="danger"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete account</button></div>
   </form>
   {{end}}
@@ -125,49 +128,55 @@
   {{if .CanDelete}}<a{{if eq .Section "danger"}} class="active" aria-current="page"{{end}} href="/settings/danger">Danger zone</a>{{end}}
 </nav>{{end}}
 
-{{define "code-field"}}<div class="field"><label for="{{.ID}}">Two-factor code</label><input id="{{.ID}}" name="code" type="text" required maxlength="64" autocomplete="one-time-code"><div class="help">From your authenticator app, or a recovery code.</div></div>{{end}}
+{{define "code-field"}}<div class="field"><label for="{{.ID}}">Two-factor code</label><input id="{{.ID}}" name="code" type="text" required maxlength="64" autocomplete="one-time-code" autocapitalize="off" spellcheck="false"{{if .Err}} aria-invalid="true" aria-describedby="{{.ID}}-help"{{end}}>{{if .Err}}<div class="field-err" role="alert" id="{{.ID}}-help">{{.Err}}</div>{{else}}<div class="help" id="{{.ID}}-help">From your authenticator app, or a recovery code.</div>{{end}}</div>{{end}}
+
+{{define "tf-err"}}{{if .}}<div class="field-err" role="alert" id="tf-err">{{.}}</div>{{end}}{{end}}
 
 {{define "two-factor"}}
 <div class="card block" id="two-factor">
   <h3>Two-factor authentication</h3>
   {{if eq .TFState "codes"}}
-  <div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div>{{.TFNote}} Save these recovery codes now. They will not be shown again.</div></div>
+  <div class="alert warn" role="status" tabindex="-1" id="codes-alert" autofocus><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div><strong>{{.TFNote}}</strong>Save these recovery codes now. They will not be shown again.</div></div>
   <ol class="codes" id="recovery-codes">{{range .TFCodes}}<li><code>{{.}}</code></li>{{end}}</ol>
   <div class="btns">
     <button type="button" data-action="copy-codes" data-codes="#recovery-codes"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
     <button type="button" data-action="download-codes" data-codes="#recovery-codes"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Download</button>
+    <a class="btn primary" href="/settings/security#two-factor">I've saved them</a>
   </div>
   <p class="muted small tf-after">Each code works once. Keep them somewhere safe, apart from your phone.</p>
   {{else if eq .TFState "setup"}}
-  {{if .TFQR}}
-  <p class="muted small tf-lead">Scan the QR code with an authenticator app, then enter the 6-digit code it shows. Or type the key in by hand.</p>
-  <div class="qr">{{.TFQR}}</div>
-  {{else}}
-  <p class="muted small tf-lead">The QR code does not fit for this address. Type the key into your authenticator app, then enter the 6-digit code it shows.</p>
-  {{end}}
-  <p class="small tf-key">Key: <code class="secret">{{.TFSecret}}</code></p>
+  <ol class="tf-steps small">
+    <li>{{if .TFQR}}Scan the QR code with an authenticator app, or type the key into it.{{else}}The QR code does not fit for this address. Type the key into your authenticator app.{{end}}</li>
+    <li>Enter the 6-digit code the app shows.</li>
+    <li>Save the recovery codes we show you next.</li>
+  </ol>
+  {{if .TFQR}}<div class="qr">{{.TFQR}}</div>{{end}}
+  <p class="small tf-key">Key: <code class="secret" id="tf-key">{{.TFSecret}}</code> <button type="button" class="sm ghost" data-action="copy-key" data-target="#tf-key"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy key</button></p>
   <form method="post" action="/settings/security/2fa/confirm" class="fp">
-    <div class="field"><label for="tf-code">Code from the app</label><input id="tf-code" name="code" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="12" required autocomplete="one-time-code" autofocus></div>
-    <div class="btns tf-act"><button type="submit" class="primary">Turn on</button></div>
+    <div class="field"><label for="tf-code">Code from the app</label><input id="tf-code" name="code" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="12" required autocomplete="one-time-code" autofocus class="in-code"{{if .TFError}} aria-invalid="true" aria-describedby="tf-err"{{end}}>{{template "tf-err" .TFError}}</div>
+    <div class="btns tf-act"><button type="submit" class="primary">Turn on</button><button type="submit" class="ghost" form="tf-cancel">Cancel</button></div>
   </form>
+  <form method="post" action="/settings/security/2fa/cancel" id="tf-cancel"></form>
   <p class="muted small tf-after">Turning it on signs out your other devices. This setup expires after 15 minutes.</p>
   {{else if eq .TFState "on"}}
-  <p class="tf-first"><span class="badge up">On</span> {{.TFLeft}} recovery code{{if ne .TFLeft 1}}s{{end}} left.</p>
-  {{if .TFLow}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>Running low on recovery codes. Make new ones before you run out.</div></div>{{end}}
+  <p class="tf-first"><span class="badge up">On</span> {{if eq .TFLeft 0}}No recovery codes left.{{else}}{{.TFLeft}} recovery code{{if ne .TFLeft 1}}s{{end}} left.{{end}}</p>
+  {{if .TFLow}}<div class="alert warn" role="status"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{if eq .TFLeft 0}}No recovery codes left. Make new ones now.{{else}}Running low on recovery codes. Make new ones before you run out.{{end}}</div></div>{{end}}
+  {{$on := eq .Posted "/settings/security/2fa/recovery"}}{{$off := eq .Posted "/settings/security/2fa/disable"}}
+  {{if and .TFError (not $on) (not $off)}}<div class="alert error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>{{.TFError}}</div></div>{{end}}
   <form method="post" action="/settings/security/2fa/recovery" class="fp" data-confirm-title="Replace recovery codes?" data-confirm="Replace your recovery codes? The old ones stop working and your other devices are signed out.">
-    <div class="field"><label for="tf-regen">Code from your authenticator app, or a recovery code</label><input id="tf-regen" name="code" type="text" required maxlength="64" autocomplete="one-time-code"></div>
-    <button type="submit">Make new recovery codes</button>
+    <div class="field"><label for="tf-regen">Code to make new recovery codes</label><input id="tf-regen" name="code" type="text" required maxlength="64" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" class="in-code"{{if and $on .TFError}} aria-invalid="true" aria-describedby="tf-err"{{end}}><div class="help">From your authenticator app, or a recovery code.</div>{{if $on}}{{template "tf-err" .TFError}}{{end}}</div>
+    <div class="btns tf-act"><button type="submit">Make new recovery codes</button></div>
   </form>
   <form method="post" action="/settings/security/2fa/disable" class="fp" data-confirm-title="Turn off two-factor?" data-confirm-danger data-confirm="Turn off two-factor authentication? Your other devices are signed out.">
-    <div class="field"><label for="tf-off">Code from your authenticator app, or a recovery code</label><input id="tf-off" name="code" type="text" required maxlength="64" autocomplete="one-time-code"></div>
-    <button type="submit" class="danger">Turn off</button>
+    <div class="field"><label for="tf-off">Code to turn off</label><input id="tf-off" name="code" type="text" required maxlength="64" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" class="in-code"{{if and $off .TFError}} aria-invalid="true" aria-describedby="tf-err"{{end}}><div class="help">From your authenticator app, or a recovery code.</div>{{if $off}}{{template "tf-err" .TFError}}{{end}}</div>
+    <div class="btns tf-act"><button type="submit" class="danger">Turn off</button></div>
   </form>
   {{else}}
-  <p class="muted small tf-lead"><span class="badge paused">Off</span> Ask for a code from an authenticator app after your password or Google or GitHub sign-in. It protects the account if someone learns your password.</p>
+  <p class="muted small tf-lead"><span class="badge paused">Off</span> Sign-in also asks for a code from an authenticator app. It protects the account if someone learns your password.</p>
   {{if and (not .AuthRecent) (not .HasPassword)}}{{template "reauth-notice" dict "Links" .Reauth "What" "turn on two-factor authentication"}}{{else}}
   <form method="post" action="/settings/security/2fa/setup" class="fp">
-    {{if and (not .AuthRecent) .HasPassword}}<div class="field"><label for="tf-pw">Current password</label><input id="tf-pw" name="current" type="password" required autocomplete="current-password"></div>{{end}}
-    <button type="submit" class="primary">Set up</button>
+    {{if .HasPassword}}<div class="field"><label for="tf-pw">Current password</label><input id="tf-pw" name="current" type="password" required autocomplete="current-password"{{if .TFError}} aria-invalid="true" aria-describedby="tf-err"{{end}}>{{template "tf-err" .TFError}}</div>{{else if .TFError}}{{template "tf-err" .TFError}}{{end}}
+    <div class="btns tf-act"><button type="submit" class="primary">Set up</button></div>
   </form>
   {{end}}
   {{end}}

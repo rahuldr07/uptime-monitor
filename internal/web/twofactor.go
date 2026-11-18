@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	msgMFAWrong   = "That code didn't work. Check the time on your phone and try again."
-	msgMFAExpired = "That took too long. Sign in again."
-	msgMFALimited = "Too many attempts. Try again later."
-	msgMFAError   = "Something went wrong. Try again."
+	msgMFAWrong         = "That code didn't work. Check the time on your phone and try again."
+	msgMFAWrongRecovery = "That recovery code didn't work. Each one works once."
+	msgSignInToContinue = "Sign in to continue."
+	msgMFAExpired       = "That took too long. Sign in again."
+	msgMFALimited       = "Too many attempts. Try again later."
+	msgMFAError         = "Something went wrong. Try again."
 
 	msgCodeRequired = "Enter a code from your authenticator app."
 	msgSetupExpired = "That setup expired. Start again."
@@ -71,6 +73,15 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u store.Us
 	ctx := context.WithoutCancel(r.Context())
 	next = safeNext(next)
 	if u.TOTPEnabledAt != nil && !codeOK {
+		// Only the three sign-in methods may wait for a code. Anything else
+		// (a link, a sign-up) fails closed: no session, no pending row.
+		switch method {
+		case "password", "google", "github":
+		default:
+			s.logger.Error("two-factor account reached startSession by a method that cannot ask for a code", "method", method, "user_id", u.ID)
+			redirect(w, r, "/login", msgSignInToContinue)
+			return false
+		}
 		raw, err := s.sys.CreatePendingLogin(ctx, u.ID, method, next, *u.TOTPEnabledAt, s.now())
 		if err != nil {
 			s.fail(w, err)
@@ -133,7 +144,7 @@ func (s *Server) warnLimited(u store.User, method string) {
 		return
 	}
 	if first, _ := s.mfaNotice.Take(userKey(u)); first {
-		subject, body := mfaLimitedMail(s.cfg.BaseURL, method)
+		subject, body := mfaLimitedMail(s.cfg.BaseURL, method, s.now(), u.Location())
 		s.mail.Notice(u.Email, subject, body)
 	}
 }
@@ -157,6 +168,9 @@ func (s *Server) refundCode(u store.User) {
 	s.mfaLong.Undo(userKey(u))
 }
 
+// limitedPrefix starts every limiter message built by limitedMessage.
+const limitedPrefix = "Too many attempts. Try again in about"
+
 func limitedMessage(wait time.Duration) string {
 	m := int((wait + time.Minute - 1) / time.Minute)
 	if m < 1 {
@@ -166,13 +180,13 @@ func limitedMessage(wait time.Duration) string {
 	if m == 1 {
 		unit = "minute"
 	}
-	return fmt.Sprintf("%s Wait about %d %s.", msgMFALimited, m, unit)
+	return fmt.Sprintf("%s %d %s.", limitedPrefix, m, unit)
 }
 
 // codeStatus is the HTTP status for a checkCode message.
 func codeStatus(msg string) int {
 	switch {
-	case strings.HasPrefix(msg, msgMFALimited):
+	case strings.HasPrefix(msg, limitedPrefix):
 		return http.StatusTooManyRequests
 	case msg == msgMFAError:
 		return http.StatusInternalServerError
@@ -227,14 +241,15 @@ func (s *Server) verifyCode(ctx context.Context, u store.User, code string, reco
 	return s.sys.AcceptTOTPStep(ctx, u.ID, secret, step)
 }
 
-// checkCode is the only code verifier: it takes a slot from the per-user
-// limiter first, refunds it on success, and on a recovery code tells the
-// owner how many are left. method as for takeCode.
-func (s *Server) checkCode(ctx context.Context, u store.User, code string, recovery bool, method string) (ok bool, msg string) {
+// checkWith is the one place a code check is gated: it takes a slot from the
+// per-user limiter first, runs verify, refunds the slot on success (or a
+// server error) and warns the owner when a window fills. checkCode and the
+// setup confirmation both go through it.
+func (s *Server) checkWith(u store.User, method string, recovery bool, verify func() (bool, error)) (ok bool, msg string) {
 	if allowed, wait := s.takeCode(u, method); !allowed {
 		return false, limitedMessage(wait)
 	}
-	good, err := s.verifyCode(ctx, u, code, recovery)
+	good, err := verify()
 	if err != nil {
 		s.refundCode(u)
 		s.logger.Error("two-factor check failed", "err", err, "user_id", u.ID)
@@ -246,13 +261,24 @@ func (s *Server) checkCode(ctx context.Context, u store.User, code string, recov
 			how = "recovery"
 		}
 		s.codeFailed(u, method, how)
+		if recovery {
+			return false, msgMFAWrongRecovery
+		}
 		return false, msgMFAWrong
 	}
 	s.refundCode(u)
-	if recovery {
+	return true, ""
+}
+
+// checkCode checks a code or recovery code of u against the stored secret or
+// recovery codes. On a recovery code it tells the owner how many are left.
+// method as for takeCode.
+func (s *Server) checkCode(ctx context.Context, u store.User, code string, recovery bool, method string) (ok bool, msg string) {
+	ok, msg = s.checkWith(u, method, recovery, func() (bool, error) { return s.verifyCode(ctx, u, code, recovery) })
+	if ok && recovery {
 		s.recoveryUsed(ctx, u, method != "")
 	}
-	return true, ""
+	return ok, msg
 }
 
 func (s *Server) recoveryUsed(ctx context.Context, u store.User, signIn bool) {
@@ -262,7 +288,7 @@ func (s *Server) recoveryUsed(ctx context.Context, u store.User, signIn bool) {
 	}
 	s.logger.Warn("recovery code used", "event", "mfa_recovery_used", "user_id", u.ID, "left", left)
 	if s.mail != nil {
-		subject, body := recoveryUsedMail(s.cfg.BaseURL, left, signIn)
+		subject, body := recoveryUsedMail(s.cfg.BaseURL, left, signIn, s.now(), u.Location())
 		s.mail.Notice(u.Email, subject, body)
 	}
 }
@@ -278,10 +304,13 @@ func (s *Server) login2FAView(r *http.Request) login2FAData {
 	return login2FAData{base: s.page(r, "Two-factor authentication"), Recovery: r.URL.Query().Get("recovery") == "1" || r.FormValue("recovery") == "1"}
 }
 
-// backToSignIn drops the pending cookie and returns to /login with msg.
-func (s *Server) backToSignIn(w http.ResponseWriter, r *http.Request, msg string) {
+// backToSignIn drops the pending cookie and shows the sign-in page with msg
+// as a persistent error (a flash would fade before it is read).
+func (s *Server) backToSignIn(w http.ResponseWriter, r *http.Request, code int, msg string) {
 	s.setMFACookie(w, r, "", -1)
-	redirect(w, r, "/login", msg)
+	d := loginData{base: s.page(r, "Sign in"), SignupMode: s.cfg.Signup, Mail: s.mail != nil, Providers: s.oauthLinks("", "")}
+	d.Error = msg
+	s.renderStatus(w, r, code, "login", d)
 }
 
 func (s *Server) login2FAPage(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +321,7 @@ func (s *Server) login2FAPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.sys.PendingLogin(r.Context(), tok, s.now()); errors.Is(err, store.ErrNotFound) {
-		s.backToSignIn(w, r, msgMFAExpired)
+		s.backToSignIn(w, r, http.StatusUnauthorized, msgMFAExpired)
 		return
 	} else if err != nil {
 		s.fail(w, err)
@@ -333,10 +362,10 @@ func (s *Server) login2FAPost(w http.ResponseWriter, r *http.Request) {
 		// that is gone.
 		if _, perr := s.sys.PendingLogin(ctx, tok, s.now()); perr == nil {
 			refund = false
-			s.backToSignIn(w, r, msgMFALimited)
+			s.backToSignIn(w, r, http.StatusTooManyRequests, msgMFALimited)
 			return
 		}
-		s.backToSignIn(w, r, msgMFAExpired)
+		s.backToSignIn(w, r, http.StatusUnauthorized, msgMFAExpired)
 		return
 	}
 	if err != nil {
@@ -345,7 +374,7 @@ func (s *Server) login2FAPost(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := s.sys.UserByID(ctx, p.UserID)
 	if errors.Is(err, store.ErrNotFound) {
-		s.backToSignIn(w, r, msgMFAExpired)
+		s.backToSignIn(w, r, http.StatusUnauthorized, msgMFAExpired)
 		return
 	}
 	if err != nil {
@@ -356,7 +385,7 @@ func (s *Server) login2FAPost(w http.ResponseWriter, r *http.Request) {
 	// the person sat here: never sign in without the code they were promised.
 	if u.TOTPEnabledAt == nil || !u.TOTPEnabledAt.Equal(p.TOTPEnabledAt) || u.DisabledAt != nil || u.VerifiedAt == nil {
 		_ = s.sys.DeletePendingLogin(ctx, tok)
-		s.backToSignIn(w, r, msgMFAExpired)
+		s.backToSignIn(w, r, http.StatusUnauthorized, msgMFAExpired)
 		return
 	}
 	recovery := r.FormValue("recovery") == "1"
@@ -368,7 +397,7 @@ func (s *Server) login2FAPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.sys.FinishPendingLogin(ctx, tok, s.now()); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.backToSignIn(w, r, msgMFAExpired)
+			s.backToSignIn(w, r, http.StatusUnauthorized, msgMFAExpired)
 			return
 		}
 		s.fail(w, err)

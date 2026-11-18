@@ -66,7 +66,8 @@ var sysAllowed = map[string][]string{
 	"twofactor.go|(*Server).login2FAPost":                 {"TryPendingLogin", "PendingLogin", "UserByID", "DeletePendingLogin", "FinishPendingLogin"},
 	"twofactor.go|(*Server).login2FACancel":               {"DeletePendingLogin"},
 	"twofactor_settings.go|(*Server).twoFactorView":       {"RecoveryCodesLeft", "PendingTOTP"},
-	"twofactor_settings.go|(*Server).twoFactorSetup":      {"BeginTOTP", "MarkReauth"},
+	"twofactor_settings.go|(*Server).twoFactorSetup":      {"BeginTOTP"},
+	"twofactor_settings.go|(*Server).twoFactorCancel":     {"ClearPendingTOTP"},
 	"twofactor_settings.go|(*Server).twoFactorConfirm":    {"PendingTOTP", "EnableTOTP"},
 	"twofactor_settings.go|(*Server).twoFactorDisable":    {"DisableTOTP"},
 	"twofactor_settings.go|(*Server).twoFactorRegenerate": {"ReplaceRecoveryCodes"},
@@ -159,7 +160,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 80
+	const want = 81
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

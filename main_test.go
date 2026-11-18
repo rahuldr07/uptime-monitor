@@ -361,11 +361,16 @@ func TestResetTwoFactorCLI(t *testing.T) {
 		{Email: "a@b.co", WorkspaceName: "A", Slug: "aa"},
 		{Email: "op@b.co", WorkspaceName: "Op", Slug: "op", Operator: true},
 		{Email: "plain@b.co", WorkspaceName: "P", Slug: "pp"},
+		{Email: "pend@b.co", WorkspaceName: "Q", Slug: "qq"},
 	} {
 		in.PasswordHash, in.Verified, in.Now = "x", true, now
 		if _, _, err := st.CreateAccount(ctx, in); err != nil {
 			t.Fatal(err)
 		}
+	}
+	pu, _, _ := st.UserByEmail(ctx, "pend@b.co")
+	if _, err := st.BeginTOTP(ctx, pu.ID, "JBSWY3DPEHPK3PXP", now); err != nil {
+		t.Fatal(err)
 	}
 	var ids []int64
 	var sessions, pendings []string
@@ -400,13 +405,20 @@ func TestResetTwoFactorCLI(t *testing.T) {
 		}
 	}
 	msg, err := resetTwoFactor(cfgPath, "plain@b.co", logger)
-	if err != nil || !strings.Contains(msg, "not on") {
+	if err != nil || !strings.Contains(msg, "no setup was pending") {
 		t.Fatalf("not on: %q %v", msg, err)
+	}
+	msg, err = resetTwoFactor(cfgPath, "pend@b.co", logger)
+	if err != nil || !strings.Contains(msg, "cleared a pending two-factor setup") || !strings.Contains(msg, "signed out everywhere") || !strings.Contains(msg, "no email was sent") {
+		t.Fatalf("pending only: %q %v", msg, err)
+	}
+	if msg, _ := resetTwoFactor(cfgPath, "plain@b.co", logger); !strings.Contains(msg, "nothing changed") {
+		t.Fatalf("nothing to do: %q", msg)
 	}
 	if _, err := resetTwoFactor(cfgPath, "nobody@b.co", logger); err == nil || err.Error() != "no such user" {
 		t.Fatalf("unknown: %v", err)
 	}
-	if n := strings.Count(logs.String(), "event=mfa_reset"); n != 2 || !strings.Contains(logs.String(), "actor=cli") {
+	if n := strings.Count(logs.String(), "event=mfa_reset"); n != 3 || !strings.Contains(logs.String(), "actor=cli") {
 		t.Errorf("log: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), "JBSWY3DPEHPK3PXP") {

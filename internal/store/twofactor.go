@@ -322,3 +322,11 @@ func (s *Store) PrunePendingLogins(ctx context.Context, now time.Time) (int64, e
 	}
 	return res.RowsAffected()
 }
+
+// ClearPendingTOTP drops an unconfirmed 2FA secret and nothing else: no
+// session is touched. A missing pending secret is not an error.
+func (s *Store) ClearPendingTOTP(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET totp_pending = '', totp_pending_at = NULL WHERE id = ? AND totp_enabled_at IS NULL`, userID)
+	return err
+}

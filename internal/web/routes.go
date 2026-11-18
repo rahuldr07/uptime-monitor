@@ -85,11 +85,12 @@ func (s *Server) routeTable() []route {
 		{"POST", "/settings/security/identities/{provider}/delete", classUser, nil, s.accountIdentityDelete},
 		{"POST", "/settings/security/2fa/setup", classUser, nil, s.twoFactorSetup},
 		{"POST", "/settings/security/2fa/confirm", classUser, nil, s.twoFactorConfirm},
+		{"POST", "/settings/security/2fa/cancel", classUser, nil, s.twoFactorCancel},
 		{"POST", "/settings/security/2fa/disable", classUser, nil, s.twoFactorDisable},
 		{"POST", "/settings/security/2fa/recovery", classUser, nil, s.twoFactorRegenerate},
 		{"GET", "/settings/danger", classUser, nil, s.settingsPage(secDanger)},
 		{"POST", "/settings/danger/delete", classUser, nil, s.accountDelete},
-		// Old path: the GET redirect stays; the POST aliases ended with v1.6.0.
+		// Old path: the GET redirect stays; the POST aliases ended with v1.7.0.
 		{"GET", "/account", classUser, nil, s.accountRedirect},
 
 		{"GET", "/{$}", classWorkspace, nil, s.overview},

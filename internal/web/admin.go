@@ -542,7 +542,7 @@ func (s *Server) adminReset2FA(w http.ResponseWriter, r *http.Request, a *authCt
 	}
 	s.logger.Warn("two-factor reset", "event", "mfa_reset", "actor", a.User.ID, "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
 	if s.mail != nil {
-		subject, body := mfaResetMail(s.cfg.BaseURL)
+		subject, body := mfaResetMail(s.cfg.BaseURL, s.now(), u.Location())
 		s.mail.Notice(u.Email, subject, body)
 	}
 	s.operatorAction(r, a, "reset_2fa", u.ID)

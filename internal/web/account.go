@@ -96,7 +96,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, a *auth
 		return
 	}
 	fail := func(code int, msg string) {
-		d.Error = msg
+		d.setError(msg)
 		s.renderStatus(w, r, code, "settings", d)
 	}
 	// With mail, the first password is chosen through the emailed link: the
@@ -328,7 +328,7 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request, a *authCt
 		return
 	}
 	fail := func(code int, msg string) {
-		d.Error = msg
+		d.setError(msg)
 		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkSensitive(w, r, a, fail) {
@@ -402,7 +402,7 @@ func (s *Server) accountIdentityDelete(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	fail := func(code int, msg string) {
-		d.Error = msg
+		d.setError(msg)
 		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkSensitive(w, r, a, fail) {
@@ -440,7 +440,7 @@ func (s *Server) accountIdentityConnect(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	fail := func(code int, msg string) {
-		d.Error = msg
+		d.setError(msg)
 		s.renderStatus(w, r, code, "settings", d)
 	}
 	if !s.checkSensitive(w, r, a, fail) {

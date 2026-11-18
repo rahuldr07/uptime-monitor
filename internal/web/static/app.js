@@ -1319,12 +1319,18 @@
     var text = codesText(btn); if (!text) return;
     copyText(text, function () { toast('Recovery codes copied', 'ok'); }, function () { toast('Could not copy: the browser blocked the clipboard', 'error'); });
   }
+  function copyKey(btn) {
+    var k = $(btn.getAttribute('data-target')); if (!k) return;
+    copyText(k.textContent.replace(/\s+/g, ''), function () { toast('Key copied', 'ok'); }, function () { toast('Could not copy: the browser blocked the clipboard', 'error'); });
+  }
   function downloadCodes(btn) {
     var text = codesText(btn); if (!text) return;
-    var body = 'Uptime recovery codes\nEach code works once.\n\n' + text;
+    var host = location.host || 'uptime', d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var day = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    var body = 'Uptime recovery codes for ' + host + '\nMade ' + day + '\nEach code works once.\n\n' + text;
     try {
       var url = URL.createObjectURL(new Blob([body], { type: 'text/plain' })), a = mk('a');
-      a.href = url; a.download = 'uptime-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
+      a.href = url; a.download = 'uptime-recovery-codes-' + host.replace(/[^A-Za-z0-9.-]+/g, '-') + '-' + day + '.txt'; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     } catch (e) { toast('Could not make the file. Use Copy instead.', 'error'); }
   }
@@ -1339,6 +1345,7 @@
     else if (a === 'copy') copyField(el);
     else if (a === 'copy-codes') copyCodes(el);
     else if (a === 'download-codes') downloadCodes(el);
+    else if (a === 'copy-key') copyKey(el);
   });
   document.addEventListener('change', function (e) {
     if (e.target.hasAttribute && e.target.hasAttribute('data-autosubmit') && e.target.form) e.target.form.submit();

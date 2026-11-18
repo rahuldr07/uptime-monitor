@@ -443,8 +443,11 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}
 .dt-edge-more{min-height:28px}
 .mfa-actions{margin-top:14px}.mfa-more{margin-top:16px;justify-content:space-between;font-size:13px}
-.qr svg{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--border)}.qr{max-width:236px}.secret{letter-spacing:.06em;user-select:all}
+.qr svg{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--border)}.qr{max-width:280px}.secret{letter-spacing:.06em;user-select:all}
 .codes{list-style:none;margin:12px 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.codes li{margin:0}.codes code{display:block;font-size:14px;padding:6px 10px;text-align:center}
 #two-factor .fp{margin-top:14px}
-.in-code{width:150px}
+.in-code{width:190px;max-width:100%}
 .tf-lead{margin:6px 0 12px}.tf-after{margin:10px 0 0}.tf-key{margin:12px 0}.tf-act{margin-top:14px}.tf-first{margin:6px 0 0}.tf-admin-note{margin:0 0 10px}
+.field-err{color:var(--bad-text);font-size:12px;line-height:1.4;margin-top:4px}.row-err{flex-basis:100%;margin:0}
+.tf-steps{margin:6px 0 12px;padding-left:20px;color:var(--muted)}.tf-steps li{margin:2px 0}.tf-key .sm{vertical-align:middle}
+.mfa-more a{text-decoration:underline}#codes-alert:focus{outline:2px solid var(--a);outline-offset:2px}

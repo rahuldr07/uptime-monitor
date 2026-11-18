@@ -94,7 +94,8 @@ func (s *Store) createSession(ctx context.Context, userID int64, now time.Time, 
 
 // SessionAuth resolves a raw session token to its user and workspace. A
 // missing, expired or idle session, or a disabled or unverified user, is
-// ErrNotFound. last_seen_at is refreshed at most every sessionTouchEvery.
+// ErrNotFound. So is a session without mfa_at of a user who has two-factor on:
+// a sign-in that was in flight when 2FA was turned on never authenticates. last_seen_at is refreshed at most every sessionTouchEvery.
 func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Auth, error) {
 	hash := hashSecret(raw)
 	var a Auth
@@ -109,6 +110,7 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 		 JOIN workspaces w ON w.id = m.workspace_id
 		 WHERE s.token_hash = ? AND s.expires_at > ? AND s.last_seen_at >= ?
 			AND u.disabled_at IS NULL AND u.verified_at IS NOT NULL
+			AND (u.totp_enabled_at IS NULL OR s.mfa_at IS NOT NULL)
 		 ORDER BY w.id LIMIT 1`,
 		hash, now.UnixMilli(), now.Add(-SessionIdle).UnixMilli()),
 		&a.Workspace.ID, &a.Workspace.Name, &a.Workspace.Slug, &wsCreated, &lastSeen, &authAt, &mfaAt, &a.HasPassword)

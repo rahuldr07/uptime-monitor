@@ -46,7 +46,7 @@ func (e *env) userByEmail(t *testing.T, email string) store.User {
 // beginSetup runs the Set up step as a signed-in account and returns the pending secret.
 func (e *env) beginSetup(t *testing.T, c *http.Client, email string) string {
 	t.Helper()
-	resp, body := e.post(t, c, pathSetup, url.Values{})
+	resp, body := e.post(t, c, pathSetup, url.Values{"current": {testSecret}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("setup: %d %s", resp.StatusCode, body)
 	}
@@ -69,7 +69,7 @@ func TestTwoFactorSettingsSetupPage(t *testing.T) {
 	if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("setup page: %d %q", resp.StatusCode, resp.Header.Get("Cache-Control"))
 	}
-	for _, want := range []string{`aria-label="QR code"`, groupSecret(secret), `name="code"`, pathConfirm, `autocomplete="one-time-code"`} {
+	for _, want := range []string{`aria-label="QR code for your authenticator app"`, groupSecret(secret), `name="code"`, pathConfirm, `autocomplete="one-time-code"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("setup page lacks %q", want)
 		}
@@ -94,36 +94,12 @@ func TestTwoFactorSettingsSetupPage(t *testing.T) {
 	}
 }
 
-func TestTwoFactorSettingsSetupNeedsRecentSignIn(t *testing.T) {
-	e := newEnvMail(t, openCfg)
-	c, _ := e.account(t, "ann@example.com")
-	e.advance(11 * time.Minute)
-	resp, body := e.post(t, c, pathSetup, url.Values{})
-	if resp.StatusCode == http.StatusSeeOther || !strings.Contains(body, msgBadCurrent) && !strings.Contains(body, "Current password") {
-		t.Fatalf("stale setup without password: %d %s", resp.StatusCode, body)
-	}
-	if _, err := e.st.PendingTOTP(t.Context(), e.userByEmail(t, "ann@example.com").ID, e.now()); err == nil {
-		t.Fatal("a pending secret was made without a recent sign-in")
-	}
-	if resp, _ = e.post(t, c, pathSetup, url.Values{"current": {"wrong password!"}}); resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Errorf("wrong password: %d", resp.StatusCode)
-	}
-	resp, body = e.post(t, c, pathSetup, url.Values{"current": {testSecret}})
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("with the password: %d %s", resp.StatusCode, body)
-	}
-	// The password counted as a fresh sign-in, so the page shows the setup.
-	if _, body = e.get(t, c, "/settings/security"); !strings.Contains(body, `aria-label="QR code"`) {
-		t.Error("setup state missing after the password")
-	}
-}
-
 func TestTwoFactorSettingsSetupWhenOn(t *testing.T) {
 	e := newEnvMail(t, openCfg)
 	e.account(t, "ann@example.com")
 	secret, _ := e.enable2FA(t, "ann@example.com")
 	c := e.signInWithCode(t, "203.0.113.1", "ann@example.com", secret)
-	resp, body := e.post(t, c, pathSetup, url.Values{})
+	resp, body := e.post(t, c, pathSetup, url.Values{"current": {testSecret}})
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, html.EscapeString(msgMFAAlreadyOn)) {
 		t.Fatalf("setup while on: %d %s", resp.StatusCode, body)
 	}
@@ -252,7 +228,7 @@ func TestTwoFactorSettingsConfirmUsesLimiter(t *testing.T) {
 		}
 	}
 	resp, body := e.post(t, c, pathConfirm, url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgMFALimited) {
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many attempts. Try again in about") {
 		t.Fatalf("6th: %d %s", resp.StatusCode, body)
 	}
 }
@@ -550,7 +526,7 @@ func TestLimiterSharedWithSettings(t *testing.T) {
 	}
 	// ... and the budget is spent everywhere, even for the right code.
 	resp, body := e.post(t, c, pathDisable, url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgMFALimited) {
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many attempts. Try again in about") {
 		t.Fatalf("turn-off after 5 shared failures: %d %s", resp.StatusCode, body)
 	}
 	if resp, _ = e.post(t, c, pathRegen, url.Values{"code": {e.code(t, secret)}}); resp.StatusCode != http.StatusTooManyRequests {

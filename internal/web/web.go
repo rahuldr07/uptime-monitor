@@ -255,6 +255,13 @@ func New(o Options) (*Server, error) {
 			return strconv.FormatFloat(round2(st.UptimePercent()), 'f', -1, 64)
 		},
 		"asset": assetURL,
+		// codeerr is the code error of the sensitive form that was just posted to path.
+		"codeerr": func(d settingsData, path string) string {
+			if d.Posted == path {
+				return d.CodeError
+			}
+			return ""
+		},
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(kv); i += 2 {

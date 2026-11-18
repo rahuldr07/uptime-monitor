@@ -55,42 +55,51 @@ const (
 	msgRecoveryNewSubject  = "Your recovery codes were replaced"
 )
 
-func mfaOnMail(base string) (subject, body string) {
-	return msgMFAOnSubject,
-		fmt.Sprintf("Two-factor authentication was turned on. Your other devices were signed out.\n\nIf this was not you, reset your password and turn two-factor authentication off:\n\n%s/forgot\n%s/settings/security\n", base, base)
-}
-
-func mfaOffMail(base string) (subject, body string) {
-	return msgMFAOffSubject,
-		fmt.Sprintf("Two-factor authentication was turned off. Your other devices were signed out.\n\nIf this was not you, reset your password and turn it on again:\n\n%s/forgot\n", base)
-}
-
-func mfaResetMail(base string) (subject, body string) {
-	return msgMFAResetSubject,
-		fmt.Sprintf("An administrator turned off two-factor authentication on your account. You were signed out everywhere.\n\nSign in with your password, then turn it on again under Security in your Settings:\n\n%s/login\n", base)
-}
-
-func recoveryNewMail(base string) (subject, body string) {
-	return msgRecoveryNewSubject,
-		fmt.Sprintf("New recovery codes were created and the old ones stopped working. Your other devices were signed out.\n\nIf this was not you, reset your password:\n\n%s/forgot\n", base)
-}
+// stamp ends a notice with when it happened, in the owner's zone.
+func stamp(at time.Time, loc *time.Location) string { return "\nWhen: " + notify.FormatTime(at, loc) + "\n" }
 
 // mfaLimitedMail warns the owner that codes were guessed. method is how the
-// attacker got as far as the code: "password", "google" or "github".
-func mfaLimitedMail(base, method string) (subject, body string) {
-	who := "Someone entered your password but not your two-factor code."
-	if method == "google" || method == "github" {
-		who = "Someone signed in with your " + providerLabel(method) + " account but did not enter your two-factor code correctly."
+// guesser got as far as the code: "password", "google" or "github"; "" is
+// someone already signed in.
+func mfaLimitedMail(base, method string, at time.Time, loc *time.Location) (subject, body string) {
+	var text string
+	switch method {
+	case "google", "github":
+		p := providerLabel(method)
+		text = fmt.Sprintf("Someone signed in with your %s account but did not enter your two-factor code correctly. If it wasn't you, secure your %s account, then disconnect it under Sign-in methods.\n\n%s/settings/security\n", p, p, base)
+	case "":
+		text = fmt.Sprintf("Someone signed in to your account entered a wrong two-factor code too many times. If it wasn't you, sign out everywhere and change your password.\n\n%s/settings/security\n%s/forgot\n", base, base)
+	default:
+		text = fmt.Sprintf("Someone entered your password but not your two-factor code. If it wasn't you, change your password.\n\n%s/forgot\n", base)
 	}
-	return msgMFALimitedSubject,
-		fmt.Sprintf("%s If it wasn't you, change your password:\n\n%s/forgot\n", who, base)
+	return msgMFALimitedSubject, text + stamp(at, loc)
 }
 
-func recoveryUsedMail(base string, left int, signIn bool) (subject, body string) {
+func recoveryUsedMail(base string, left int, signIn bool, at time.Time, loc *time.Location) (subject, body string) {
 	what := "A recovery code was used on your account."
 	if signIn {
 		what = "A recovery code was used to sign in."
 	}
 	return msgRecoveryUsedSubject,
-		fmt.Sprintf("%s %d left.\n\nIf this was not you, change your password and turn two-factor authentication off and on again under Security in your Settings:\n\n%s/settings/security\n", what, left, base)
+		fmt.Sprintf("%s %d left.\n\nIf this wasn't you, change your password, then make new recovery codes again under Security in your Settings:\n\n%s/forgot\n%s/settings/security\n", what, left, base, base) + stamp(at, loc)
+}
+
+func mfaOnMail(base string, at time.Time, loc *time.Location) (subject, body string) {
+	return msgMFAOnSubject,
+		fmt.Sprintf("Two-factor authentication was turned on. Your other devices were signed out.\n\nIf this wasn't you, reset your password and ask this server's administrator to reset two-factor authentication.\n\n%s/forgot\n", base) + stamp(at, loc)
+}
+
+func mfaOffMail(base string, at time.Time, loc *time.Location) (subject, body string) {
+	return msgMFAOffSubject,
+		fmt.Sprintf("Two-factor authentication was turned off. Your other devices were signed out.\n\nIf this wasn't you, reset your password and turn it on again:\n\n%s/forgot\n", base) + stamp(at, loc)
+}
+
+func mfaResetMail(base string, at time.Time, loc *time.Location) (subject, body string) {
+	return msgMFAResetSubject,
+		fmt.Sprintf("An administrator turned off two-factor authentication on your account. Sign in, then turn it on again under Security in your Settings. If you didn't ask for this, contact the administrator.\n\n%s/login\n", base) + stamp(at, loc)
+}
+
+func recoveryNewMail(base string, at time.Time, loc *time.Location) (subject, body string) {
+	return msgRecoveryNewSubject,
+		fmt.Sprintf("New recovery codes were created and the old ones stopped working. Your other devices were signed out.\n\nIf this wasn't you, reset your password, sign in, then make new recovery codes again:\n\n%s/forgot\n", base) + stamp(at, loc)
 }

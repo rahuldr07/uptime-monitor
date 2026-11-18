@@ -213,20 +213,31 @@ CREATE INDEX idx_pending_logins_user ON pending_logins(user_id);
 
 Security → Two-factor card: "Off" with **Set up**.
 
-1. **Set up** needs a recent sign-in (10 minutes, §9 rules for accounts
-   without 2FA). It creates a pending secret (`totp_pending`, valid 15
+1. **Set up** is a sensitive step: an account with a password types its
+   current password (every time, however fresh the session); an account
+   without one needs a recent provider sign-in (10 minutes). Confirming needs
+   only the pending secret, so its 15 minutes are not cut to the 10 of a recent
+   sign-in. It creates a pending secret (`totp_pending`, valid 15
    minutes); reloading the page shows the same pending secret until it
    expires. The page shows:
    - a QR code of the otpauth URI (inline SVG, from `internal/qr`);
    - the secret in groups of four for typing in by hand;
-   - a code field.
+   - a code field, and **Cancel**, which drops the pending secret without
+     touching any session.
+
+   The page lists three steps (scan or type the key; enter the code; save the
+   recovery codes), offers **Copy key**, and shows the QR code with the label
+   "QR code for your authenticator app". Errors appear inside the card, next to
+   the field.
 2. A correct code (through the shared limiter, §8.4) moves the pending secret
    to `totp_secret`, sets `totp_enabled_at` and `totp_last_step`, creates 10
    recovery codes, sets `mfa_at` on the current session, and **signs out every
    other session**. The codes are shown once with **Copy** and **Download**
    (the `.txt` file is built in the browser by external JavaScript from the
    codes on the page; the server keeps only hashes). The page says they will
-   not be shown again. Setup and codes pages send `Cache-Control: no-store`.
+   not be shown again. The codes page puts the Two-factor card first, focuses
+   its warning, and ends with **I've saved them**; the downloaded file names the
+   host and the date. Setup and codes pages send `Cache-Control: no-store`.
 3. A notice email: "Two-factor authentication was turned on."
 
 The Security card shows how many recovery codes remain, with a warning at 2
@@ -245,6 +256,12 @@ called anywhere else. The current call sites that move behind it:
 sign-up path), `reset.go`, `verify.go`, `signup.go`, `setup.go`. Sign-up and
 setup always create new accounts, which have no 2FA, but go through the
 helper anyway.
+
+Only password, Google and GitHub may wait for a code; for an account with 2FA
+on, any other method fails closed (no session, no pending row, back to
+sign-in). Because sessions are also checked at use, a session without `mfa_at`
+never authenticates an account that has 2FA on, so a sign-in that was in flight
+when 2FA was turned on cannot survive the revoke.
 
 The browser's previous session is deleted, and the device cookie is set, only
 when a session is actually created (after the code step for 2FA accounts).
@@ -273,10 +290,12 @@ Today both happen at the first step.
    recovery code works the same, and sends "A recovery code was used to sign
    in. N left."
 5. States: wrong code ("That code didn't work. Check the time on your phone
-   and try again."); expired or used row ("That took too long. Sign in
-   again."); limit reached (§8.4 message).
-6. `/password` and `/login` stay in `safeNext`'s deny list; `next` is checked
-   when the row is created.
+   and try again."; for a recovery code "That recovery code didn't work. Each
+   one works once."); expired or used row ("That took too long. Sign in
+   again.", shown as an error on the sign-in page, not a fading message);
+   limit reached (§8.4 message).
+6. `/login` stays in `safeNext`'s deny list; `next` is checked when the row is
+   created.
 
 ### 8.3 Signing out during the pending step
 
@@ -294,8 +313,9 @@ on success. The limiter does not consult the device cookie.
 - The first time either limit is reached in a day, the user gets a notice:
   "Someone entered your password but not your two-factor code. If it wasn't
   you, change your password." (Wording adapts for a Google/GitHub sign-in.)
-- Message on the page: "Too many attempts. Try again later." with the wait
-  in minutes.
+- Message on the page: "Too many attempts. Try again in about N minutes."
+- The owner is told when a failure fills a window, not only when a further
+  guess is refused, so a guesser who stops at the cap is still noticed.
 - With three codes valid at once, 20 guesses a day gives an attacker who
   knows the password about a 2% chance over a year, and the owner is warned
   on the first day.
@@ -341,7 +361,8 @@ Forms for these show a code field when `mfa_at` is older than 10 minutes.
 
 ## 10. Turning 2FA off and recovery
 
-- **Turn off**: needs a fresh code or a recovery code. Clears the secret,
+- **Turn off**: needs a code or a recovery code typed for this action, even
+  when the session was verified a moment ago. Clears the secret,
   pending secret and all recovery codes (keeps `totp_last_step`), signs out
   every other session, and sends a notice.
 - **Lost phone**: sign in with a recovery code, then set up 2FA again.
@@ -353,14 +374,17 @@ Forms for these show a code field when `mfa_at` is older than 10 minutes.
   **Reset 2FA** action behind a confirm dialog, for non-operator accounts
   only. It is refused for operator accounts, the acting operator included.
 - The acting operator must have 2FA on and a recent code (`mfa_at` within 10
-  minutes); otherwise the action is hidden with a note "Turn on two-factor
-  authentication to reset it for others."
+  minutes). An operator without 2FA sees the action hidden with the note "Turn
+  on two-factor authentication to reset it for others." One whose code is older
+  than 10 minutes types a fresh one next to the action.
 - Reset clears the secret, pending secret and recovery codes, signs the user
   out everywhere, deletes their pending sign-ins, and emails them: "An
   administrator turned off two-factor authentication on your account."
 - Command line, for operators (including a locked-out operator):
   `uptime-monitor -reset-2fa person@example.com`. It does the same as the
-  panel, prints what it did and exits, like `-reset-password`.
+  panel except that it sends no email (the running server owns the mail queue),
+  says so, prints what it did (including "cleared a pending setup" when only a
+  setup was pending) and exits, like `-reset-password`.
 - All 2FA notices use the notice path (`Mailer.Notice`, charged only to the
   instance budget, D-126), so `/forgot` traffic cannot suppress them.
 - Log events: `mfa_enabled`, `mfa_disabled`, `mfa_failed`, `mfa_limited`,

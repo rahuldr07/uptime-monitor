@@ -3,6 +3,7 @@ package web
 import (
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/rahuldr07/uptime-monitor/internal/store"
 )
@@ -51,6 +52,24 @@ type settingsData struct {
 	TFLeft     int
 	TFLow      bool // two or fewer recovery codes left
 	TFNote     string
+	TFError    string // an error of the Two-factor card, shown inside it
+	CodeError  string // a wrong, missing or limited code on a sensitive form, shown next to its field
+	Posted     string // the path just POSTed, so only that form shows CodeError
+}
+
+// setError routes an error: a problem with the code goes next to the code
+// field, anything else to the alert at the top of the page.
+func (d *settingsData) setError(msg string) {
+	if isCodeMsg(msg) {
+		d.CodeError = msg
+		return
+	}
+	d.Error = msg
+}
+
+// isCodeMsg says whether msg is about the two-factor code rather than the form.
+func isCodeMsg(msg string) bool {
+	return msg == msgCodeRequired || msg == msgMFAWrong || msg == msgMFAWrongRecovery || strings.HasPrefix(msg, limitedPrefix)
 }
 
 const (
@@ -97,6 +116,9 @@ func (s *Server) settingsView(r *http.Request, a *authCtx, section string) (sett
 	d.Recent = s.recentVerified(a)
 	d.NeedReauth, d.Reauth = s.reauthState(a, ids, "/settings/"+section)
 	d.TwoFactor, d.AuthRecent = a.twoFactor(), s.recentAuth(a)
+	if r.Method == http.MethodPost {
+		d.Posted = r.URL.Path
+	}
 	if d.TwoFactor {
 		// A provider sign-in cannot satisfy the code, so no "sign in again" links:
 		// the forms ask for the code itself.

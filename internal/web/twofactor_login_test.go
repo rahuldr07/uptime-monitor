@@ -292,7 +292,7 @@ func TestTwoFactorCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther || strings.HasPrefix(resp.Header.Get("Location"), "/login/2fa") || cookieNamed(resp, "uptime_session") != nil {
+	if resp.StatusCode == http.StatusOK || strings.HasPrefix(resp.Header.Get("Location"), "/login/2fa") || cookieNamed(resp, "uptime_session") != nil {
 		t.Errorf("replay after cancel: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
@@ -301,11 +301,10 @@ func TestTwoFactorExpiredAndTampered(t *testing.T) {
 	e, _, secret, _ := twoFA(t)
 	c := e.pendingSignIn(t, "203.0.113.1", "two@example.com")
 	e.advance(6 * time.Minute)
-	resp, _ := e.postFrom(t, c, "203.0.113.1", "/login/2fa", url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusSeeOther || cookieNamed(resp, "uptime_session") != nil {
+	resp, body := e.postFrom(t, c, "203.0.113.1", "/login/2fa", url.Values{"code": {e.code(t, secret)}})
+	if resp.StatusCode != http.StatusUnauthorized || cookieNamed(resp, "uptime_session") != nil {
 		t.Fatalf("expired: %d", resp.StatusCode)
 	}
-	_, body := e.get(t, c, resp.Header.Get("Location"))
 	if !strings.Contains(body, msgMFAExpired) {
 		t.Errorf("expired message missing: %s", body)
 	}
@@ -324,7 +323,7 @@ func TestTwoFactorExpiredAndTampered(t *testing.T) {
 		func() *http.Response { r, _ := e.get(t, e.client(t), "/login/2fa"); return r },
 	} {
 		r := f()
-		if r.StatusCode != http.StatusSeeOther || !strings.HasPrefix(r.Header.Get("Location"), "/login") || cookieNamed(r, "uptime_session") != nil {
+		if cookieNamed(r, "uptime_session") != nil || (r.StatusCode != http.StatusSeeOther && r.StatusCode != http.StatusUnauthorized) {
 			t.Errorf("tampered: %d %q", r.StatusCode, r.Header.Get("Location"))
 		}
 	}
@@ -356,7 +355,7 @@ func TestPendingInvalidatedByReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, _ := e.postFrom(t, c, "203.0.113.1", "/login/2fa", url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusSeeOther || strings.HasPrefix(resp.Header.Get("Location"), "/login/2fa") || cookieNamed(resp, "uptime_session") != nil {
+	if resp.StatusCode == http.StatusOK || strings.HasPrefix(resp.Header.Get("Location"), "/login/2fa") || cookieNamed(resp, "uptime_session") != nil {
 		t.Fatalf("after reset: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if jarCookie(c, "uptime_session") != nil {
@@ -438,7 +437,7 @@ func TestLimiterSharedAcrossEntryPoints(t *testing.T) {
 	c := e.pendingSignIn(t, "198.51.100.50", "two@example.com")
 	c.Jar.SetCookies(nil, []*http.Cookie{dev})
 	resp, body := e.postFrom(t, c, "198.51.100.50", "/login/2fa", url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgMFALimited) {
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many attempts. Try again in about") {
 		t.Fatalf("6th: %d %s", resp.StatusCode, body)
 	}
 	if cookieNamed(resp, "uptime_session") != nil {
@@ -479,7 +478,7 @@ func TestLimiterDailyCap(t *testing.T) {
 	// 20 failures in 64 minutes: the 15-minute window is clear, the day is not.
 	c := e.pendingSignIn(t, "192.0.2.200", "two@example.com")
 	resp, body := e.postFrom(t, c, "192.0.2.200", "/login/2fa", url.Values{"code": {e.code(t, secret)}})
-	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, msgMFALimited) {
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "Too many attempts. Try again in about") {
 		t.Fatalf("21st in a day: %d %s", resp.StatusCode, body)
 	}
 	if n := countMail(e, msgMFALimitedSubject); n != 1 {

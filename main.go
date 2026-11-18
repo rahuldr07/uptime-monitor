@@ -400,11 +400,17 @@ func resetTwoFactor(cfgPath, email string, logger *slog.Logger) (string, error) 
 		return "", err
 	}
 	if u.TOTPEnabledAt == nil {
-		// A half-finished setup is cleared too, but it is not "on".
-		if err := st.DisableTOTP(ctx, u.ID, ""); err != nil && !errors.Is(err, store.ErrNotFound) {
+		// Only a half-finished setup can exist; it is cleared, and the user is
+		// signed out everywhere like any other reset.
+		err := st.DisableTOTP(ctx, u.ID, "")
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Sprintf("two-factor authentication is not on for %s and no setup was pending; nothing changed", u.Email), nil
+		}
+		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("two-factor authentication is not on for %s; nothing changed", u.Email), nil
+		logger.Warn("two-factor reset", "event", "mfa_reset", "actor", "cli", "user_id", u.ID, "pending_only", true)
+		return fmt.Sprintf("cleared a pending two-factor setup for %s; signed out everywhere; no email was sent", u.Email), nil
 	}
 	if err := st.DisableTOTP(ctx, u.ID, ""); err != nil {
 		return "", err
