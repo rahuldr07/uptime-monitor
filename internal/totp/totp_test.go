@@ -100,6 +100,9 @@ func TestRecoveryCodes(t *testing.T) {
 	if got := NormalizeRecovery("ABCD efgh-IJKL mnop"); got != "abcdefghijklmnop" {
 		t.Errorf("NormalizeRecovery = %q", got)
 	}
+	if got := NormalizeRecovery("ab\u00a0cd\u2013ef\u2014gh\u3000ij"); got != "abcdefghij" {
+		t.Errorf("NBSP/dash normalise = %q", got)
+	}
 	h := HashRecovery("abcd-efgh-ijkl-mnop")
 	if h != HashRecovery("ABCD EFGH IJKL MNOP") || len(h) != 64 || h == HashRecovery("abcd-efgh-ijkl-mnoq") {
 		t.Errorf("hash %q", h)

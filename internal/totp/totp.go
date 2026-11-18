@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -96,11 +97,11 @@ func NewRecoveryCodes(n int) ([]string, error) {
 	return out, nil
 }
 
-// NormalizeRecovery lower-cases in and drops spaces and dashes.
+// NormalizeRecovery lower-cases in and drops white space and dashes of any
+// kind (including no-break spaces and en or em dashes from pasted text).
 func NormalizeRecovery(in string) string {
 	return strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '-', '\t', '\n', '\r':
+		if unicode.IsSpace(r) || unicode.Is(unicode.Pd, r) {
 			return -1
 		}
 		return r
