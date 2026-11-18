@@ -120,13 +120,56 @@ on narrow ones):
 | Page | Path | Contents |
 | --- | --- | --- |
 | Profile | `/settings/profile` | email, time zone |
-| Security | `/settings/security` | password, sign-in methods (Google, GitHub), sign out everywhere |
+| Security | `/settings/security` | password, two-factor authentication, sign-in methods (Google, GitHub), sign out everywhere |
 | Notifications | `/settings/notifications` | alert channels (Telegram, Slack, email), as the Alert channels page was |
 | Danger zone | `/settings/danger` | delete account (operators are redirected to Profile) |
 
 `/settings` goes to Profile. The old `GET /account` and `GET /alerts` answer
 302 to Security and Notifications. Their POST paths (`/account/...`,
 `/alerts`, `/alerts/test`) were removed in 1.7.0.
+
+### Two-factor authentication
+
+Optional, per account, with any authenticator app (TOTP: 6 digits, 30 seconds).
+Nobody is forced to turn it on.
+
+- **Turn on.** Settings → Security → Two-factor → **Set up**. An account with a
+  password types its current password; an account without one needs a Google
+  or GitHub sign-in within the last 10 minutes. Scan the QR code (or type the
+  key), enter the code the app shows, and save the 10 recovery codes. Turning it
+  on signs out your other devices and sends a notice email.
+- **Sign in.** After the password, Google or GitHub, a page asks for the code
+  (`/login/2fa`). No session exists until it is right: a sign-in left waiting
+  for 5 minutes, or one whose 2FA was turned off or reset meanwhile, never
+  completes. Password reset and email verification links never sign in an
+  account that has 2FA on; sign in afterwards.
+- **Recovery codes.** Ten single-use codes, shown once with **Copy** and
+  **Download** (the file is made in your browser). **Use a recovery code** on the
+  sign-in page works without JavaScript, and each use sends an email saying how
+  many are left. Settings shows how many remain and warns at 2 or fewer; **Make
+  new recovery codes** replaces all ten.
+- **Sensitive actions** need a code typed in the last 10 minutes (a password or
+  provider sign-in alone does not count): changing the password, connecting or
+  disconnecting Google or GitHub, and deleting the account. The form shows a
+  code field when needed. **Turn off** and **Make new recovery codes** always
+  need a code (or a recovery code) typed for that action, and both sign out
+  your other devices.
+- **Wrong codes** share one budget per account across every place a code is
+  asked: 5 failures per 15 minutes and 20 per day, then "Too many attempts".
+  The owner gets one email a day when a limit is reached. This can lock someone
+  who knows your password out of your account for up to a day, but not you:
+  change your password.
+- **Lost phone and recovery codes.** An operator resets it: Admin → Users →
+  **Reset 2FA** (non-operator accounts only; the operator needs 2FA on and a
+  code typed in the last 10 minutes). The user is signed out everywhere and
+  emailed. On the server, `uptime-monitor -reset-2fa person@example.com` does
+  the same for any account, an operator's included, for a locked-out operator;
+  it sends **no email** and says so.
+
+The TOTP secret is stored **unencrypted** in the database, like the saved SMTP
+passwords, and it is in every backup. Anyone with a copy of the database or a
+backup can generate codes, so keep both private (they are created with mode
+`0600`) and treat backups like secrets.
 
 ### Sign-up and invites
 
@@ -451,8 +494,11 @@ email, or by monitored host (which matches anywhere in the URL). Actions:
 - **Reset link** is for enabled, non-operator users. With `mail` it emails a
   reset link. Without `mail` the link is shown once on the page, and is not
   stored in a flash, a URL or a log.
+- **Reset 2FA** (users with a 2FA badge) turns off their two-factor
+  authentication, signs them out everywhere, deletes their pending sign-ins and
+  emails them. You need 2FA on yourself and a code typed in the last 10 minutes.
 
-Operators cannot be disabled, deleted or sent a reset link from the panel.
+Operators cannot be disabled, deleted, sent a reset link or have their 2FA reset from the panel (use `-reset-2fa` on the server).
 Disabled users cannot be sent a reset link either. Disable and delete wait for
 in-flight alerts in the affected workspaces to finish, which can take about two
 minutes, so the page may be slow. Those actions also hold a lock shared by the
@@ -505,6 +551,19 @@ account, including one created from an invite issued earlier under `closed`,
 could then reach your internal network.
 
 ## Upgrading
+
+From 1.6.0 (schema v5, two-factor authentication):
+
+- **Schema v5.** The first start with this version adds the 2FA columns,
+  `recovery_codes`, `pending_logins` and `sessions.mfa_at`. When the database
+  already has data, it first writes `<db>.pre-v5-<timestamp>.bak` (mode `0600`);
+  keep it until you have checked the upgrade, then delete it. Nobody has 2FA on
+  after the upgrade.
+- **Removed paths.** The old POST aliases `/account/...`, `/alerts` and
+  `/alerts/test` are gone (404, or 405 for `/alerts`); a Settings form left open
+  in a browser tab during the upgrade must be reloaded. `GET /account` and
+  `GET /alerts` still redirect.
+- **Backups.** Backups now hold 2FA secrets; see Two-factor authentication.
 
 From 1.4.0 (schema v4, time zones):
 
@@ -626,6 +685,7 @@ Command-line flags:
 | `-setup-link` | during first-run setup, print a fresh setup link (replacing the previous one) and exit; fails once setup is complete |
 | `-invite [email]` | print a one-time sign-up link, valid for 7 days, optionally bound to that email (which must come last), and exit; fails before setup is complete |
 | `-reset-password email` | print a password reset link, valid for 1 hour, for that user and exit; fails for unknown and disabled users |
+| `-reset-2fa email` | turn off two-factor authentication for that account (operators too), delete its recovery codes, sign it out everywhere and exit; sends no email |
 | `-enable-user email` | re-enable a disabled account (operators too) and exit; restart the server afterwards so its monitors resume |
 | `-version` | print the version and exit |
 
@@ -710,6 +770,7 @@ go vet ./...
 ## Notes
 
 - SQLite runs in WAL mode through a pure-Go driver, so the binary cross-compiles without cgo.
+- Two-factor secrets are stored in the database in plain text too, and are in every backup; see Two-factor authentication.
 - Secrets saved from the Alerts page are stored in the database in plain text. The database (and backups) are created with mode `0600`; keep them private. Saved secrets are never sent back to the browser: the Alerts page shows them as "Saved", a blank field keeps the stored value, and "Remove these settings" deletes a channel.
 - Sessions are random tokens; only a hash is stored in the database, so a restart does not sign anyone out and revoking a session takes effect immediately.
 - State-changing requests are rejected when the browser reports a different origin, so the UI is safe from cross-site form posts. Request bodies are capped at 1 MB.

@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.0] - 2026-11-18
+
+### Added
+
+- Two-factor authentication (TOTP, any authenticator app), optional per account. Settings → Security → Two-factor: set up with a QR code or typed key, 10 single-use recovery codes shown once (Copy, Download), a count of codes left with a warning at 2 or fewer, **Make new recovery codes** and **Turn off**. Turning it on, off or replacing the codes signs out the other devices and sends a notice email.
+- Every sign-in method (password, Google, GitHub) asks for the code at `/login/2fa` before any session or device cookie exists. A recovery code works there too, without JavaScript, and each use sends an email with the number left. The browser's previous session is kept until the code succeeds.
+- Changing the password, connecting or disconnecting Google or GitHub, and deleting the account need a code typed in the last 10 minutes for an account with 2FA on; a password or provider sign-in alone no longer counts. Turn off and new recovery codes always need a typed code.
+- One per-account limiter for every code check: 5 failures per 15 minutes and 20 per day, refunded on success, with an email to the owner when a limit is reached.
+- Operators can reset a user's 2FA (Admin → Users → Reset 2FA; the operator needs 2FA on and a recent code) and, from the command line, any account's with `-reset-2fa email` (no email is sent from the command line). Admin → Users shows a 2FA badge.
+- Schema v5 (`users` 2FA columns, `recovery_codes`, `pending_logins`, `sessions.mfa_at`). A `<db>.pre-v5-<timestamp>.bak` is written first when the database has data.
+
+### Changed
+
+- Password reset and email verification links no longer sign in an account that has 2FA on: they go to the sign-in page ("Password changed. Sign in to continue."). Accounts without 2FA are unchanged.
+- Every session is created in one place, and a session without a verified code never authenticates an account that has 2FA on, even if it was created while 2FA was being turned on.
+- Sign-up, setup, reset and verify now also delete the browser's previous session and set the device cookie when they create a session, as password and provider sign-in already did.
+- The Security page's "It works for 1 hour" is no longer said twice after an emailed link.
+
+### Removed
+
+- The old POST aliases `/account/timezone`, `/account/tz-detected`, `/account/password`, `/account/signout-all`, `/account/delete`, `/account/identities/...`, `/alerts` and `/alerts/test`. `GET /account` and `GET /alerts` still redirect (302).
+
+### Security
+
+- 2FA secrets are stored unencrypted in the database and in every backup, like the saved SMTP passwords. Protect backups accordingly.
+
 ## [1.6.0] - 2026-11-17
 
 ### Added
