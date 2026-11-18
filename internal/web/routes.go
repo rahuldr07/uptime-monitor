@@ -89,15 +89,8 @@ func (s *Server) routeTable() []route {
 		{"POST", "/settings/security/2fa/recovery", classUser, nil, s.twoFactorRegenerate},
 		{"GET", "/settings/danger", classUser, nil, s.settingsPage(secDanger)},
 		{"POST", "/settings/danger/delete", classUser, nil, s.accountDelete},
-		// Old paths: GET redirects, POST stays an alias for one release (forms open in a tab during the upgrade).
+		// Old path: the GET redirect stays; the POST aliases ended with v1.6.0.
 		{"GET", "/account", classUser, nil, s.accountRedirect},
-		{"POST", "/account/timezone", classUser, nil, s.accountTimeZone},
-		{"POST", "/account/tz-detected", classUser, nil, s.accountDetectedZone},
-		{"POST", "/account/password", classUser, nil, s.accountPassword},
-		{"POST", "/account/signout-all", classUser, nil, s.accountSignOutAll},
-		{"POST", "/account/delete", classUser, nil, s.accountDelete},
-		{"POST", "/account/identities/{provider}/connect", classUser, nil, s.accountIdentityConnect},
-		{"POST", "/account/identities/{provider}/delete", classUser, nil, s.accountIdentityDelete},
 
 		{"GET", "/{$}", classWorkspace, nil, s.overview},
 		{"GET", "/events", classWorkspace, nil, s.events},
@@ -117,8 +110,6 @@ func (s *Server) routeTable() []route {
 		{"POST", "/settings/notifications", classWorkspace, nil, s.alertsSave},
 		{"POST", "/settings/notifications/test", classWorkspace, nil, s.alertsTest},
 		{"GET", "/alerts", classWorkspace, nil, s.alertsRedirect},
-		{"POST", "/alerts", classWorkspace, nil, s.alertsSave},
-		{"POST", "/alerts/test", classWorkspace, nil, s.alertsTest},
 		{"POST", "/status/settings", classWorkspace, nil, s.statusSettings},
 		{"GET", "/maintenance", classWorkspace, nil, s.maintenancePage},
 		{"POST", "/maintenance", classWorkspace, nil, s.maintenanceCreate},
@@ -137,6 +128,7 @@ func (s *Server) routeTable() []route {
 		{"POST", "/admin/users/{id}/delete", classOperator, nil, s.adminDelete},
 		{"POST", "/admin/users/{id}/resend", classOperator, nil, s.adminResend},
 		{"POST", "/admin/users/{id}/reset-link", classOperator, nil, s.adminResetLink},
+		{"POST", "/admin/users/{id}/reset-2fa", classOperator, nil, s.adminReset2FA},
 		{"GET", "/admin/invites", classOperator, nil, s.adminInvites},
 		{"POST", "/admin/invites", classOperator, nil, s.adminInviteCreate},
 		{"POST", "/admin/invites/revoke", classOperator, nil, s.adminInviteRevoke},

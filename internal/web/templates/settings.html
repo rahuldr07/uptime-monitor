@@ -38,7 +38,7 @@
     <p class="muted small" style="margin:6px 0 10px">You sign in with {{.SignInLabel}} and have no password. Set one to also sign in with your email. We'll email a link to {{.UserEmail}} to confirm it's you.</p>
     {{if .LinkSent}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div>Check {{.UserEmail}} for a link to set your password. It works for 1 hour.</div></div>
     <button type="submit">Send again</button>{{else}}<button type="submit" class="primary">Email me a link</button>{{end}}
-    <p class="muted small" style="margin-top:8px">The link works for 1 hour. Choosing a password signs you out on your other devices.</p>
+    <p class="muted small" style="margin-top:8px">{{if not .LinkSent}}The link works for 1 hour. {{end}}Choosing a password signs you out on your other devices.</p>
   </form>
   {{else if .NeedReauth}}
   {{template "reauth-notice" dict "Links" .Reauth "What" "set a password or change your sign-in methods"}}

@@ -86,51 +86,23 @@ func TestAccountRedirects(t *testing.T) {
 	}
 }
 
-func TestOldAccountPostAliases(t *testing.T) {
+func TestOldAccountPostAliasesRemoved(t *testing.T) {
 	e := newEnv(t)
 	c, _ := e.account(t, "t@x.example")
-	cur, next := testSecret, newSecretPW // each password change swaps them
-	for _, k := range []struct {
-		old, new string
-		form     func(cur, next string) url.Values
-		page     string
-	}{
-		{"/account/timezone", "/settings/profile/timezone", func(_, _ string) url.Values { return url.Values{"time_zone": {"UTC"}} }, "/settings/profile"},
-		{"/account/password", "/settings/security/password", func(cur, next string) url.Values {
-			return url.Values{"current": {cur}, "new": {next}, "confirm": {next}}
-		}, "/settings/security"},
-	} {
-		var got [2]*http.Response
-		for i, p := range []string{k.old, k.new} {
-			got[i], _ = e.post(t, c, p, k.form(cur, next))
-			if got[i].StatusCode == http.StatusSeeOther && strings.Contains(p, "password") {
-				cur, next = next, cur
-			}
-		}
-		po, mo := flashOf(t, got[0])
-		pn, mn := flashOf(t, got[1])
-		if got[0].StatusCode != http.StatusSeeOther || po != k.page || mo == "" {
-			t.Errorf("%s: %d %s", k.old, got[0].StatusCode, got[0].Header.Get("Location"))
-		}
-		if got[1].StatusCode != got[0].StatusCode || pn != po || mn != mo {
-			t.Errorf("%s: %d %s %q, old gave %d %s %q", k.new, got[1].StatusCode, pn, mn, got[0].StatusCode, po, mo)
+	for _, p := range []string{"/account/timezone", "/account/tz-detected", "/account/password", "/account/signout-all", "/account/delete",
+		"/account/identities/google/connect", "/account/identities/google/delete"} {
+		if resp, _ := e.post(t, c, p, url.Values{"current": {testSecret}}); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("POST %s: %d, want 404", p, resp.StatusCode)
 		}
 	}
-	// Delete with a wrong password renders the Danger zone page on both paths.
-	bad := url.Values{"current": {"wrong wrong wrong"}}
-	for _, p := range []string{"/account/delete", "/settings/danger/delete"} {
-		resp, body := e.post(t, c, p, bad)
-		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgBadCurrent) || !strings.Contains(body, "Delete account") {
-			t.Errorf("%s: %d", p, resp.StatusCode)
-		}
+	// The new paths answer; Delete with a wrong password renders the Danger zone page.
+	resp, body := e.post(t, c, "/settings/danger/delete", url.Values{"current": {"wrong wrong wrong"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, msgBadCurrent) || !strings.Contains(body, "Delete account") {
+		t.Errorf("/settings/danger/delete: %d", resp.StatusCode)
 	}
-	// Sign out everywhere, last: the session goes.
-	for i, p := range []string{"/account/signout-all", "/settings/security/signout-all"} {
-		cc, _ := e.account(t, "s"+string(rune('a'+i))+"@x.example")
-		resp, _ := e.post(t, cc, p, nil)
-		if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login") {
-			t.Errorf("%s: %d %s", p, resp.StatusCode, resp.Header.Get("Location"))
-		}
+	// Still signed in: nothing above touched the account. The GET redirects stay.
+	if resp, _ := e.get(t, c, "/account"); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/settings/security" {
+		t.Errorf("GET /account: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 
@@ -190,27 +162,24 @@ func TestAlertsRedirect(t *testing.T) {
 	}
 }
 
-func TestAlertsPostAlias(t *testing.T) {
+func TestAlertsPostAliasRemoved(t *testing.T) {
 	e := newEnv(t)
-	form := url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}}
-	resp, _ := e.post(t, e.op, "/alerts", form)
-	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/notifications" || m != "Alert channels saved." {
-		t.Fatalf("POST /alerts: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	// The path still exists for GET, so the mux answers 405 rather than 404; either way nothing is saved.
+	for _, p := range []string{"/alerts", "/alerts/test"} {
+		resp, _ := e.post(t, e.op, p, url.Values{"tg_token": {"tok"}, "tg_chat": {"1"}, "tg_enabled": {"1"}})
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s: %d", p, resp.StatusCode)
+		}
 	}
-	n, err := e.opWS.Notify(t.Context())
-	if err != nil || n.Telegram == nil || n.Telegram.ChatID != "1" {
-		t.Fatalf("alias did not save: %+v %v", n, err)
+	if n, err := e.opWS.Notify(t.Context()); err == nil && n.Telegram != nil {
+		t.Fatalf("a removed alias saved: %+v", n)
 	}
-	// A save through the new path gives the same answer.
-	resp, _ = e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"2"}, "tg_enabled": {"1"}})
+	resp, _ := e.post(t, e.op, "/settings/notifications", url.Values{"tg_token": {"tok"}, "tg_chat": {"2"}, "tg_enabled": {"1"}})
 	if p, m := flashOf(t, resp); resp.StatusCode != http.StatusSeeOther || p != "/settings/notifications" || m != "Alert channels saved." {
 		t.Fatalf("POST /settings/notifications: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	// Test sends through the alias fail the same way as through the new path.
-	for _, p := range []string{"/alerts/test", "/settings/notifications/test"} {
-		if resp, body := e.post(t, e.op, p, url.Values{"channel": {"nope"}}); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "failed") {
-			t.Errorf("%s: %d", p, resp.StatusCode)
-		}
+	if resp, body := e.post(t, e.op, "/settings/notifications/test", url.Values{"channel": {"nope"}}); resp.StatusCode != http.StatusBadGateway || !strings.Contains(body, "failed") {
+		t.Errorf("test send: %d", resp.StatusCode)
 	}
 }
 
@@ -276,6 +245,9 @@ func TestSetPasswordLinkSends(t *testing.T) {
 	_, body := o.get(t, c, "/settings/security?sent=1")
 	if !strings.Contains(body, "Check sam@example.com for a link to set your password. It works for 1 hour.") || !strings.Contains(body, "Send again") || strings.Contains(body, "Email me a link") {
 		t.Errorf("after sent: %s", body)
+	}
+	if n := strings.Count(body, "works for 1 hour"); n != 1 {
+		t.Errorf("the sent state says how long the link works %d times, want once", n)
 	}
 	_, body = o.get(t, c, "/settings/security")
 	if !strings.Contains(body, "Email me a link") || strings.Contains(body, "Send again") || strings.Contains(body, "Check sam@example.com") {
@@ -416,9 +388,9 @@ func TestSetPasswordCardWithMail(t *testing.T) {
 		strings.Contains(body, `name="new"`) {
 		t.Errorf("with mail: %s", body)
 	}
-	// The in-place form is gone, so its POST no longer sets a first password either, on the new path or the old one.
+	// The in-place form is gone, so its POST no longer sets a first password either.
 	u := o.userID(t, "sam@example.com")
-	for _, p := range []string{"/settings/security/password", "/account/password"} {
+	for _, p := range []string{"/settings/security/password"} {
 		resp, body := o.post(t, c, p, newPW)
 		if resp.StatusCode != http.StatusConflict || !strings.Contains(body, msgPwLinkUseEmail) {
 			t.Errorf("%s: %d", p, resp.StatusCode)

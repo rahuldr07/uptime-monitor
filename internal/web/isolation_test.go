@@ -204,8 +204,6 @@ var isoCases = map[string]isoCase{
 	"POST /settings/notifications":      {form: attackForm},
 	"POST /settings/notifications/test": {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
 	"GET /alerts":                       {query: "?target=%T"},
-	"POST /alerts":                      {form: attackForm},
-	"POST /alerts/test":                 {form: attackForm, also: http.StatusBadGateway, want: "no channel named"}, // B has no Slack channel
 	"POST /status/settings":             {form: statusAttackForm},
 	"GET /maintenance":                  {query: "?target=%T"},
 	"POST /maintenance":                 {form: attackForm},

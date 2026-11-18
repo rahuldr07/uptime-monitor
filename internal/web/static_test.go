@@ -55,6 +55,7 @@ var sysAllowed = map[string][]string{
 	"admin.go|(*Server).adminEnable":                      {"SetUserDisabled", "Workspace"},
 	"admin.go|(*Server).adminDelete":                      {"SetUserDisabled", "DeleteAccount"},
 	"admin.go|(*Server).adminResetLink":                   {"CreateToken"},
+	"admin.go|(*Server).adminReset2FA":                    {"DisableTOTP"},
 	"admin.go|(*Server).adminInvitesView":                 {"ListInvites"},
 	"admin.go|(*Server).adminInviteCreate":                {"CreateInvite"},
 	"admin.go|(*Server).adminInviteRevoke":                {"RevokeInvite"},
@@ -158,7 +159,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 88
+	const want = 80
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

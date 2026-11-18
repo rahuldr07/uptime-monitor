@@ -14,8 +14,8 @@ func testRoutes(t *testing.T, e *env) []route {
 func TestRouteTableIsComplete(t *testing.T) {
 	e := newEnv(t)
 	routes := testRoutes(t, e)
-	if len(routes) != 88 {
-		t.Errorf("len = %d, want 88", len(routes))
+	if len(routes) != 80 {
+		t.Errorf("len = %d, want 80", len(routes))
 	}
 	seen := map[string]bool{}
 	byClass := map[routeClass]map[string]bool{}
@@ -52,9 +52,9 @@ func TestRouteTableIsComplete(t *testing.T) {
 		classUser: {"POST /logout", "GET /settings", "GET /settings/profile", "POST /settings/profile/timezone", "POST /settings/tz-detected", "GET /settings/security",
 			"POST /settings/security/password", "POST /settings/security/password-link", "POST /settings/security/signout-all", "POST /settings/security/identities/{provider}/delete", "POST /settings/security/identities/{provider}/connect", "POST /settings/security/2fa/setup", "POST /settings/security/2fa/confirm", "POST /settings/security/2fa/disable", "POST /settings/security/2fa/recovery",
 			"GET /settings/danger", "POST /settings/danger/delete",
-			"GET /account", "POST /account/password", "POST /account/signout-all", "POST /account/delete", "POST /account/identities/{provider}/delete", "POST /account/identities/{provider}/connect", "POST /account/timezone", "POST /account/tz-detected"},
+			"GET /account"},
 		classOperator: {"GET /admin", "GET /admin/users", "GET /admin/users/{id}/delete", "POST /admin/users/{id}/disable",
-			"POST /admin/users/{id}/enable", "POST /admin/users/{id}/delete", "POST /admin/users/{id}/resend", "POST /admin/users/{id}/reset-link",
+			"POST /admin/users/{id}/enable", "POST /admin/users/{id}/delete", "POST /admin/users/{id}/resend", "POST /admin/users/{id}/reset-link", "POST /admin/users/{id}/reset-2fa",
 			"GET /admin/invites", "POST /admin/invites", "POST /admin/invites/revoke"},
 	} {
 		if len(byClass[class]) != len(want) {

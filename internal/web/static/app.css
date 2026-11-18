@@ -446,3 +446,4 @@ footer a{text-decoration:underline;text-decoration-color:var(--border-strong);te
 .qr svg{display:block;max-width:100%;height:auto;border-radius:6px;border:1px solid var(--border)}.qr{max-width:236px}.secret{letter-spacing:.06em;user-select:all}
 .codes{list-style:none;margin:12px 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.codes li{margin:0}.codes code{display:block;font-size:14px;padding:6px 10px;text-align:center}
 #two-factor .fp{margin-top:14px}
+.in-code{width:150px}

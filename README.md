@@ -126,8 +126,7 @@ on narrow ones):
 
 `/settings` goes to Profile. The old `GET /account` and `GET /alerts` answer
 302 to Security and Notifications. Their POST paths (`/account/...`,
-`/alerts`, `/alerts/test`) still work for this release, so a form left open
-during an upgrade is not lost, and are removed in 1.7.0.
+`/alerts`, `/alerts/test`) were removed in 1.7.0.
 
 ### Sign-up and invites
 

@@ -72,6 +72,7 @@ func main() {
 	backupPath := flag.String("backup", "", "write a consistent copy of the database to this path and exit")
 	setupLink := flag.Bool("setup-link", false, "print a one-time first-run setup link and exit")
 	resetEmail := flag.String("reset-password", "", "print a one-time password reset link for this email and exit")
+	reset2FA := flag.String("reset-2fa", "", "turn off two-factor authentication for this email (any account, operators too), sign it out everywhere and exit")
 	invite := flag.Bool("invite", false, "print a one-time sign-up link and exit; an email address, if any, must come last and binds the invitation to it")
 	enableEmail := flag.String("enable-user", "", "re-enable a disabled account by email and exit (restart the server afterwards so its monitors resume)")
 	flag.Parse()
@@ -118,6 +119,15 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(link)
+		return
+	}
+	if *reset2FA != "" {
+		msg, err := resetTwoFactor(cfgPath, *reset2FA, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(msg)
 		return
 	}
 	if *resetEmail != "" {
@@ -364,6 +374,43 @@ func enableUser(cfgPath, email string) error {
 	}
 	_, err = st.SetUserDisabled(ctx, u.ID, false, time.Now())
 	return err
+}
+
+// resetTwoFactor turns two-factor authentication off for the account with
+// this email, signs it out everywhere and drops its pending sign-ins, like
+// the operator panel. It works for any account, an operator's too: this is
+// the way back in for a locked-out operator. It sends no email (the server
+// owns the mail queue) and says so. It returns what it did.
+func resetTwoFactor(cfgPath, email string, logger *slog.Logger) (string, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return "", err
+	}
+	st, err := store.Open(cfg.DB)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	ctx := context.Background()
+	u, _, err := st.UserByEmail(ctx, email)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", errors.New("no such user")
+	}
+	if err != nil {
+		return "", err
+	}
+	if u.TOTPEnabledAt == nil {
+		// A half-finished setup is cleared too, but it is not "on".
+		if err := st.DisableTOTP(ctx, u.ID, ""); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return "", err
+		}
+		return fmt.Sprintf("two-factor authentication is not on for %s; nothing changed", u.Email), nil
+	}
+	if err := st.DisableTOTP(ctx, u.ID, ""); err != nil {
+		return "", err
+	}
+	logger.Warn("two-factor reset", "event", "mfa_reset", "actor", "cli", "user_id", u.ID)
+	return fmt.Sprintf("two-factor authentication turned off for %s, recovery codes removed, signed out everywhere; no email was sent", u.Email), nil
 }
 
 // inviteEmailArg returns the optional email after -invite. Anything after

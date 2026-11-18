@@ -25,6 +25,10 @@ const (
 	msgVerifyQueued    = "Verification email queued (subject to mail limits)."
 	msgResetQueued     = "Reset email queued (subject to mail limits)."
 	msgResetNotSent    = "Reset email not sent: the email limit for this address or the server is used up. Try again later."
+	msgNoReset2FAOp    = "Operators' two-factor authentication can't be reset here. Use -reset-2fa on the server."
+	msgReset2FANeed    = "Turn on two-factor authentication to reset it for others."
+	msgReset2FANotOn   = "That account doesn't have two-factor authentication on."
+	msgReset2FADone    = "Two-factor authentication reset. The user was signed out everywhere."
 	msgInviteRevoked   = "Invite revoked."
 	msgInviteNotFound  = "Invite not found."
 
@@ -82,6 +86,12 @@ type adminUsersData struct {
 	CanMail   bool
 	Link      string // one-time reset link; set only on the response that creates it
 	LinkEmail string
+	// Two-factor reset: offered only to an operator who has two-factor on
+	// (Reset2FA); one whose last code is older than the window types a fresh
+	// one with the action (Need2FACode).
+	Reset2FA    bool
+	Need2FACode bool
+	Any2FA      bool // some listed account has two-factor on
 }
 
 type adminDeleteData struct {
@@ -137,6 +147,11 @@ func (s *Server) adminUsersView(r *http.Request, a *authCtx) (adminUsersData, er
 		return adminUsersData{}, err
 	}
 	d := adminUsersData{base: s.base(r, a, "admin", "Users"), Rows: rows, Total: total, Keep: k, CanMail: s.mail != nil}
+	d.Reset2FA = a.twoFactor()
+	d.Need2FACode = d.Reset2FA && !s.recentVerified(a)
+	for _, row := range rows {
+		d.Any2FA = d.Any2FA || (row.TOTPEnabledAt != nil && !row.IsOperator)
+	}
 	ids := make([]int64, len(rows))
 	for i, row := range rows {
 		ids[i] = row.ID
@@ -480,4 +495,56 @@ func (s *Server) adminInviteRevoke(w http.ResponseWriter, r *http.Request, a *au
 		s.operatorAction(r, a, "invite_revoke", 0)
 		redirect(w, r, "/admin/invites", msgInviteRevoked)
 	}
+}
+
+// adminReset2FA turns off a user's two-factor authentication (the lost phone
+// and lost codes case). Operators are refused, the acting one included: their
+// way back is -reset-2fa on the server. The acting operator needs two-factor
+// on and a code verified in the last ten minutes, so a stolen operator session
+// cannot take over other accounts through here. The user is signed out
+// everywhere, loses any pending sign-in, and is told by email.
+func (s *Server) adminReset2FA(w http.ResponseWriter, r *http.Request, a *authCtx) {
+	u, ok := s.adminTarget(w, r)
+	if !ok {
+		return
+	}
+	switch {
+	case u.IsOperator:
+		s.operatorRefused(w, r, a, "reset_2fa", u.ID, msgNoReset2FAOp)
+		return
+	case !a.twoFactor():
+		s.operatorRefused(w, r, a, "reset_2fa", u.ID, msgReset2FANeed)
+		return
+	case u.TOTPEnabledAt == nil:
+		s.operatorRefused(w, r, a, "reset_2fa", u.ID, msgReset2FANotOn)
+		return
+	}
+	fail := func(code int, msg string) {
+		d, err := s.adminUsersView(r, a)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		d.Error, d.NoRefresh = msg, true
+		s.renderStatus(w, r, code, "admin_users", d)
+	}
+	if !s.checkFresh(r, a, fail, false) {
+		return
+	}
+	err := s.sys.DisableTOTP(context.WithoutCancel(r.Context()), u.ID, "")
+	if isNotFound(err) {
+		s.operatorRefused(w, r, a, "reset_2fa", u.ID, msgReset2FANotOn)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.logger.Warn("two-factor reset", "event", "mfa_reset", "actor", a.User.ID, "user_id", u.ID, "ip", clientIP(r, s.cfg.ProxyHops()))
+	if s.mail != nil {
+		subject, body := mfaResetMail(s.cfg.BaseURL)
+		s.mail.Notice(u.Email, subject, body)
+	}
+	s.operatorAction(r, a, "reset_2fa", u.ID)
+	adminDone(w, r, msgReset2FADone)
 }

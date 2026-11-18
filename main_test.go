@@ -343,3 +343,102 @@ func TestNewMailerWarnsWithoutDailyCapOnOpenSignup(t *testing.T) {
 		t.Fatalf("warned with a cap set: %s", buf.String())
 	}
 }
+
+func TestResetTwoFactorCLI(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "t.db")
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"db":"`+dbPath+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	for _, in := range []store.AccountInput{
+		{Email: "a@b.co", WorkspaceName: "A", Slug: "aa"},
+		{Email: "op@b.co", WorkspaceName: "Op", Slug: "op", Operator: true},
+		{Email: "plain@b.co", WorkspaceName: "P", Slug: "pp"},
+	} {
+		in.PasswordHash, in.Verified, in.Now = "x", true, now
+		if _, _, err := st.CreateAccount(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []int64
+	var sessions, pendings []string
+	for _, e := range []string{"a@b.co", "op@b.co"} {
+		u, _, _ := st.UserByEmail(ctx, e)
+		ids = append(ids, u.ID)
+		if _, err := st.BeginTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.EnableTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", 5, []string{"h1", "h2"}, "", now); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := st.CreateSession(ctx, u.ID, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, raw)
+		raw, err = st.CreatePendingLogin(ctx, u.ID, "password", "/", *mustUser(t, st, e).TOTPEnabledAt, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pendings = append(pendings, raw)
+	}
+	st.Close()
+
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for _, e := range []string{" A@B.co ", "op@b.co"} { // an operator too: this is the recovery path
+		msg, err := resetTwoFactor(cfgPath, e, logger)
+		if err != nil || !strings.Contains(msg, "turned off") {
+			t.Fatalf("%s: %q %v", e, msg, err)
+		}
+	}
+	msg, err := resetTwoFactor(cfgPath, "plain@b.co", logger)
+	if err != nil || !strings.Contains(msg, "not on") {
+		t.Fatalf("not on: %q %v", msg, err)
+	}
+	if _, err := resetTwoFactor(cfgPath, "nobody@b.co", logger); err == nil || err.Error() != "no such user" {
+		t.Fatalf("unknown: %v", err)
+	}
+	if n := strings.Count(logs.String(), "event=mfa_reset"); n != 2 || !strings.Contains(logs.String(), "actor=cli") {
+		t.Errorf("log: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "JBSWY3DPEHPK3PXP") {
+		t.Error("the secret is in the log")
+	}
+
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for i, e := range []string{"a@b.co", "op@b.co"} {
+		if _, on, _ := st.TOTPSecret(ctx, ids[i]); on {
+			t.Errorf("%s: 2FA still on", e)
+		}
+		if left, _ := st.RecoveryCodesLeft(ctx, ids[i]); left != 0 {
+			t.Errorf("%s: %d recovery codes left", e, left)
+		}
+		if _, err := st.SessionAuth(ctx, sessions[i], now); err == nil {
+			t.Errorf("%s: session survived", e)
+		}
+		if _, err := st.PendingLogin(ctx, pendings[i], now); err == nil {
+			t.Errorf("%s: pending sign-in survived", e)
+		}
+	}
+}
+
+func mustUser(t *testing.T, st *store.Store, email string) store.User {
+	t.Helper()
+	u, _, err := st.UserByEmail(context.Background(), email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
