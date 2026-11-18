@@ -528,6 +528,9 @@ func pruneLoop(ctx context.Context, st *store.Store, mon *monitor.Monitor, reten
 		if _, err := st.PruneTokens(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			logger.Error("prune tokens", "err", err)
 		}
+		if _, err := st.PrunePendingLogins(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			logger.Error("prune pending logins", "err", err)
+		}
 		ids, err := st.PruneUnverified(ctx, time.Now().Add(-unverifiedMaxAge))
 		for _, id := range ids {
 			mon.ForgetWorkspace(id)

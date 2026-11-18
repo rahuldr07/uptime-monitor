@@ -95,7 +95,7 @@ type migration struct {
 
 // steps are the numbered schema migrations; step N brings PRAGMA user_version
 // to N. Append new steps, never edit existing ones.
-var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}, {run: v3}, {run: v4}}
+var steps = []migration{{run: v1}, {run: v2, foreignKeysOff: true}, {run: v3}, {run: v4}, {run: v5}}
 
 // migrate runs every step above the database's user_version, each in its own
 // transaction together with the version bump. path is the database file; when
@@ -491,6 +491,41 @@ func v4(ctx context.Context, tx *sql.Tx) error {
 		ALTER TABLE users ADD COLUMN detected_tz TEXT NOT NULL DEFAULT '';`)
 	if err != nil {
 		return fmt.Errorf("add time zone columns: %w", err)
+	}
+	return nil
+}
+
+// v5 adds two-factor authentication: the TOTP columns on users (totp_last_step
+// is never lowered), sessions.mfa_at, recovery codes and the pending sign-ins
+// that wait for a code.
+func v5(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		ALTER TABLE users ADD COLUMN totp_secret     TEXT    NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN totp_pending    TEXT    NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN totp_pending_at INTEGER;
+		ALTER TABLE users ADD COLUMN totp_enabled_at INTEGER;
+		ALTER TABLE users ADD COLUMN totp_last_step  INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN mfa_at       INTEGER;
+		CREATE TABLE recovery_codes (
+			user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			code_hash TEXT    NOT NULL,
+			used_at   INTEGER,
+			PRIMARY KEY (user_id, code_hash)
+		);
+		CREATE TABLE pending_logins (
+			token_hash      TEXT    PRIMARY KEY,
+			user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			method          TEXT    NOT NULL,
+			next            TEXT    NOT NULL DEFAULT '',
+			totp_enabled_at INTEGER NOT NULL,
+			created_at      INTEGER NOT NULL,
+			expires_at      INTEGER NOT NULL,
+			tries           INTEGER NOT NULL DEFAULT 0,
+			used_at         INTEGER
+		);
+		CREATE INDEX idx_pending_logins_user ON pending_logins(user_id);`)
+	if err != nil {
+		return fmt.Errorf("add two-factor schema: %w", err)
 	}
 	return nil
 }

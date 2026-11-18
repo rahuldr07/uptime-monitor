@@ -50,7 +50,7 @@ func insertIdentity(ctx context.Context, q querier, userID int64, provider, subj
 // Lookups use (provider, subject), never the email.
 func (s *Store) IdentityUser(ctx context.Context, provider, subject string) (User, error) {
 	u, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz
+		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz, u.totp_enabled_at
 		 FROM identities i JOIN users u ON u.id = i.user_id
 		 WHERE i.provider = ? AND i.subject = ?`, provider, subject))
 	if errors.Is(err, sql.ErrNoRows) {

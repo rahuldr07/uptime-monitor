@@ -36,6 +36,9 @@ type Auth struct {
 	// AuthAt is when the session last authenticated for real (sign-in or a
 	// reauth); nil for sessions created before schema v3.
 	AuthAt *time.Time
+	// MFAAt is when a valid two-factor or recovery code last verified this
+	// session; nil if never.
+	MFAAt *time.Time
 	// HasPassword is false for a social-only account.
 	HasPassword bool
 }
@@ -44,7 +47,21 @@ type Auth struct {
 // is never stored. Sessions beyond MaxSessionsPerUser are deleted, oldest
 // first.
 func (s *Store) CreateSession(ctx context.Context, userID int64, now time.Time) (string, error) {
+	return s.createSession(ctx, userID, now, false)
+}
+
+// CreateSessionMFA is CreateSession for a sign-in that just passed a
+// two-factor or recovery code: mfa_at is set along with auth_at.
+func (s *Store) CreateSessionMFA(ctx context.Context, userID int64, now time.Time) (string, error) {
+	return s.createSession(ctx, userID, now, true)
+}
+
+func (s *Store) createSession(ctx context.Context, userID int64, now time.Time, mfa bool) (string, error) {
 	raw, hash := newSecret()
+	var mfaAt any
+	if mfa {
+		mfaAt = now.UnixMilli()
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -52,8 +69,8 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, now time.Time) 
 	defer tx.Rollback()
 	ms := now.UnixMilli()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at, auth_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		hash, userID, ms, ms, now.Add(SessionTTL).UnixMilli(), ms); err != nil {
+		`INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at, auth_at, mfa_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		hash, userID, ms, ms, now.Add(SessionTTL).UnixMilli(), ms, mfaAt); err != nil {
 		return "", err
 	}
 	// Dead sessions never count toward the cap.
@@ -82,10 +99,10 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 	hash := hashSecret(raw)
 	var a Auth
 	var wsCreated, lastSeen int64
-	var authAt sql.NullInt64
+	var authAt, mfaAt sql.NullInt64
 	u, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz,
-			w.id, w.name, w.slug, w.created_at, s.last_seen_at, s.auth_at, u.password_hash <> ''
+		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz, u.totp_enabled_at,
+			w.id, w.name, w.slug, w.created_at, s.last_seen_at, s.auth_at, s.mfa_at, u.password_hash <> ''
 		 FROM sessions s
 		 JOIN users u ON u.id = s.user_id
 		 JOIN memberships m ON m.user_id = u.id AND m.role = 'owner'
@@ -94,7 +111,7 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 			AND u.disabled_at IS NULL AND u.verified_at IS NOT NULL
 		 ORDER BY w.id LIMIT 1`,
 		hash, now.UnixMilli(), now.Add(-SessionIdle).UnixMilli()),
-		&a.Workspace.ID, &a.Workspace.Name, &a.Workspace.Slug, &wsCreated, &lastSeen, &authAt, &a.HasPassword)
+		&a.Workspace.ID, &a.Workspace.Name, &a.Workspace.Slug, &wsCreated, &lastSeen, &authAt, &mfaAt, &a.HasPassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Auth{}, ErrNotFound
 	}
@@ -102,7 +119,7 @@ func (s *Store) SessionAuth(ctx context.Context, raw string, now time.Time) (Aut
 		return Auth{}, err
 	}
 	a.Workspace.CreatedAt = time.UnixMilli(wsCreated).UTC()
-	a.User, a.SessionHash, a.AuthAt = u, hash, msPtr(authAt)
+	a.User, a.SessionHash, a.AuthAt, a.MFAAt = u, hash, msPtr(authAt), msPtr(mfaAt)
 	a.WS = s.Workspace(a.Workspace.ID)
 	if now.Sub(time.UnixMilli(lastSeen)) >= sessionTouchEvery {
 		// Best effort: the touch only extends the idle window, so a failed
@@ -138,6 +155,16 @@ func (s *Store) touchSession(ctx context.Context, hash string, userID int64, now
 // is Auth.SessionHash; an unknown session is ErrNotFound.
 func (s *Store) MarkReauth(ctx context.Context, sessionHash string, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET auth_at = ? WHERE token_hash = ?`, now.UnixMilli(), sessionHash)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// MarkMFA records that a valid two-factor or recovery code just verified the
+// session. sessionHash is Auth.SessionHash; an unknown session is ErrNotFound.
+func (s *Store) MarkMFA(ctx context.Context, sessionHash string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET mfa_at = ? WHERE token_hash = ?`, now.UnixMilli(), sessionHash)
 	if err != nil {
 		return err
 	}

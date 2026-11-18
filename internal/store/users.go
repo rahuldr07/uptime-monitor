@@ -35,6 +35,8 @@ type User struct {
 	// TimeZone is the zone the user chose, "" for automatic. DetectedTZ is the
 	// zone their browser last reported, "" if none. See Location.
 	TimeZone, DetectedTZ string
+	// TOTPEnabledAt is when two-factor authentication was turned on; nil when off.
+	TOTPEnabledAt *time.Time
 }
 
 // ErrInvalidZone is returned for a name that is not an IANA time zone.
@@ -149,7 +151,7 @@ func isEmailTaken(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: users.email")
 }
 
-const userCols = `id, email, is_operator, verified_at, disabled_at, created_at, time_zone, detected_tz`
+const userCols = `id, email, is_operator, verified_at, disabled_at, created_at, time_zone, detected_tz, totp_enabled_at`
 
 func msPtr(v sql.NullInt64) *time.Time {
 	if !v.Valid {
@@ -162,14 +164,14 @@ func msPtr(v sql.NullInt64) *time.Time {
 func scanUser(sc scanner, extra ...any) (User, error) {
 	var u User
 	var op int
-	var verified, disabled sql.NullInt64
+	var verified, disabled, totp sql.NullInt64
 	var created int64
-	dest := append([]any{&u.ID, &u.Email, &op, &verified, &disabled, &created, &u.TimeZone, &u.DetectedTZ}, extra...)
+	dest := append([]any{&u.ID, &u.Email, &op, &verified, &disabled, &created, &u.TimeZone, &u.DetectedTZ, &totp}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return User{}, err
 	}
 	u.IsOperator = op != 0
-	u.VerifiedAt, u.DisabledAt = msPtr(verified), msPtr(disabled)
+	u.VerifiedAt, u.DisabledAt, u.TOTPEnabledAt = msPtr(verified), msPtr(disabled), msPtr(totp)
 	u.CreatedAt = time.UnixMilli(created).UTC()
 	return u, nil
 }

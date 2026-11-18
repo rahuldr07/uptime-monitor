@@ -148,7 +148,7 @@ func (s *Store) ListUsers(ctx context.Context, q UserQuery) ([]UserRow, int, err
 	}
 	page := max(q.Page, 0)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz,
+		`SELECT u.id, u.email, u.is_operator, u.verified_at, u.disabled_at, u.created_at, u.time_zone, u.detected_tz, u.totp_enabled_at,
 			u.last_seen_at, COALESCE(w.id, 0), COALESCE(w.name, ''), COALESCE(w.slug, ''),
 			(SELECT COUNT(*) FROM targets t WHERE t.workspace_id IN `+ownedWorkspaces+`)
 		 FROM users u
