@@ -58,7 +58,7 @@
   <h3>Sign-in methods</h3>
   {{if and .NeedReauth .MailOn}}{{template "reauth-notice" dict "Links" .Reauth "What" "change your sign-in methods"}}{{end}}
   {{if .Providers}}
-  {{if .HasPassword}}<p class="muted small" style="margin:6px 0 0">Enter your current password{{if .NeedCode}} and a two-factor code{{end}} to connect or disconnect an account.</p>{{else if .NeedCode}}<p class="muted small" style="margin:6px 0 0">Enter a two-factor code to connect or disconnect an account.</p>{{end}}
+  {{if .HasPassword}}<p class="muted small tf-first">Enter your current password{{if .NeedCode}} and a two-factor code{{end}} to connect or disconnect an account.</p>{{else if .NeedCode}}<p class="muted small tf-first">Enter a two-factor code to connect or disconnect an account.</p>{{end}}
   {{range .Providers}}
   <div class="btns" style="margin-top:10px;justify-content:space-between;max-width:480px">
     <div><strong style="font-size:13px">{{.Label}}</strong>{{if .Connected}} <span class="muted small">{{.Email}}</span>{{else}} <span class="muted small">Not connected</span>{{end}}</div>
@@ -68,7 +68,7 @@
     {{else if not $.NeedReauth}}
     <form method="post" action="/settings/security/identities/{{.Name}}/delete" data-confirm-title="Disconnect {{.Label}}?" data-confirm-danger data-confirm="Disconnect {{.Label}}? You will no longer be able to sign in with it." style="display:flex;gap:6px;align-items:flex-start">
       {{if $.HasPassword}}<div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to disconnect {{.Label}}" autocomplete="current-password" style="width:170px"></div>{{end}}
-      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" inputmode="numeric" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to disconnect {{.Label}}" autocomplete="one-time-code" style="width:150px"></div>{{end}}
+      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to disconnect {{.Label}}" autocomplete="one-time-code" class="in-code"></div>{{end}}
       <button type="submit">Disconnect</button>
     </form>
     {{end}}
@@ -78,7 +78,7 @@
     {{else if or $.HasPassword $.NeedCode}}
     <form method="post" action="/settings/security/identities/{{.Name}}/connect" style="display:flex;gap:6px;align-items:flex-start">
       {{if $.HasPassword}}<div class="field auto"><input name="current" type="password" required placeholder="Current password" aria-label="Current password, to connect {{.Label}}" autocomplete="current-password" style="width:170px"></div>{{end}}
-      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" inputmode="numeric" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to connect {{.Label}}" autocomplete="one-time-code" style="width:150px"></div>{{end}}
+      {{if $.NeedCode}}<div class="field auto"><input name="code" type="text" required maxlength="64" placeholder="Two-factor code" aria-label="Two-factor code, to connect {{.Label}}" autocomplete="one-time-code" class="in-code"></div>{{end}}
       <button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Connect</button>
     </form>
     {{end}}
@@ -125,7 +125,7 @@
   {{if .CanDelete}}<a{{if eq .Section "danger"}} class="active" aria-current="page"{{end}} href="/settings/danger">Danger zone</a>{{end}}
 </nav>{{end}}
 
-{{define "code-field"}}<div class="field"><label for="{{.ID}}">Two-factor code</label><input id="{{.ID}}" name="code" type="text" inputmode="numeric" required maxlength="64" autocomplete="one-time-code"><div class="help">From your authenticator app, or a recovery code.</div></div>{{end}}
+{{define "code-field"}}<div class="field"><label for="{{.ID}}">Two-factor code</label><input id="{{.ID}}" name="code" type="text" required maxlength="64" autocomplete="one-time-code"><div class="help">From your authenticator app, or a recovery code.</div></div>{{end}}
 
 {{define "two-factor"}}
 <div class="card block" id="two-factor">
@@ -137,29 +137,33 @@
     <button type="button" data-action="copy-codes" data-codes="#recovery-codes"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
     <button type="button" data-action="download-codes" data-codes="#recovery-codes"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Download</button>
   </div>
-  <p class="muted small" style="margin:10px 0 0">Each code works once. Keep them somewhere safe, apart from your phone.</p>
+  <p class="muted small tf-after">Each code works once. Keep them somewhere safe, apart from your phone.</p>
   {{else if eq .TFState "setup"}}
-  <p class="muted small" style="margin:6px 0 12px">Scan the QR code with an authenticator app, then enter the 6-digit code it shows. Or type the key in by hand.</p>
-  {{if .TFQR}}<div class="qr">{{.TFQR}}</div>{{end}}
-  <p class="small" style="margin:12px 0">Key: <code class="secret">{{.TFSecret}}</code></p>
+  {{if .TFQR}}
+  <p class="muted small tf-lead">Scan the QR code with an authenticator app, then enter the 6-digit code it shows. Or type the key in by hand.</p>
+  <div class="qr">{{.TFQR}}</div>
+  {{else}}
+  <p class="muted small tf-lead">The QR code does not fit for this address. Type the key into your authenticator app, then enter the 6-digit code it shows.</p>
+  {{end}}
+  <p class="small tf-key">Key: <code class="secret">{{.TFSecret}}</code></p>
   <form method="post" action="/settings/security/2fa/confirm" class="fp">
     <div class="field"><label for="tf-code">Code from the app</label><input id="tf-code" name="code" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="12" required autocomplete="one-time-code" autofocus></div>
-    <div class="btns" style="margin-top:14px"><button type="submit" class="primary">Turn on</button></div>
+    <div class="btns tf-act"><button type="submit" class="primary">Turn on</button></div>
   </form>
-  <p class="muted small" style="margin:10px 0 0">Turning it on signs out your other devices. This setup expires after 15 minutes.</p>
+  <p class="muted small tf-after">Turning it on signs out your other devices. This setup expires after 15 minutes.</p>
   {{else if eq .TFState "on"}}
-  <p style="margin:6px 0 0"><span class="badge up">On</span> {{.TFLeft}} recovery code{{if ne .TFLeft 1}}s{{end}} left.</p>
+  <p class="tf-first"><span class="badge up">On</span> {{.TFLeft}} recovery code{{if ne .TFLeft 1}}s{{end}} left.</p>
   {{if .TFLow}}<div class="alert" role="status"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><div>Running low on recovery codes. Make new ones before you run out.</div></div>{{end}}
   <form method="post" action="/settings/security/2fa/recovery" class="fp" data-confirm-title="Replace recovery codes?" data-confirm="Replace your recovery codes? The old ones stop working and your other devices are signed out.">
-    <div class="field"><label for="tf-regen">Code from your authenticator app, or a recovery code</label><input id="tf-regen" name="code" type="text" inputmode="numeric" required maxlength="64" autocomplete="one-time-code"></div>
+    <div class="field"><label for="tf-regen">Code from your authenticator app, or a recovery code</label><input id="tf-regen" name="code" type="text" required maxlength="64" autocomplete="one-time-code"></div>
     <button type="submit">Make new recovery codes</button>
   </form>
   <form method="post" action="/settings/security/2fa/disable" class="fp" data-confirm-title="Turn off two-factor?" data-confirm-danger data-confirm="Turn off two-factor authentication? Your other devices are signed out.">
-    <div class="field"><label for="tf-off">Code from your authenticator app, or a recovery code</label><input id="tf-off" name="code" type="text" inputmode="numeric" required maxlength="64" autocomplete="one-time-code"></div>
+    <div class="field"><label for="tf-off">Code from your authenticator app, or a recovery code</label><input id="tf-off" name="code" type="text" required maxlength="64" autocomplete="one-time-code"></div>
     <button type="submit" class="danger">Turn off</button>
   </form>
   {{else}}
-  <p class="muted small" style="margin:6px 0 12px"><span class="badge paused">Off</span> Ask for a code from an authenticator app after your password or Google or GitHub sign-in. It protects the account if someone learns your password.</p>
+  <p class="muted small tf-lead"><span class="badge paused">Off</span> Ask for a code from an authenticator app after your password or Google or GitHub sign-in. It protects the account if someone learns your password.</p>
   {{if and (not .AuthRecent) (not .HasPassword)}}{{template "reauth-notice" dict "Links" .Reauth "What" "turn on two-factor authentication"}}{{else}}
   <form method="post" action="/settings/security/2fa/setup" class="fp">
     {{if and (not .AuthRecent) .HasPassword}}<div class="field"><label for="tf-pw">Current password</label><input id="tf-pw" name="current" type="password" required autocomplete="current-password"></div>{{end}}

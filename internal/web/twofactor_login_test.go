@@ -600,3 +600,46 @@ func TestVerifyDoesNotSignIn2FAAccount(t *testing.T) {
 		t.Fatalf("verify: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
+
+// Someone who stops at exactly the cap is never refused, but the owner is
+// still told: the warning comes with the failure that fills the window.
+func TestLimiterNoticeAtTheCap(t *testing.T) {
+	e, _, _, _ := twoFA(t)
+	for i := 0; i < 4; i++ {
+		c := e.pendingSignIn(t, "198.51.100."+itoa(int64(i+1)), "two@example.com")
+		e.postFrom(t, c, "198.51.100."+itoa(int64(i+1)), "/login/2fa", url.Values{"code": {"000000"}})
+	}
+	if n := countMail(e, msgMFALimitedSubject); n != 0 {
+		t.Fatalf("notice after 4 failures: %d", n)
+	}
+	c := e.pendingSignIn(t, "198.51.100.5", "two@example.com")
+	if resp, _ := e.postFrom(t, c, "198.51.100.5", "/login/2fa", url.Values{"code": {"000000"}}); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("5th failure: %d", resp.StatusCode)
+	}
+	if n := countMail(e, msgMFALimitedSubject); n != 1 {
+		t.Fatalf("notices after exactly 5 failures = %d, want 1", n)
+	}
+	// Nothing more is sent for further refusals.
+	c = e.pendingSignIn(t, "198.51.100.6", "two@example.com")
+	e.postFrom(t, c, "198.51.100.6", "/login/2fa", url.Values{"code": {"000000"}})
+	if n := countMail(e, msgMFALimitedSubject); n != 1 {
+		t.Fatalf("notices = %d, want 1", n)
+	}
+}
+
+// The daily window warns when its 20th slot goes too.
+func TestLimiterNoticeAtTheDailyCap(t *testing.T) {
+	e, _, _, _ := twoFA(t)
+	n := int64(0)
+	for batch := 0; batch < 4; batch++ {
+		for i := 0; i < 5; i++ {
+			n++
+			c := e.pendingSignIn(t, "192.0.2."+itoa(n), "two@example.com")
+			e.postFrom(t, c, "192.0.2."+itoa(n), "/login/2fa", url.Values{"code": {"000000"}})
+		}
+		e.advance(16 * time.Minute)
+	}
+	if got := countMail(e, msgMFALimitedSubject); got != 1 {
+		t.Fatalf("notices = %d, want 1 (the 15-minute window warned on day one)", got)
+	}
+}

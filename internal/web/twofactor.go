@@ -121,14 +121,34 @@ func (s *Server) takeCode(u store.User, method string) (ok bool, wait time.Durat
 	if ok {
 		return true, 0
 	}
-	s.logger.Warn("two-factor attempts limited", "event", "mfa_limited", "user_id", u.ID)
-	if s.mail != nil {
-		if first, _ := s.mfaNotice.Take(key); first {
-			subject, body := mfaLimitedMail(s.cfg.BaseURL, method)
-			s.mail.Notice(u.Email, subject, body)
-		}
-	}
+	s.warnLimited(u, method)
 	return false, wait
+}
+
+// warnLimited logs that u's code budget is spent and, the first time in a
+// day, tells the owner.
+func (s *Server) warnLimited(u store.User, method string) {
+	s.logger.Warn("two-factor attempts limited", "event", "mfa_limited", "user_id", u.ID)
+	if s.mail == nil {
+		return
+	}
+	if first, _ := s.mfaNotice.Take(userKey(u)); first {
+		subject, body := mfaLimitedMail(s.cfg.BaseURL, method)
+		s.mail.Notice(u.Email, subject, body)
+	}
+}
+
+// codeFailed records a wrong code. If it used the last slot of either window,
+// the owner is warned now, not only when a further guess is refused: someone
+// who stops at the cap would otherwise never be noticed.
+func (s *Server) codeFailed(u store.User, method string, how string) {
+	s.logger.Warn("two-factor code wrong", "event", "mfa_failed", "user_id", u.ID, "via", how)
+	key := userKey(u)
+	okShort, _ := s.mfaShort.Allow(key)
+	okLong, _ := s.mfaLong.Allow(key)
+	if !okShort || !okLong {
+		s.warnLimited(u, method)
+	}
 }
 
 // refundCode gives the slot back after a good code or a server error.
@@ -221,7 +241,11 @@ func (s *Server) checkCode(ctx context.Context, u store.User, code string, recov
 		return false, msgMFAError
 	}
 	if !good {
-		s.logger.Warn("two-factor code wrong", "event", "mfa_failed", "user_id", u.ID, "recovery", recovery)
+		how := "code"
+		if recovery {
+			how = "recovery"
+		}
+		s.codeFailed(u, method, how)
 		return false, msgMFAWrong
 	}
 	s.refundCode(u)

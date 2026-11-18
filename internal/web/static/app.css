@@ -447,3 +447,4 @@ footer a{text-decoration:underline;text-decoration-color:var(--border-strong);te
 .codes{list-style:none;margin:12px 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}.codes li{margin:0}.codes code{display:block;font-size:14px;padding:6px 10px;text-align:center}
 #two-factor .fp{margin-top:14px}
 .in-code{width:150px}
+.tf-lead{margin:6px 0 12px}.tf-after{margin:10px 0 0}.tf-key{margin:12px 0}.tf-act{margin-top:14px}.tf-first{margin:6px 0 0}.tf-admin-note{margin:0 0 10px}

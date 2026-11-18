@@ -15,7 +15,7 @@
   <input name="host" value="{{.Keep.Host}}" placeholder="Monitored URL contains" aria-label="Monitored URL contains" style="width:220px">
   <button type="submit"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Search</button>
 </form>
-{{if and .Any2FA (not .Reset2FA)}}<p class="muted small" style="margin:0 0 10px">Turn on two-factor authentication to reset it for others.</p>{{end}}
+{{if and .Any2FA (not .Reset2FA)}}<p class="muted small tf-admin-note">Turn on two-factor authentication to reset it for others.</p>{{end}}
 {{if .Rows}}
 <div class="dt" data-table="admin-users" data-noun="users" data-paged="server" data-select data-cards data-empty="No users match.">
 <table>
@@ -46,7 +46,7 @@
     <form method="post" action="/admin/users/{{.ID}}/reset-link" data-confirm-title="Reset password?" data-confirm="{{if $.CanMail}}Email {{.Email}} a password reset link?{{else}}Create a password reset link for {{.Email}}?{{end}}">{{template "admin-keep" $.Keep}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Reset link</button></form>
     {{end}}
     {{if and .TOTPEnabledAt (not .IsOperator) $.Reset2FA}}
-    <form method="post" action="/admin/users/{{.ID}}/reset-2fa" data-confirm-title="Reset two-factor?" data-confirm-danger data-confirm="Turn off two-factor authentication for {{.Email}}? They are signed out everywhere.">{{template "admin-keep" $.Keep}}{{if $.Need2FACode}}<input name="code" type="text" inputmode="numeric" required maxlength="64" placeholder="Your two-factor code" aria-label="Your two-factor code, to reset {{.Email}}" autocomplete="one-time-code" class="in-code">{{end}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Reset 2FA</button></form>
+    <form method="post" action="/admin/users/{{.ID}}/reset-2fa" data-confirm-title="Reset two-factor?" data-confirm-danger data-confirm="Turn off two-factor authentication for {{.Email}}? They are signed out everywhere.">{{template "admin-keep" $.Keep}}{{if $.Need2FACode}}<input name="code" type="text" required maxlength="64" placeholder="Your two-factor code" aria-label="Your two-factor code, to reset {{.Email}}" autocomplete="one-time-code" class="in-code">{{end}}<button type="submit" class="sm"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Reset 2FA</button></form>
     {{end}}
     {{if not .IsOperator}}<a class="btn sm danger" href="{{$.Keep.DeleteURL .ID}}"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg>Delete</a>{{end}}
   </td>

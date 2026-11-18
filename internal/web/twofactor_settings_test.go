@@ -564,3 +564,98 @@ func TestLimiterSharedWithSettings(t *testing.T) {
 		t.Errorf("notices = %d, want 1", n)
 	}
 }
+
+// §12: a URI too long for the encoder shows the typed key and says so.
+func TestTwoFactorSetupWithoutQR(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	email := strings.Repeat("a", 60) + "@" + strings.Repeat("b", 60) + "." + strings.Repeat("c", 60) + ".example"
+	phc, err := e.hash.Hash(t.Context(), testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.st.CreateAccount(t.Context(), store.AccountInput{Email: email, PasswordHash: phc, WorkspaceName: "w", Slug: "long", Verified: true, Now: e.now()}); err != nil {
+		t.Fatal(err)
+	}
+	c := e.signIn(t, email, testSecret)
+	secret := e.beginSetup(t, c, email)
+	_, body := e.get(t, c, "/settings/security")
+	if strings.Contains(body, `aria-label="QR code"`) || !strings.Contains(body, groupSecret(secret)) || !strings.Contains(body, "QR code does not fit") || strings.Contains(body, "Scan the QR code") {
+		t.Errorf("long address: %s", body)
+	}
+}
+
+// A code can be a recovery code, so no field that takes one is digits-only.
+func TestTwoFactorCodeFieldsAcceptRecoveryCodes(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.account(t, "ann@example.com")
+	secret, _ := e.enable2FA(t, "ann@example.com")
+	c := e.signInWithCode(t, "203.0.113.1", "ann@example.com", secret)
+	_, body := e.get(t, c, "/settings/security")
+	for _, f := range []string{`id="tf-off"`, `id="tf-regen"`} {
+		i := strings.Index(body, f)
+		if i < 0 {
+			t.Fatalf("%s missing", f)
+		}
+		if tag := body[i : i+strings.Index(body[i:], ">")]; strings.Contains(tag, "inputmode") {
+			t.Errorf("%s is digits-only: %s", f, tag)
+		}
+	}
+	e.advance(11 * time.Minute)
+	_, body = e.get(t, c, "/settings/security")
+	if i := strings.Index(body, `id="acc-code"`); i < 0 || strings.Contains(body[i:i+strings.Index(body[i:], ">")], "inputmode") {
+		t.Error("the sensitive-form code field is digits-only")
+	}
+}
+
+// The OAuth start of a link flow is gated by recentVerified, not auth_at.
+func TestLinkStartNeedsFreshCode(t *testing.T) {
+	o := newOEnv(t, `{}`, "google")
+	o.cfg.TrustProxy = true
+	o.social(t, "person@example.com", "google", "12345")
+	secret, _ := o.enable2FA(t, "person@example.com")
+	c := o.client(t)
+	cb, _ := o.begin(t, c, "google", "")
+	o.fetch(t, c, cb)
+	o.postFrom(t, c, "203.0.113.5", "/login/2fa", url.Values{"code": {o.code(t, secret)}})
+	if resp := o.start(t, c, "google", "intent=link"); resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("link start refused right after the code: %d", resp.StatusCode)
+	}
+	o.advance(11 * time.Minute)
+	au, err := o.st.SessionAuth(t.Context(), jarCookie(c, "uptime_session").Value, o.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.st.MarkReauth(t.Context(), au.SessionHash, o.now()); err != nil { // a fresh auth_at, stale mfa_at
+		t.Fatal(err)
+	}
+	if resp := o.start(t, c, "google", "intent=link"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("link start with a fresh auth_at but a stale mfa_at: %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestDisconnectNeedsCode(t *testing.T) {
+	e := newEnvMail(t, openCfg)
+	e.account(t, "ann@example.com")
+	uid := e.userID(t, "ann@example.com")
+	if err := e.st.LinkIdentity(t.Context(), uid, "google", "sub-1", "ann@example.com", e.now()); err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := e.enable2FA(t, "ann@example.com")
+	c := e.signInWithCode(t, "203.0.113.1", "ann@example.com", secret)
+	e.advance(11 * time.Minute)
+	const path = "/settings/security/identities/google/delete"
+	resp, body := e.post(t, c, path, url.Values{"current": {testSecret}})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, html.EscapeString(msgCodeRequired)) {
+		t.Fatalf("disconnect without a code: %d %s", resp.StatusCode, body)
+	}
+	if ids, _ := e.st.Identities(t.Context(), uid); len(ids) != 1 {
+		t.Fatal("disconnected without a code")
+	}
+	resp, _ = e.post(t, c, path, url.Values{"current": {testSecret}, "code": {e.code(t, secret)}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("with a code: %d", resp.StatusCode)
+	}
+	if ids, _ := e.st.Identities(t.Context(), uid); len(ids) != 0 {
+		t.Error("not disconnected with a code")
+	}
+}

@@ -182,7 +182,7 @@ func (s *Server) twoFactorConfirm(w http.ResponseWriter, r *http.Request, a *aut
 		step, matched = totp.Match(secret, digits, s.now())
 	}
 	if !matched {
-		s.logger.Warn("two-factor code wrong", "event", "mfa_failed", "user_id", a.User.ID, "step", "setup")
+		s.codeFailed(a.User, "", "setup")
 		fail(http.StatusUnauthorized, msgMFAWrong)
 		return
 	}
