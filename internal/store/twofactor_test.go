@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -21,10 +22,10 @@ func enabled(t *testing.T, s *Store, step int64, codes ...string) (User, string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.BeginTOTP(ctx, u.ID, "SECRETSECRET", tfNow); err != nil {
+	if _, err := s.BeginTOTP(ctx, u.ID, "SECRETSECRET", tfNow); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EnableTOTP(ctx, u.ID, step, codes, hashSecret(raw), tfNow); err != nil {
+	if err := s.EnableTOTP(ctx, u.ID, "SECRETSECRET", step, codes, hashSecret(raw), tfNow); err != nil {
 		t.Fatal(err)
 	}
 	u, err = s.UserByID(ctx, u.ID)
@@ -41,7 +42,7 @@ func TestPendingTOTPExpiry(t *testing.T) {
 	if _, err := s.PendingTOTP(ctx, u.ID, tfNow); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("no pending: %v", err)
 	}
-	if err := s.BeginTOTP(ctx, u.ID, "ABC", tfNow); err != nil {
+	if _, err := s.BeginTOTP(ctx, u.ID, "ABC", tfNow); err != nil {
 		t.Fatal(err)
 	}
 	if sec, err := s.PendingTOTP(ctx, u.ID, tfNow.Add(14*time.Minute)); err != nil || sec != "ABC" {
@@ -50,12 +51,12 @@ func TestPendingTOTPExpiry(t *testing.T) {
 	if _, err := s.PendingTOTP(ctx, u.ID, tfNow.Add(16*time.Minute)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("16 min: %v, want ErrNotFound", err)
 	}
-	if err := s.EnableTOTP(ctx, u.ID, 5, nil, "", tfNow.Add(16*time.Minute)); !errors.Is(err, ErrNotFound) {
+	if err := s.EnableTOTP(ctx, u.ID, "ABC", 5, nil, "", tfNow.Add(16*time.Minute)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("enable with expired pending: %v", err)
 	}
 	// A new Begin replaces the pending secret and restarts the clock.
-	if err := s.BeginTOTP(ctx, u.ID, "DEF", tfNow.Add(20*time.Minute)); err != nil {
-		t.Fatal(err)
+	if got, err := s.BeginTOTP(ctx, u.ID, "DEF", tfNow.Add(20*time.Minute)); err != nil || got != "DEF" {
+		t.Fatalf("begin after expiry = %q, %v", got, err)
 	}
 	if sec, err := s.PendingTOTP(ctx, u.ID, tfNow.Add(21*time.Minute)); err != nil || sec != "DEF" {
 		t.Fatalf("pending = %q, %v", sec, err)
@@ -72,10 +73,10 @@ func TestEnableTOTPRevokesOthers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.BeginTOTP(ctx, u.ID, "SEC", tfNow); err != nil {
+	if _, err := s.BeginTOTP(ctx, u.ID, "SEC", tfNow); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EnableTOTP(ctx, u.ID, 77, []string{"h1", "h2", "h3"}, hashSecret(keep), tfNow); err != nil {
+	if err := s.EnableTOTP(ctx, u.ID, "SEC", 77, []string{"h1", "h2", "h3"}, hashSecret(keep), tfNow); err != nil {
 		t.Fatal(err)
 	}
 	a, err := s.SessionAuth(ctx, keep, tfNow)
@@ -104,10 +105,10 @@ func TestEnableTOTPRevokesOthers(t *testing.T) {
 		t.Fatalf("last step = %d, want 77", step)
 	}
 	// Enabling twice (second tab) fails.
-	if err := s.EnableTOTP(ctx, u.ID, 78, nil, "", tfNow); !errors.Is(err, ErrNotFound) {
+	if err := s.EnableTOTP(ctx, u.ID, "SEC", 78, nil, "", tfNow); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second enable: %v", err)
 	}
-	if err := s.BeginTOTP(ctx, u.ID, "X", tfNow); !errors.Is(err, ErrNotFound) {
+	if _, err := s.BeginTOTP(ctx, u.ID, "X", tfNow); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("begin while enabled: %v", err)
 	}
 }
@@ -143,7 +144,7 @@ func TestDisableKeepsLastStep(t *testing.T) {
 	}
 	// Re-enabling with a lower step never lowers it.
 	s.BeginTOTP(ctx, u.ID, "NEW", tfNow)
-	if err := s.EnableTOTP(ctx, u.ID, 400, nil, keepHash, tfNow); err != nil {
+	if err := s.EnableTOTP(ctx, u.ID, "NEW", 400, nil, keepHash, tfNow); err != nil {
 		t.Fatal(err)
 	}
 	s.db.QueryRow(`SELECT totp_last_step FROM users WHERE id = ?`, u.ID).Scan(&step)
@@ -162,7 +163,7 @@ func TestDisableKeepsLastStep(t *testing.T) {
 func TestAcceptTOTPStepMonotonic(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	if ok, err := s.AcceptTOTPStep(ctx, newPlain(t, s).ID, 10); err != nil || ok {
+	if ok, err := s.AcceptTOTPStep(ctx, newPlain(t, s).ID, "SECRETSECRET", 10); err != nil || ok {
 		t.Fatalf("disabled user: %v %v", ok, err)
 	}
 	u, _, _ := enabled(t, s, 100)
@@ -170,7 +171,7 @@ func TestAcceptTOTPStepMonotonic(t *testing.T) {
 		step int64
 		want bool
 	}{{100, false}, {99, false}, {101, true}, {101, false}, {105, true}, {104, false}} {
-		if ok, err := s.AcceptTOTPStep(ctx, u.ID, c.step); err != nil || ok != c.want {
+		if ok, err := s.AcceptTOTPStep(ctx, u.ID, "SECRETSECRET", c.step); err != nil || ok != c.want {
 			t.Errorf("step %d: %v %v, want %v", c.step, ok, err, c.want)
 		}
 	}
@@ -185,7 +186,7 @@ func TestAcceptTOTPStepConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ok, err := s.AcceptTOTPStep(context.Background(), u.ID, 200); err != nil {
+			if ok, err := s.AcceptTOTPStep(context.Background(), u.ID, "SECRETSECRET", 200); err != nil {
 				t.Error(err)
 			} else if ok {
 				wins.Add(1)
@@ -411,5 +412,177 @@ func TestMarkMFAAndCreateSessionMFA(t *testing.T) {
 	a2, err := s.SessionAuth(ctx, raw2, later)
 	if err != nil || a2.MFAAt == nil || !a2.MFAAt.Equal(later) || a2.AuthAt == nil || !a2.AuthAt.Equal(later) {
 		t.Fatalf("session = %+v, %v", a2, err)
+	}
+}
+
+func TestBeginTOTPReusesValidPending(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u := newVerified(t, s, tfNow)
+	a, err := s.BeginTOTP(ctx, u.ID, "FIRST", tfNow)
+	if err != nil || a != "FIRST" {
+		t.Fatalf("first = %q, %v", a, err)
+	}
+	b, err := s.BeginTOTP(ctx, u.ID, "SECOND", tfNow.Add(14*time.Minute))
+	if err != nil || b != "FIRST" {
+		t.Fatalf("within 15 min = %q, %v; want the same secret", b, err)
+	}
+	// Reusing does not extend the lifetime.
+	if _, err := s.PendingTOTP(ctx, u.ID, tfNow.Add(16*time.Minute)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reuse extended the pending secret: %v", err)
+	}
+	c, err := s.BeginTOTP(ctx, u.ID, "THIRD", tfNow.Add(16*time.Minute))
+	if err != nil || c != "THIRD" {
+		t.Fatalf("after expiry = %q, %v", c, err)
+	}
+}
+
+func TestEnableTOTPNeedsTheConfirmedSecret(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u := newVerified(t, s, tfNow)
+	s.BeginTOTP(ctx, u.ID, "MINE", tfNow)
+	for _, sec := range []string{"OTHER", ""} {
+		if err := s.EnableTOTP(ctx, u.ID, sec, 5, nil, "", tfNow); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("enable with %q: %v", sec, err)
+		}
+	}
+	if _, on, _ := s.TOTPSecret(ctx, u.ID); on {
+		t.Fatal("2FA turned on with the wrong secret")
+	}
+	// The pending secret was replaced after the user confirmed an older one.
+	s.BeginTOTP(ctx, u.ID, "NEWER", tfNow.Add(20*time.Minute))
+	if err := s.EnableTOTP(ctx, u.ID, "MINE", 5, nil, "", tfNow.Add(20*time.Minute)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale secret: %v", err)
+	}
+	if _, on, _ := s.TOTPSecret(ctx, u.ID); on {
+		t.Fatal("2FA turned on with a stale secret")
+	}
+}
+
+func TestAcceptTOTPStepBindsSecret(t *testing.T) {
+	s := open(t)
+	u, _, _ := enabled(t, s, 100)
+	if ok, err := s.AcceptTOTPStep(context.Background(), u.ID, "NOTTHESECRET", 200); err != nil || ok {
+		t.Fatalf("wrong secret accepted: %v %v", ok, err)
+	}
+	if ok, _ := s.AcceptTOTPStep(context.Background(), u.ID, "SECRETSECRET", 200); !ok {
+		t.Fatal("right secret refused")
+	}
+}
+
+func TestDisableTOTPNeedsSomethingToDisable(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u := newVerified(t, s, tfNow)
+	raw, _ := s.CreateSession(ctx, u.ID, tfNow)
+	if err := s.DisableTOTP(ctx, u.ID, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("disable with 2FA off: %v", err)
+	}
+	if _, err := s.SessionAuth(ctx, raw, tfNow); err != nil {
+		t.Fatalf("sessions revoked by a no-op disable: %v", err)
+	}
+	// A pending secret alone can be cleared.
+	s.BeginTOTP(ctx, u.ID, "PEND", tfNow)
+	if err := s.DisableTOTP(ctx, u.ID, hashSecret(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingTOTP(ctx, u.ID, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatal("pending secret survived")
+	}
+}
+
+func TestKeepSessionOfAnotherUserFailsSafe(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, mine, _ := enabled(t, s, 1)
+	other := newPlain(t, s)
+	theirs, _ := s.CreateSession(ctx, other.ID, tfNow)
+	if err := s.DisableTOTP(ctx, u.ID, hashSecret(theirs)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionAuth(ctx, mine, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatal("user's sessions should all be gone")
+	}
+	if _, err := s.SessionAuth(ctx, theirs, tfNow); err != nil {
+		t.Fatalf("other user's session touched: %v", err)
+	}
+}
+
+func TestTryPendingLoginRowGone(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, _, _ := enabled(t, s, 1)
+	raw, _ := s.CreatePendingLogin(ctx, u.ID, "password", "", *u.TOTPEnabledAt, tfNow)
+	if err := s.DeletePendingLogin(ctx, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TryPendingLogin(ctx, raw, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted row: %v, want ErrNotFound", err)
+	}
+	if _, err := s.TryPendingLogin(ctx, raw, tfNow); errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("raw sql.ErrNoRows leaked")
+	}
+}
+
+func TestPendingLoginNeedsLiveUser(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, _, _ := enabled(t, s, 1)
+	raw, _ := s.CreatePendingLogin(ctx, u.ID, "password", "", *u.TOTPEnabledAt, tfNow)
+	if _, err := s.SetUserDisabled(ctx, u.ID, true, tfNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingLogin(ctx, raw, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("disabled user's row: %v", err)
+	}
+	// Enabling again does not resurrect it: the rows were deleted.
+	s.SetUserDisabled(ctx, u.ID, false, tfNow)
+	if _, err := s.PendingLogin(ctx, raw, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("row survived disable/enable: %v", err)
+	}
+	// Unverified user.
+	raw2, _ := s.CreatePendingLogin(ctx, u.ID, "password", "", *u.TOTPEnabledAt, tfNow)
+	s.db.Exec(`UPDATE users SET verified_at = NULL WHERE id = ?`, u.ID)
+	if _, err := s.PendingLogin(ctx, raw2, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unverified user's row: %v", err)
+	}
+}
+
+func TestPasswordChangeDeletesPendingLogins(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, _, keep := enabled(t, s, 1)
+	on := *u.TOTPEnabledAt
+	raw, _ := s.CreatePendingLogin(ctx, u.ID, "password", "", on, tfNow)
+	if err := s.SetPassword(ctx, u.ID, "newhash", keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingLogin(ctx, raw, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SetPassword left the row: %v", err)
+	}
+	raw, _ = s.CreatePendingLogin(ctx, u.ID, "password", "", on, tfNow)
+	tok, err := s.CreateToken(ctx, TokenReset, u.ID, time.Hour, tfNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResetPassword(ctx, tok, "newer", tfNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingLogin(ctx, raw, tfNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ResetPassword left the row: %v", err)
+	}
+}
+
+func TestSessionRevokeKeepsPendingLogins(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	u, _, _ := enabled(t, s, 1)
+	raw, _ := s.CreatePendingLogin(ctx, u.ID, "password", "", *u.TOTPEnabledAt, tfNow)
+	if err := s.DeleteUserSessions(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PendingLogin(ctx, raw, tfNow); err != nil {
+		t.Fatalf("session revoke removed a pending login: %v", err)
 	}
 }

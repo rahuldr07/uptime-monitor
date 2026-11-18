@@ -58,6 +58,9 @@ func (s *Store) SetUserDisabled(ctx context.Context, userID int64, disabled bool
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
 			return nil, err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_logins WHERE user_id = ?`, userID); err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind IN ('reset', 'verify') AND used_at IS NULL`, userID); err != nil {
 			return nil, err
 		}

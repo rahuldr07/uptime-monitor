@@ -16,16 +16,35 @@ const (
 	PendingLoginTries = 5
 )
 
-// BeginTOTP stores secret as the user's pending (unconfirmed) 2FA secret,
-// replacing any earlier one. It is ErrNotFound when 2FA is already on.
-func (s *Store) BeginTOTP(ctx context.Context, userID int64, secret string, now time.Time) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET totp_pending = ?, totp_pending_at = ? WHERE id = ? AND totp_enabled_at IS NULL`,
-		secret, now.UnixMilli(), userID)
+// BeginTOTP returns the user's pending (unconfirmed) 2FA secret. A pending
+// secret younger than PendingTOTPTTL is reused unchanged, so a second tab or a
+// reload never invalidates the secret already shown; otherwise secret becomes
+// the pending one. It is ErrNotFound when 2FA is already on.
+func (s *Store) BeginTOTP(ctx context.Context, userID int64, secret string, now time.Time) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return requireRow(res)
+	defer tx.Rollback()
+	valid := `(totp_pending <> '' AND totp_pending_at > ?)`
+	cutoff := now.Add(-PendingTOTPTTL).UnixMilli()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users SET
+			totp_pending    = CASE WHEN `+valid+` THEN totp_pending ELSE ? END,
+			totp_pending_at = CASE WHEN `+valid+` THEN totp_pending_at ELSE ? END
+		 WHERE id = ? AND totp_enabled_at IS NULL`,
+		cutoff, secret, cutoff, now.UnixMilli(), userID)
+	if err != nil {
+		return "", err
+	}
+	if err := requireRow(res); err != nil {
+		return "", err
+	}
+	var pending string
+	if err := tx.QueryRowContext(ctx, `SELECT totp_pending FROM users WHERE id = ?`, userID).Scan(&pending); err != nil {
+		return "", err
+	}
+	return pending, tx.Commit()
 }
 
 // PendingTOTP returns the pending secret, or ErrNotFound if there is none or
@@ -63,9 +82,11 @@ func deleteOtherSessions(ctx context.Context, tx *sql.Tx, userID int64, keepHash
 // EnableTOTP turns 2FA on in one transaction: the pending secret (still valid
 // at now) becomes the secret, totp_last_step is raised to step, the recovery
 // codes are replaced by codeHashes, the kept session gets mfa_at, every other
-// session and all of the user's pending sign-ins are deleted. It is
-// ErrNotFound if 2FA is already on or there is no valid pending secret.
-func (s *Store) EnableTOTP(ctx context.Context, userID int64, step int64, codeHashes []string, keepSessionHash string, now time.Time) error {
+// session and all of the user's pending sign-ins are deleted. secret is the
+// one the user just proved with a code: it is ErrNotFound unless it is still
+// the valid pending secret, or if 2FA is already on. A keepSessionHash that
+// is not one of the user's sessions deletes all of them (it fails safe).
+func (s *Store) EnableTOTP(ctx context.Context, userID int64, secret string, step int64, codeHashes []string, keepSessionHash string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -74,8 +95,8 @@ func (s *Store) EnableTOTP(ctx context.Context, userID int64, step int64, codeHa
 	res, err := tx.ExecContext(ctx,
 		`UPDATE users SET totp_secret = totp_pending, totp_pending = '', totp_pending_at = NULL,
 			totp_enabled_at = ?, totp_last_step = MAX(totp_last_step, ?)
-		 WHERE id = ? AND totp_enabled_at IS NULL AND totp_pending <> '' AND totp_pending_at > ?`,
-		now.UnixMilli(), step, userID, now.Add(-PendingTOTPTTL).UnixMilli())
+		 WHERE id = ? AND totp_enabled_at IS NULL AND totp_pending = ? AND totp_pending <> '' AND totp_pending_at > ?`,
+		now.UnixMilli(), step, userID, secret, now.Add(-PendingTOTPTTL).UnixMilli())
 	if err != nil {
 		return err
 	}
@@ -101,7 +122,9 @@ func (s *Store) EnableTOTP(ctx context.Context, userID int64, step int64, codeHa
 // DisableTOTP turns 2FA off (or resets it): secret, pending secret and
 // recovery codes are cleared, other sessions (all when keepSessionHash is "")
 // and pending sign-ins are deleted. totp_last_step is kept, so an old code
-// can never be replayed after re-enabling.
+// can never be replayed after re-enabling. It is ErrNotFound, and revokes
+// nothing, unless 2FA is on or a pending secret exists. A keepSessionHash
+// that is not one of the user's sessions deletes all of them (it fails safe).
 func (s *Store) DisableTOTP(ctx context.Context, userID int64, keepSessionHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -109,7 +132,8 @@ func (s *Store) DisableTOTP(ctx context.Context, userID int64, keepSessionHash s
 	}
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET totp_secret = '', totp_pending = '', totp_pending_at = NULL, totp_enabled_at = NULL WHERE id = ?`, userID)
+		`UPDATE users SET totp_secret = '', totp_pending = '', totp_pending_at = NULL, totp_enabled_at = NULL
+		 WHERE id = ? AND (totp_enabled_at IS NOT NULL OR totp_pending <> '')`, userID)
 	if err != nil {
 		return err
 	}
@@ -144,10 +168,12 @@ func (s *Store) TOTPSecret(ctx context.Context, userID int64) (secret string, en
 // AcceptTOTPStep records step as used with one conditional UPDATE and reports
 // whether this caller won: of any number of concurrent calls with the same
 // step exactly one is true, and a step at or below the last one never is.
-func (s *Store) AcceptTOTPStep(ctx context.Context, userID int64, step int64) (bool, error) {
+// secret is the one the code was matched against; if the user's secret has
+// changed since, nothing is accepted.
+func (s *Store) AcceptTOTPStep(ctx context.Context, userID int64, secret string, step int64) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_enabled_at IS NOT NULL AND totp_last_step < ?`,
-		step, userID, step)
+		`UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_enabled_at IS NOT NULL AND totp_secret = ? AND totp_last_step < ?`,
+		step, userID, secret, step)
 	if err != nil {
 		return false, err
 	}
@@ -213,10 +239,12 @@ type PendingLogin struct {
 
 // pendingLive is the condition for a pending sign-in that can still be
 // completed: unused, unexpired, and its user still has the same 2FA turned
-// on, so turning 2FA off or resetting it invalidates the row. Arguments:
+// on and is enabled and verified, so turning 2FA off or resetting it, or
+// disabling the account, invalidates the row. Arguments:
 // token hash, now.
 const pendingLive = `token_hash = ? AND used_at IS NULL AND expires_at > ?
-	AND totp_enabled_at = (SELECT totp_enabled_at FROM users WHERE id = pending_logins.user_id)`
+	AND totp_enabled_at = (SELECT totp_enabled_at FROM users WHERE id = pending_logins.user_id)
+	AND EXISTS (SELECT 1 FROM users WHERE id = pending_logins.user_id AND disabled_at IS NULL AND verified_at IS NOT NULL)`
 
 const pendingCols = `user_id, method, next, totp_enabled_at, created_at, expires_at, tries`
 
@@ -260,17 +288,13 @@ func (s *Store) PendingLogin(ctx context.Context, raw string, now time.Time) (Pe
 // UPDATE, so concurrent submissions cannot exceed PendingLoginTries. It is
 // ErrNotFound for the same reasons as PendingLogin, or when no tries are left.
 func (s *Store) TryPendingLogin(ctx context.Context, raw string, now time.Time) (PendingLogin, error) {
-	hash := hashSecret(raw)
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE pending_logins SET tries = tries + 1 WHERE `+pendingLive+` AND tries < ?`,
-		hash, now.UnixMilli(), PendingLoginTries)
-	if err != nil {
-		return PendingLogin{}, err
+	p, err := scanPending(s.db.QueryRowContext(ctx,
+		`UPDATE pending_logins SET tries = tries + 1 WHERE `+pendingLive+` AND tries < ? RETURNING `+pendingCols,
+		hashSecret(raw), now.UnixMilli(), PendingLoginTries))
+	if errors.Is(err, sql.ErrNoRows) {
+		return PendingLogin{}, ErrNotFound
 	}
-	if err := requireRow(res); err != nil {
-		return PendingLogin{}, err
-	}
-	return scanPending(s.db.QueryRowContext(ctx, `SELECT `+pendingCols+` FROM pending_logins WHERE token_hash = ?`, hash))
+	return p, err
 }
 
 // FinishPendingLogin marks the row used, once: of concurrent callers exactly

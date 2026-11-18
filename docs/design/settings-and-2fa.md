@@ -190,6 +190,7 @@ CREATE TABLE pending_logins (
   tries           INTEGER NOT NULL DEFAULT 0,
   used_at         INTEGER
 );
+CREATE INDEX idx_pending_logins_user ON pending_logins(user_id);
 ```
 
 - Pre-migration backup `pre-v5`, as for v3 and v4. Expired `pending_logins`

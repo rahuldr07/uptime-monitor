@@ -436,13 +436,16 @@ func setPassword(ctx context.Context, tx querier, userID int64, phc, keepSession
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepSessionHash); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM pending_logins WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND kind IN ('reset', 'verify') AND used_at IS NULL`, userID)
 	return err
 }
 
 // SetPassword replaces a user's password hash, deletes all their sessions
-// except keepSessionHash (empty deletes all), and deletes their unused reset
-// and verify tokens.
+// except keepSessionHash (empty deletes all), their pending 2FA sign-ins, and
+// their unused reset and verify tokens.
 func (s *Store) SetPassword(ctx context.Context, userID int64, phc string, keepSessionHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
