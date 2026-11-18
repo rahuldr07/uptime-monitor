@@ -168,11 +168,5 @@ func (s *Server) setupPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.logger.Warn("setup complete", "event", "setup_complete", "ip", ip, "user_id", u.ID)
-	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.setSessionCookie(w, r, raw)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.startSession(w, r, u, "setup", "/", false)
 }

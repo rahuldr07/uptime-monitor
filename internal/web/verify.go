@@ -100,18 +100,12 @@ func (s *Server) verifyPost(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "verify", d)
 		return
 	}
-	if old := s.sessionToken(r); old != "" {
-		if err := s.sys.DeleteSession(ctx, old); err != nil {
-			s.logger.Warn("verify: cannot delete previous session", "err", err)
-		}
-	}
-	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		s.fail(w, err)
+	// The link never signs in an account that has two-factor on.
+	if u.TOTPEnabledAt != nil {
+		redirect(w, r, "/login", msgVerifiedSignIn)
 		return
 	}
-	s.setSessionCookie(w, r, raw)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.startSession(w, r, u, "verify", "/", false)
 }
 
 // verifyResend answers the same for every address, so it cannot tell which

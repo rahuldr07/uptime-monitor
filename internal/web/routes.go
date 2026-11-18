@@ -59,6 +59,9 @@ func (s *Server) routeTable() []route {
 		{"POST", "/verify/resend", classPublic, s.verifyResend, nil},
 		{"GET", "/auth/{provider}/start", classPublic, s.oauthStart, nil},
 		{"GET", "/auth/{provider}/callback", classPublic, s.oauthCallback, nil},
+		{"GET", "/login/2fa", classPublic, s.login2FAPage, nil}, // the handler checks the pending cookie
+		{"POST", "/login/2fa", classPublic, s.login2FAPost, nil},
+		{"POST", "/login/2fa/cancel", classPublic, s.login2FACancel, nil},
 		{"GET", "/reset", classPublic, s.resetPage, nil},
 		{"POST", "/reset", classPublic, s.resetPost, nil},
 		{"GET", "/setup", classSetup, s.setupPage, nil},

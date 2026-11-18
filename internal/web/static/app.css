@@ -442,3 +442,4 @@ dialog p,dialog h2{overflow-wrap:anywhere}
 @media(max-width:480px){.days{gap:1px}}
 footer a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px;white-space:nowrap}#timezone:target{border-color:var(--accent)}
 .dt-edge-more{min-height:28px}
+.mfa-actions{margin-top:14px}.mfa-more{margin-top:16px;justify-content:space-between;font-size:13px}

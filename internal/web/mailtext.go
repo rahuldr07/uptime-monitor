@@ -44,3 +44,29 @@ func signInMethodMail(base, provider string, added bool, at time.Time, loc *time
 		fmt.Sprintf("The %s sign-in method was %s your account on %s.\n\nIf this was not you, disconnect it under Sign-in methods in your Settings, then reset your password and sign out everywhere:\n\n%s/forgot\n%s/settings/security\n",
 			provider, verb, notify.FormatTime(at, loc), base, base)
 }
+
+// Subjects of the 2FA notices, shared with the tests.
+const (
+	msgMFALimitedSubject   = "Too many two-factor attempts"
+	msgRecoveryUsedSubject = "A recovery code was used on your account"
+)
+
+// mfaLimitedMail warns the owner that codes were guessed. method is how the
+// attacker got as far as the code: "password", "google" or "github".
+func mfaLimitedMail(base, method string) (subject, body string) {
+	who := "Someone entered your password but not your two-factor code."
+	if method == "google" || method == "github" {
+		who = "Someone signed in with your " + providerLabel(method) + " account but did not enter your two-factor code correctly."
+	}
+	return msgMFALimitedSubject,
+		fmt.Sprintf("%s If it wasn't you, change your password:\n\n%s/forgot\n", who, base)
+}
+
+func recoveryUsedMail(base string, left int, signIn bool) (subject, body string) {
+	what := "A recovery code was used on your account."
+	if signIn {
+		what = "A recovery code was used to sign in."
+	}
+	return msgRecoveryUsedSubject,
+		fmt.Sprintf("%s %d left.\n\nIf this was not you, change your password and turn two-factor authentication off and on again under Security in your Settings:\n\n%s/settings/security\n", what, left, base)
+}

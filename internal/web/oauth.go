@@ -356,26 +356,9 @@ func (q *oauthReq) signIn(u store.User, event string) {
 	if err := s.sys.TouchIdentity(ctx, q.p.Name(), q.id.Subject, s.now()); err != nil {
 		s.logger.Warn("oauth: cannot update last use", "err", err)
 	}
-	if old := s.sessionToken(q.r); old != "" {
-		if err := s.sys.DeleteSession(ctx, old); err != nil {
-			s.logger.Warn("oauth: cannot delete previous session", "err", err)
-		}
-	}
-	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		q.serverErr(err)
-		return
-	}
-	s.setSessionCookie(q.w, q.r, raw)
-	s.setDeviceCookie(q.w, q.r, u.ID)
-	if event != "" {
+	if s.startSession(q.w, q.r, u, q.p.Name(), q.st.Next, false) && event != "" {
 		s.logger.Info("oauth sign-in ok", "event", event, "provider", q.p.Name(), "user_id", u.ID, "ip", q.ip)
 	}
-	next := "/"
-	if q.st.Next != "" {
-		next = safeNext(q.st.Next)
-	}
-	http.Redirect(q.w, q.r, next, http.StatusSeeOther)
 }
 
 func (q *oauthReq) unlinkedLogin() {

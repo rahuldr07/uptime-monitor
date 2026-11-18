@@ -1,0 +1,26 @@
+{{define "content"}}
+<div class="login">
+  <div class="card">
+    {{template "auth-error" .}}
+    <h1>Two-factor authentication</h1>
+    {{if .Recovery}}
+    <p class="muted small lead">Enter one of your recovery codes. Each one works once.</p>
+    <form method="post" action="/login/2fa">
+      <input type="hidden" name="recovery" value="1">
+      <div class="field"><label for="mfa-code">Recovery code</label><input id="mfa-code" name="code" type="text" autofocus required maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="mfa-actions"><button type="submit" class="primary">Sign in</button></div>
+    </form>
+    {{else}}
+    <p class="muted small lead">Enter the code from your authenticator app.</p>
+    <form method="post" action="/login/2fa">
+      <div class="field"><label for="mfa-code">Code</label><input id="mfa-code" name="code" type="text" inputmode="numeric" pattern="[0-9 ]*" maxlength="12" autofocus required autocomplete="one-time-code"></div>
+      <div class="mfa-actions"><button type="submit" class="primary">Sign in</button></div>
+    </form>
+    {{end}}
+    <div class="btns mfa-more">
+      {{if .Recovery}}<a href="/login/2fa">Use an authenticator code</a>{{else}}<a href="/login/2fa?recovery=1">Use a recovery code</a>{{end}}
+      <form method="post" action="/login/2fa/cancel"><button type="submit" class="sm ghost">Cancel</button></form>
+    </div>
+  </div>
+</div>
+{{end}}

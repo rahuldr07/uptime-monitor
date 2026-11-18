@@ -113,12 +113,10 @@ func (s *Server) resetPost(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "reset", d)
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
-	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		s.fail(w, err)
+	// The link never signs in an account that has two-factor on.
+	if u.TOTPEnabledAt != nil {
+		redirect(w, r, "/login", msgPasswordChangedSignIn)
 		return
 	}
-	s.setSessionCookie(w, r, raw)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.startSession(w, r, u, "reset", "/", false)
 }

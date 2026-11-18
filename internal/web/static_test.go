@@ -17,19 +17,19 @@ import (
 var sysAllowed = map[string][]string{
 	"session.go|(*Server).lookupAuth":             {"SessionAuth"},            // session cookie -> user
 	"setup.go|(*Server).setupPage":                {"Workspace", "PeekToken"}, // first-run setup
-	"setup.go|(*Server).setupPost":                {"PeekToken", "CompleteSetup", "CreateSession"},
+	"setup.go|(*Server).setupPost":                {"PeekToken", "CompleteSetup"},
 	"signup.go|(*Server).signupPage":              {"PeekToken"},
-	"signup.go|(*Server).signupPost":              {"PeekToken", "CreateAccount", "CreateSession"},
+	"signup.go|(*Server).signupPost":              {"PeekToken", "CreateAccount"},
 	"forgot.go|(*Server).forgotPost":              {"UserByEmail", "CreateToken"},
 	"verify.go|(*Server).sendVerify":              {"CreateToken"},
 	"verify.go|(*Server).verifyPage":              {"PeekToken"},
-	"verify.go|(*Server).verifyPost":              {"PeekToken", "VerifyEmail", "DeleteSession", "CreateSession"},
+	"verify.go|(*Server).verifyPost":              {"PeekToken", "VerifyEmail"},
 	"verify.go|(*Server).verifyResend":            {"UserByEmail"},
 	"verify.go|(*Server).ownerNotice":             {"UserByEmail"},
-	"login.go|(*Server).loginPost":                {"UserByEmail", "DeleteSession", "CreateSession"},
+	"login.go|(*Server).loginPost":                {"UserByEmail"},
 	"login.go|(*Server).logout":                   {"DeleteSession"},
 	"oauth.go|(*Server).oauthCallback":            {"IdentityUser"},
-	"oauth.go|(*oauthReq).signIn":                 {"TouchIdentity", "DeleteSession", "CreateSession"},
+	"oauth.go|(*oauthReq).signIn":                 {"TouchIdentity"},
 	"oauth.go|(*oauthReq).unlinkedLogin":          {"UserByEmail"},
 	"oauth.go|(*oauthReq).signUp":                 {"PeekToken", "CreateAccount", "IdentityUser"},
 	"oauth.go|(*oauthReq).link":                   {"LinkIdentity", "IdentityUser"},
@@ -47,7 +47,7 @@ var sysAllowed = map[string][]string{
 	"account.go|(*Server).accountIdentityDelete":  {"UnlinkIdentity"},
 	"admin.go|(*Server).adminUsersView":           {"ListUsers", "IdentityProviders"},
 	"reset.go|(*Server).resetPage":                {"PeekToken"},
-	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword", "CreateSession"},
+	"reset.go|(*Server).resetPost":                {"PeekToken", "ResetPassword"},
 	"reset.go|(*Server).chooseWording":            {"PeekToken", "HasPassword"},
 	"targets.go|(*Server).hostRateErr":            {"TargetsInOtherWorkspaces"}, // combined per-host rate across workspaces
 	"admin.go|(*Server).adminTarget":              {"UserByID"},
@@ -58,6 +58,12 @@ var sysAllowed = map[string][]string{
 	"admin.go|(*Server).adminInvitesView":         {"ListInvites"},
 	"admin.go|(*Server).adminInviteCreate":        {"CreateInvite"},
 	"admin.go|(*Server).adminInviteRevoke":        {"RevokeInvite"},
+	"twofactor.go|(*Server).startSession":         {"CreatePendingLogin", "DeleteSession", "CreateSession", "CreateSessionMFA"},
+	"twofactor.go|(*Server).verifyCode":           {"UseRecoveryCode", "TOTPSecret", "AcceptTOTPStep"},
+	"twofactor.go|(*Server).recoveryUsed":         {"RecoveryCodesLeft"},
+	"twofactor.go|(*Server).login2FAPage":         {"PendingLogin"},
+	"twofactor.go|(*Server).login2FAPost":         {"TryPendingLogin", "PendingLogin", "UserByID", "DeletePendingLogin", "FinishPendingLogin"},
+	"twofactor.go|(*Server).login2FACancel":       {"DeletePendingLogin"},
 	"web.go|(*Server).healthz":                    {"Ping"},
 	"status.go|(*Server).statusRedirect":          {"Workspace"},                    // operator's page for anonymous visitors
 	"helpers.go|(*Server).notFound":               {"Workspace"},                    // is there a general status page to link to
@@ -146,7 +152,7 @@ func TestSysAllowList(t *testing.T) {
 }
 
 func TestEveryRouteClassified(t *testing.T) {
-	const want = 81
+	const want = 84
 	e := newEnv(t)
 	routes := e.srv.routeTable()
 	if len(routes) != want {

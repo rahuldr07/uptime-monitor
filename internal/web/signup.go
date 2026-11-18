@@ -212,13 +212,7 @@ func (s *Server) signupPost(w http.ResponseWriter, r *http.Request) {
 		s.checkEmail(w, r)
 		return
 	}
-	sess, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.setSessionCookie(w, r, sess)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	s.startSession(w, r, u, "signup", "/", false)
 }
 
 // checkEmail is the answer to an open sign-up, new address or not.

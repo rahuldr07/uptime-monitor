@@ -78,6 +78,9 @@ type Server struct {
 	alertTest     *ratelimit.Limiter // alert test sends, per workspace
 	tzDetect      *ratelimit.Limiter // browser time zone reports, per user
 	pwLinkByUser  *ratelimit.Limiter // "Set a password" emails, per user
+	mfaShort      *ratelimit.Limiter // wrong 2FA codes, per user, 15 minutes
+	mfaLong       *ratelimit.Limiter // wrong 2FA codes, per user, 24 hours
+	mfaNotice     *ratelimit.Limiter // "someone tried your account" notice, once a day per user
 	pages         map[string]*template.Template
 	mux           http.Handler
 
@@ -174,7 +177,10 @@ func New(o Options) (*Server, error) {
 	s.alertTest = ratelimit.New(time.Minute, 5, 0)
 	s.tzDetect = ratelimit.New(time.Minute, 10, 0)
 	s.pwLinkByUser = ratelimit.New(time.Hour, pwLinkPerHour, 0)
-	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest, s.tzDetect, s.pwLinkByUser} {
+	s.mfaShort = ratelimit.New(mfaShortWindow, mfaShortMax, 0)
+	s.mfaLong = ratelimit.New(mfaLongWindow, mfaLongMax, 0)
+	s.mfaNotice = ratelimit.New(mfaLongWindow, 1, 0)
+	for _, l := range []*ratelimit.Limiter{s.createLimiter, s.checkTarget, s.checkWS, s.testURL, s.alertTest, s.tzDetect, s.pwLinkByUser, s.mfaShort, s.mfaLong, s.mfaNotice} {
 		l.Now = now
 	}
 	s.statusLimiter = ratelimit.New(time.Minute, statusRatePerMinute, 0)
@@ -270,7 +276,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.pages[page] = t
 	}
-	for _, page := range []string{"status", "notfound_public", "login", "setup", "reset", "signup", "verify", "forgot"} {
+	for _, page := range []string{"status", "notfound_public", "login", "login2fa", "setup", "reset", "signup", "verify", "forgot"} {
 		files := append([]string{"templates/public.html"}, shared...)
 		files = append(files, "templates/"+page+".html")
 		t, err := template.New("public.html").Funcs(funcs).ParseFS(templateFS, files...)

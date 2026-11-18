@@ -246,21 +246,10 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// A new session replaces whichever one the browser presented.
-	if old := s.sessionToken(r); old != "" {
-		if err := s.sys.DeleteSession(ctx, old); err != nil {
-			s.logger.Warn("sign-in: cannot delete previous session", "err", err)
-		}
+	// A 2FA account is diverted to its code; the log line is for a session.
+	if s.startSession(w, r, u, "password", d.Next, false) {
+		s.logger.Info("sign-in ok", "event", "login_ok", "user_id", u.ID, "ip", ip)
 	}
-	raw, err := s.sys.CreateSession(ctx, u.ID, s.now())
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	s.setSessionCookie(w, r, raw)
-	s.setDeviceCookie(w, r, u.ID)
-	s.logger.Info("sign-in ok", "event", "login_ok", "user_id", u.ID, "ip", ip)
-	http.Redirect(w, r, d.Next, http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, a *authCtx) {
