@@ -451,3 +451,5 @@ footer a{text-decoration:underline;text-decoration-color:var(--border-strong);te
 .field-err{color:var(--bad-text);font-size:12px;line-height:1.4;margin-top:4px}.row-err{flex-basis:100%;margin:0}
 .tf-steps{margin:6px 0 12px;padding-left:20px;color:var(--muted)}.tf-steps li{margin:2px 0}.tf-key .sm{vertical-align:middle}
 .mfa-more a{text-decoration:underline}#codes-alert:focus{outline:2px solid var(--a);outline-offset:2px}
+#two-factor h3{margin-bottom:10px}
+.btns form .in-code{margin-right:6px}
